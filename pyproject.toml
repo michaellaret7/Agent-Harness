@@ -1,0 +1,28 @@
+[project]
+name = "local-agent"
+version = "0.1.0"
+description = "Local agent built on a self-hosted Nemotron model via vLLM."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # Needed by scripts/download_model.py.
+    "huggingface_hub>=1.0",
+    "python-dotenv>=1.0",
+]
+
+# Heavy optional groups — install only when you reach that phase:
+#   uv sync --group server   # adds vLLM (multi-GB; pulls torch + CUDA)
+#   uv sync --group agent    # adds OpenAI client + pydantic
+[dependency-groups]
+server = [
+    # NVIDIA requires vllm >= 0.15.1 for Nemotron 3 Nano (hybrid Mamba+Attn).
+    "vllm>=0.15.1",
+]
+agent = [
+    "openai>=1.40",
+    "httpx>=0.27",
+    "pydantic>=2.0",
+]
+
+[tool.uv]
+# Reproducible: lock to versions resolved at sync time.
+package = false

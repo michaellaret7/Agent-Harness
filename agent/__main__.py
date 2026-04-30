@@ -1,0 +1,29 @@
+"""REPL with tools enabled. Run with: uv run python -m agent"""
+from __future__ import annotations
+
+from datetime import datetime
+
+from agent.agent import Agent
+from agent.tools import calculator, file_architecture, read_file, weather
+
+
+time_tool = {
+    'name': 'get_current_time',
+    'description': 'Return the current local date and time as an ISO-8601 string.',
+    'parameters': {'type': 'object', 'properties': {}},
+    'fn': lambda: datetime.now().isoformat(timespec='seconds'),
+}
+
+
+def main() -> None:
+    agent = Agent(tools=[time_tool, weather.tool, read_file.tool, calculator.tool, file_architecture.tool])
+    while True:
+        prompt = input('> ')
+        if prompt == 'exit':
+            break
+        agent.run(prompt)
+        print()
+
+
+if __name__ == '__main__':
+    main()
