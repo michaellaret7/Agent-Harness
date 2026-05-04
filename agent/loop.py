@@ -11,20 +11,19 @@ from openai import OpenAI
 
 from agent.tool_handler import ToolHandler
 
-MODEL = 'nemotron3-nano-4b-fp8'
-
-
 def execution_loop(
     client: OpenAI,
     handler: ToolHandler,
     messages: list[dict],
+    model: str,
     max_iters: int = 10,
 ) -> str:
     for _ in range(max_iters):
         content, tool_calls = _stream_once(
-            client, 
-            messages, 
+            client,
+            messages,
             handler.schemas() or None,
+            model,
         )
 
         # Reconstruct the assistant turn for history. tool_calls must stay
@@ -60,11 +59,12 @@ def _stream_once(
     client: OpenAI,
     messages: list[dict],
     tools: list[dict] | None,
+    model: str,
 ) -> tuple[str, list[dict]]:
     """Stream one completion. Returns (content, tool_calls)."""
 
     stream = client.chat.completions.create(
-        model=MODEL,
+        model=model,
         messages=messages,
         tools=tools,
         stream=True,

@@ -10,37 +10,38 @@ if __package__ in (None, ''):
 
 from typing import Any
 
-from openai import OpenAI
+from dotenv import load_dotenv
 
+from agent.client import build_client
 from agent.loop import execution_loop
 from agent.tool_handler import ToolHandler
 from agent.tools import calculator, file_architecture, read_file, weather
 
+load_dotenv()
 
 class Agent:
     def __init__(
         self,
         tools: list[dict[str, Any]],
+        model_provider: str = 'anthropic',
+        model_name: str = 'claude-sonnet-4-6',
+        local: bool = False,
         system_prompt: str = '',
     ) -> None:
-
-        self.client = OpenAI(
-            base_url='http://localhost:8000/v1',
-            api_key='placeholder',
-        )
-
+    
+        self.client, self.model = build_client(model_provider, model_name, local=local)
         self.tools = tools
         self.handler = ToolHandler()
         self.messages: list[dict] = []
         self.system_prompt = system_prompt
-        
+
         # Registert tools with the agent
         for tool in self.tools:
             self.handler.register(tool)
 
     def run(self, prompt: str) -> str:
         self.messages.append({'role': 'user', 'content': prompt})
-        return execution_loop(self.client, self.handler, self.messages)
+        return execution_loop(self.client, self.handler, self.messages, model=self.model)
 
 
 if __name__ == '__main__':
