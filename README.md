@@ -4,11 +4,9 @@
 
 # local-agent
 
-**A streaming, tool-calling agent running on a self-hosted Nemotron 3 Nano via vLLM.**
+**A streaming, tool-calling agent client that talks to any OpenAI-compatible endpoint.**
 
 [![Python](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![vLLM](https://img.shields.io/badge/vLLM-0.15+-FF6F00)](https://github.com/vllm-project/vllm)
-[![Nemotron](https://img.shields.io/badge/Nemotron_3_Nano-4B_FP8-76B900?logo=nvidia&logoColor=white)](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8)
 [![uv](https://img.shields.io/badge/uv-managed-DE5FE9)](https://github.com/astral-sh/uv)
 
 </div>
@@ -17,71 +15,39 @@
 
 ## What this is
 
-A minimal agent loop that runs entirely on your own machine. It serves NVIDIA's Nemotron 3 Nano 4B (FP8) through vLLM's OpenAI-compatible API, then talks to it from a small Python client that streams tokens, parses tool calls, executes them, and feeds the results back — until the model stops asking for tools and returns a final answer.
+A minimal agent loop. It streams tokens from a chat-completions endpoint, parses tool calls, executes them, and feeds the results back — until the model stops asking for tools and returns a final answer.
 
-No cloud, no API keys, no telemetry. The whole thing fits on a 16 GB consumer GPU.
+The client is provider-agnostic. It works against:
 
-## Architecture
-
-Two processes, talking over `localhost:8000`:
-
-```
-┌─────────────────────────┐         ┌──────────────────────────┐
-│   server/serve.py       │         │   agent/__main__.py      │
-│                         │         │                          │
-│   vLLM + Nemotron 3     │ ◄─────► │   Streaming REPL         │
-│   OpenAI-compatible     │  HTTP   │   Tool dispatch          │
-│   :8000/v1              │         │   Reasoning passthrough  │
-└─────────────────────────┘         └──────────────────────────┘
-```
-
-The split is deliberate: the server is heavy and slow to start, so you launch it once and leave it running. The agent client is cheap to restart while you iterate on tools and prompts.
+- A self-hosted vLLM/Ollama/llama.cpp server (the original target was NVIDIA Nemotron 3 Nano on vLLM — the server has since been split into its own repo and is hosted elsewhere).
+- OpenAI's API.
+- Anthropic's API (via an OpenAI-compatible shim).
 
 ## Features
 
-- **Streaming token-by-token output** with live reasoning passthrough (the `<think>...</think>` blocks Nemotron 3 emits, parsed by the model's bundled `nano_v3` plugin).
-- **Tool calling** in Qwen3-Coder format, parsed server-side by vLLM.
-- **Built-in tools** — calculator (AST-based, no `eval`), weather (wttr.in), file reader, file-tree viewer, current time. All sandboxed to the project directory where relevant.
+- **Streaming token-by-token output** with live reasoning passthrough (the `<think>...</think>` blocks thinking models emit).
+- **Tool calling** in the standard OpenAI tool-call format, with fragment reassembly across stream chunks.
+- **Built-in tools** — calculator (AST-based, no `eval`), weather (wttr.in), file reader, file-tree viewer, current time. File tools are sandboxed to the project directory.
 - **Safe by construction** — file tools reject paths outside the project root; the calculator walks the AST instead of evaluating it.
-- **FP8 weights + FP8 KV cache** to fit a 16 GB card with a 16k context window.
 
 ## Requirements
 
 - Python 3.12
-- NVIDIA GPU with at least 16 GB VRAM (defaults are tuned for this; raise `max_model_len` if you have more)
-- CUDA driver (the toolkit is not required — config uses `TRITON_ATTN` to avoid needing `nvcc`)
 - [`uv`](https://github.com/astral-sh/uv) for dependency management
+- An endpoint to talk to — either a remote provider (OpenAI / Anthropic) or a self-hosted OpenAI-compatible server
 
 ## Setup
 
 ```bash
-# 1. Install dependency groups (server is heavy — pulls torch + CUDA wheels)
-uv sync --group server --group agent
+# 1. Install dependencies
+uv sync --group agent
 
-# 2. Download the model into ./models (~4 GB for the FP8 build)
-uv run python scripts/download_model.py
-
-# 3. (Optional) Add an HF token to .env if you ever switch to a gated model
+# 2. Configure provider credentials (or point at a local server)
 cp .env.example .env
-```
-
-Available model presets:
-
-```bash
-uv run python scripts/download_model.py --list-presets
+# then edit .env — see "Configuring the endpoint" below
 ```
 
 ## Running
-
-**Terminal 1 — start the server:**
-
-```bash
-uv run python -m server.serve
-```
-
-First start takes a minute or two while vLLM compiles kernels and loads weights. Wait for the line `Uvicorn running on http://0.0.0.0:8000`.
-
-**Terminal 2 — start the agent:**
 
 ```bash
 uv run python -m agent
@@ -97,27 +63,35 @@ You'll get a `>` prompt. Try:
 
 Type `exit` to quit.
 
+## Configuring the endpoint
+
+`agent/client.py` builds the OpenAI client. Three modes:
+
+**Local / self-hosted** — pass `local=True` when constructing `Agent`. Hits `http://localhost:8000/v1` with model `nemotron3-nano-4b-fp8`. Edit `LOCAL_BASE_URL` in `agent/client.py` to point at a different host or port.
+
+**Remote provider** — pass `model_provider='openai'` (or `'anthropic'`) and a `model` name. The client reads `OPENAI_API_KEY` / `OPENAI_API_URL` (or the `ANTHROPIC_*` equivalents) from `.env`.
+
+`agent/__main__.py` is the default entry point and currently constructs `Agent` without `local=True`, so set the env vars before running, or edit `__main__.py` to pass `local=True` if you're pointing at a local server.
+
 ## Project layout
 
 ```
 local-agent/
-├── agent/                  # client side
+├── agent/
 │   ├── __main__.py         # REPL entry point (uv run python -m agent)
-│   ├── agent.py            # Agent class, OpenAI client wiring
+│   ├── agent.py            # Agent class, message history, context wiring
+│   ├── client.py           # OpenAI client builder (local / openai / anthropic)
 │   ├── loop.py             # streaming execution loop, tool-call reassembly
 │   ├── tool_handler.py     # tool registry + dispatch
+│   ├── context/
+│   │   ├── system_prompt.md
+│   │   └── memory.md
 │   └── tools/              # individual tools (one file each)
 │       ├── calculator.py
 │       ├── file_architecture.py
 │       ├── read_file.py
 │       └── weather.py
-├── server/                 # vLLM server side
-│   ├── config.py           # ServerConfig dataclass → vllm CLI args
-│   └── serve.py            # locates reasoning-parser plugin, execvp's vllm
-├── scripts/
-│   └── download_model.py   # snapshot_download wrapper with presets
-├── models/                 # HF cache (gitignored)
-└── pyproject.toml          # uv workspace, two optional dep groups
+└── pyproject.toml
 ```
 
 ## How the loop works
@@ -162,19 +136,7 @@ from agent.tools import echo
 agent = Agent(tools=[..., echo.tool])
 ```
 
-That's it — the schema goes to the model on the next request, and `ToolHandler` will dispatch to your `fn` when the model calls it.
-
-## Tuning for your GPU
-
-Edit `server/config.py`. The fields that matter most:
-
-| Field | Default | Notes |
-|---|---|---|
-| `max_model_len` | `16384` | NVIDIA's recommended max is 262144. Raise as VRAM allows. |
-| `max_num_seqs` | `8` | Concurrent sequences. Lower if you OOM. |
-| `gpu_memory_utilization` | `0.90` | Drop to `0.80` if other processes need VRAM. |
-| `kv_cache_dtype` | `fp8` | Set to `auto` for fp16 KV cache (more accurate, more memory). |
-| `enforce_eager` | `False` | Flip to `True` if CUDA graphs misbehave on the hybrid Mamba+Attn path. |
+The schema goes to the model on the next request, and `ToolHandler` dispatches to your `fn` when the model calls it.
 
 ## License
 
@@ -182,6 +144,4 @@ MIT (or whatever you prefer — add a `LICENSE` file).
 
 ## Acknowledgements
 
-- [NVIDIA Nemotron 3 Nano](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8) for the model
-- [vLLM](https://github.com/vllm-project/vllm) for serving
 - [wttr.in](https://wttr.in) for the weather endpoint
