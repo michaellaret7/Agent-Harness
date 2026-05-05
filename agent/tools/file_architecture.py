@@ -71,5 +71,5 @@ tool = {
         },
         'required': [],
     },
-    'fn': get_file_architecture,
+    'function': get_file_architecture,
 }

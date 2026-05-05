@@ -71,5 +71,5 @@ tool = {
         },
         'required': ['expression'],
     },
-    'fn': calculate,
+    'function': calculate,
 }

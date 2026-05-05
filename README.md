@@ -17,9 +17,9 @@
 
 A minimal agent loop. It streams tokens from a chat-completions endpoint, parses tool calls, executes them, and feeds the results back — until the model stops asking for tools and returns a final answer.
 
-The client is provider-agnostic. It works against:
+The client supports three backends:
 
-- A self-hosted vLLM/Ollama/llama.cpp server (the original target was NVIDIA Nemotron 3 Nano on vLLM — the server has since been split into its own repo and is hosted elsewhere).
+- A hosted vLLM endpoint (e.g. RunPod proxy) — original target was NVIDIA Nemotron 3 Nano on vLLM.
 - OpenAI's API.
 - Anthropic's API (via an OpenAI-compatible shim).
 
@@ -34,7 +34,7 @@ The client is provider-agnostic. It works against:
 
 - Python 3.12
 - [`uv`](https://github.com/astral-sh/uv) for dependency management
-- An endpoint to talk to — either a remote provider (OpenAI / Anthropic) or a self-hosted OpenAI-compatible server
+- An endpoint to talk to — Anthropic, OpenAI, or a hosted vLLM endpoint
 
 ## Setup
 
@@ -42,7 +42,7 @@ The client is provider-agnostic. It works against:
 # 1. Install dependencies
 uv sync --group agent
 
-# 2. Configure provider credentials (or point at a local server)
+# 2. Configure provider credentials
 cp .env.example .env
 # then edit .env — see "Configuring the endpoint" below
 ```
@@ -65,13 +65,11 @@ Type `exit` to quit.
 
 ## Configuring the endpoint
 
-`agent/client.py` builds the OpenAI client. Three modes:
+`agent/client.py` builds the OpenAI-compatible client. Three modes:
 
-**Local / self-hosted** — pass `local=True` when constructing `Agent`. Hits `http://localhost:8000/v1` with model `nemotron3-nano-4b-fp8`. Edit `LOCAL_BASE_URL` in `agent/client.py` to point at a different host or port.
+**Hosted vLLM (default)** — `Agent(tools=[...])` or `Agent(tools=[...], provider='vllm')`. The client reads `VLLM_API_URL` and `VLLM_MODEL` from `.env`. Point `VLLM_API_URL` at your RunPod (or other) endpoint.
 
-**Remote provider** — pass `model_provider='openai'` (or `'anthropic'`) and a `model` name. The client reads `OPENAI_API_KEY` / `OPENAI_API_URL` (or the `ANTHROPIC_*` equivalents) from `.env`.
-
-`agent/__main__.py` is the default entry point and currently constructs `Agent` without `local=True`, so set the env vars before running, or edit `__main__.py` to pass `local=True` if you're pointing at a local server.
+**OpenAI / Anthropic** — pass `provider='openai'` (or `'anthropic'`) and a `model` name. The client reads `OPENAI_API_KEY` / `OPENAI_API_URL` (or the `ANTHROPIC_*` equivalents) from `.env`.
 
 ## Project layout
 
@@ -80,7 +78,7 @@ local-agent/
 ├── agent/
 │   ├── __main__.py         # REPL entry point (uv run python -m agent)
 │   ├── agent.py            # Agent class, message history, context wiring
-│   ├── client.py           # OpenAI client builder (local / openai / anthropic)
+│   ├── client.py           # OpenAI-compatible client builder (vllm / openai / anthropic)
 │   ├── loop.py             # streaming execution loop, tool-call reassembly
 │   ├── tool_handler.py     # tool registry + dispatch
 │   ├── context/
@@ -100,7 +98,7 @@ local-agent/
 
 1. Streams a completion, printing content live.
 2. Reassembles fragmented `tool_calls` into complete dicts.
-3. If there are tool calls, executes each one through `ToolHandler.call()` and appends the results as `role: "tool"` messages.
+3. If there are tool calls, executes each one through `ToolHandler.execute()` and appends the results as `role: "tool"` messages.
 4. Repeats until the model returns a turn with no tool calls — that's the final answer.
 5. Bails out at `max_iters=10` to avoid runaway loops.
 
@@ -125,18 +123,19 @@ tool = {
         },
         'required': ['text'],
     },
-    'fn': echo,
+    'function': echo,
 }
 ```
 
-Then register it in `agent/__main__.py`:
+Then register it on the agent:
 
 ```python
 from agent.tools import echo
-agent = Agent(tools=[..., echo.tool])
+agent = Agent()
+agent.add_tool(**echo.tool)
 ```
 
-The schema goes to the model on the next request, and `ToolHandler` dispatches to your `fn` when the model calls it.
+The schema goes to the model on the next request, and `ToolHandler` dispatches to your `function` when the model calls it.
 
 ## License
 

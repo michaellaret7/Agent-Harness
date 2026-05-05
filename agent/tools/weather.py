@@ -27,5 +27,5 @@ tool = {
         },
         'required': ['location'],
     },
-    'fn': get_weather,
+    'function': get_weather,
 }

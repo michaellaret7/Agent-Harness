@@ -7,24 +7,36 @@ until the model returns plain content (or a safety ceiling is hit).
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from openai import OpenAI
 
-from agent.tool_handler import ToolHandler
+if TYPE_CHECKING:
+    from agent.agent import Agent
+
 
 def execution_loop(
-    client: OpenAI,
-    handler: ToolHandler,
-    messages: list[dict],
+    agent: 'Agent',
     model: str,
     max_iters: int = 10,
+    stream: bool = False,
 ) -> str:
-    for _ in range(max_iters):
-        content, tool_calls = _stream_once(
-            client,
-            messages,
-            handler.schemas() or None,
-            model,
-        )
+
+    for iteration in range(1, max_iters + 1):
+        if stream:
+            content, tool_calls = call_llm_stream(
+                agent.client,
+                agent.messages,
+                agent.tools,
+                model,
+            )
+        else:
+            content, tool_calls = call_llm(
+                agent.client,
+                agent.messages,
+                agent.tools,
+                model,
+            )
 
         # Reconstruct the assistant turn for history. tool_calls must stay
         # paired with the role:'tool' messages we add below.
@@ -33,40 +45,73 @@ def execution_loop(
         if tool_calls:
             assistant_msg['tool_calls'] = tool_calls
 
-        messages.append(assistant_msg)
+        agent.messages.append(assistant_msg)
 
         if not tool_calls:
             return content
 
-        for tc in tool_calls:
-            name = tc['function']['name']
-            args = tc['function']['arguments']
-            
-            result = handler.call(name, args) # This is where the actual python function is run
+        agent.messages.extend(agent.tool_handler.execute(tool_calls))
 
-            print(f'  [tool] {name}({args}) -> {result}')
+    raise RuntimeError(f'tool loop did not converge after {iteration} iterations')
 
-            messages.append({
-                'role': 'tool',
-                'tool_call_id': tc['id'],
-                'content': result,
-            })
-
-    raise RuntimeError(f'tool loop did not converge in {max_iters} iterations')
-
-
-def _stream_once(
+def call_llm(
     client: OpenAI,
     messages: list[dict],
     tools: list[dict] | None,
     model: str,
 ) -> tuple[str, list[dict]]:
-    """Stream one completion. Returns (content, tool_calls)."""
+    """Call the LLM and return (content, tool_calls) as plain dicts."""
+
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        tools=tools,
+        tool_choice='auto',
+        stream=False,
+    )
+
+    message = response.choices[0].message
+    content = message.content or ''
+
+    if message.reasoning:
+        print('='*200)
+        print(f'\033[90m{message.reasoning}\033[0m', end='', flush=True)
+        print('='*200)
+
+    if content:
+        print(content)
+
+    # Normalize SDK objects to dicts so the loop can treat stream/non-stream
+    # results identically and append them straight back into `messages`.
+    tool_calls: list[dict] = []
+    
+    for tc in message.tool_calls or []:
+        tool_calls.append({
+            'id': tc.id,
+            'type': 'function',
+            'function': {
+                'name': tc.function.name,
+                'arguments': tc.function.arguments or '',
+            },
+        })
+
+    return content, tool_calls
+
+def call_llm_stream(
+    client: OpenAI,
+    messages: list[dict],
+    tools: list[dict] | None,
+    model: str,
+) -> tuple[str, list[dict]]:
+    """Call the LLM and stream the response."""
 
     stream = client.chat.completions.create(
         model=model,
         messages=messages,
         tools=tools,
+        tool_choice='auto',
+        temperature=0.6,
+        top_p=0.95,
         stream=True,
     )
 
@@ -83,6 +128,7 @@ def _stream_once(
 
         # Surface reasoning live; do not keep it in history.
         reasoning = getattr(delta, 'reasoning_content', None)
+
         if reasoning:
             print(reasoning, end='', flush=True)
 
@@ -105,4 +151,8 @@ def _stream_once(
                         slot['function']['arguments'] += tc.function.arguments
 
     print()
-    return ''.join(content_pieces), [tool_calls[i] for i in sorted(tool_calls)]
+
+    content = ''.join(content_pieces)
+    tool_calls = [tool_calls[i] for i in sorted(tool_calls)]
+
+    return content, tool_calls

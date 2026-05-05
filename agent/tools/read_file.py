@@ -41,5 +41,5 @@ tool = {
         },
         'required': ['path'],
     },
-    'fn': read_file,
+    'function': read_file,
 }

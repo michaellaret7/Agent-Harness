@@ -1,49 +1,49 @@
-"""Build an OpenAI-compatible client for a given model provider."""
+"""Build an OpenAI-compatible client for Anthropic, OpenAI, or our hosted vLLM (RunPod)."""
 from __future__ import annotations
 
 import os
 
 from openai import OpenAI
 
-LOCAL_API_KEY = 'placeholder'
-LOCAL_BASE_URL = 'http://localhost:8000/v1'
+VLLM_PLACEHOLDER_KEY = 'placeholder'  # hosted vLLM endpoint does not require auth
 
 # provider -> (api_key env var, base_url env var)
-PROVIDER_ENV: dict[str, tuple[str, str]] = {
+HOSTED_PROVIDER_ENV: dict[str, tuple[str, str]] = {
     'anthropic': ('ANTHROPIC_API_KEY', 'ANTHROPIC_API_URL'),
     'openai': ('OPENAI_API_KEY', 'OPENAI_API_URL'),
 }
 
 
-def build_client(
-    model_provider: str | None = None,
-    model: str | None = None,
-    local: bool = False,
-) -> tuple[OpenAI, str]:
-    """Return (client, model). Pass local=True to hit the dev server."""
+def build_client(provider: str = 'vllm', model: str | None = None) -> tuple[OpenAI, str]:
+    """Return (client, model). provider is 'anthropic', 'openai', or 'vllm'."""
 
-    if local:
-        model = 'nemotron3-nano-4b-fp8'
-        return OpenAI(api_key=LOCAL_API_KEY, base_url=LOCAL_BASE_URL), model
+    provider = provider.lower()
 
-    if model_provider is None or model is None:
-        raise ValueError('model_provider and model are required when local=False')
+    if provider == 'vllm':
+        base_url = os.getenv('VLLM_API_URL')
+        model = model or os.getenv('VLLM_MODEL')
 
-    provider = model_provider.lower()
+        if not base_url:
+            raise RuntimeError('missing env var VLLM_API_URL')
 
-    if provider not in PROVIDER_ENV:
+        if not model:
+            raise RuntimeError('missing model: set VLLM_MODEL or pass model=')
+            
+        return OpenAI(api_key=VLLM_PLACEHOLDER_KEY, base_url=base_url), model
+
+    if provider not in HOSTED_PROVIDER_ENV:
         raise ValueError(
-            f'unknown model_provider {model_provider!r}; '
-            f'expected one of {sorted(PROVIDER_ENV)} (or pass local=True)'
+            f"unknown provider {provider!r}; "
+            f"expected 'vllm' or one of {sorted(HOSTED_PROVIDER_ENV)}"
         )
 
-    key_var, url_var = PROVIDER_ENV[provider]
+    if not model:
+        raise ValueError(f"model is required for provider {provider!r}")
+
+    key_var, url_var = HOSTED_PROVIDER_ENV[provider]
     api_key = os.getenv(key_var)
 
     if not api_key:
-        raise RuntimeError(
-            f'missing env var {key_var} for provider {provider!r}; '
-            f'set it in .env or pass local=True for the dev server'
-        )
+        raise RuntimeError(f'missing env var {key_var} for provider {provider!r}')
 
     return OpenAI(api_key=api_key, base_url=os.getenv(url_var)), model
