@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+# tools/file_architecture.py -> tools -> project root
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # Heavy or noisy directories — skip outright so the tree stays readable.
 SKIP = {

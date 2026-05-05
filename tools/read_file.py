@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-# agent/tools/read_file.py -> agent/tools -> agent -> project root
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+# tools/read_file.py -> tools -> project root
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # Cap output so a huge file can't blow the model's context window.
 MAX_CHARS = 16000

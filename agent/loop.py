@@ -110,8 +110,8 @@ def call_llm_stream(
         messages=messages,
         tools=tools,
         tool_choice='auto',
-        temperature=0.6,
-        top_p=0.95,
+        # temperature=0.6,
+        # top_p=0.95,
         stream=True,
     )
 

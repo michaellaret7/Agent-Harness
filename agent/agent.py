@@ -16,10 +16,10 @@ from dotenv import load_dotenv
 from agent.client import build_client
 from agent.loop import execution_loop
 from agent.tool_handler import ToolHandler
-from agent.tools import calculator, file_architecture, read_file, weather
+from tools import calculator, file_architecture, read_file, weather
+from tools.base import bash, edit, glob, grep, read, write
 
 load_dotenv()
-
 
 class Agent:
     def __init__(
@@ -46,6 +46,14 @@ class Agent:
         self.add_tool(**read_file.tool)
         self.add_tool(**calculator.tool)
         self.add_tool(**file_architecture.tool)
+
+        # ---- Register base tools ---- #
+        self.add_tool(**bash.tool)
+        self.add_tool(**read.tool)
+        self.add_tool(**write.tool)
+        self.add_tool(**edit.tool)
+        self.add_tool(**glob.tool)
+        self.add_tool(**grep.tool)
 
         self.build_initial_context()
 
@@ -83,7 +91,7 @@ class Agent:
 
 
 if __name__ == '__main__':
-    agent = Agent(provider='vllm')
+    agent = Agent(provider='anthropic', model='claude-opus-4-7')
 
     print(agent.messages)
 

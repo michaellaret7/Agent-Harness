@@ -1,6 +1,5 @@
 <div align="center">
 
-<img src="rm_header.svg" alt="local-agent" width="800"/>
 
 # local-agent
 
