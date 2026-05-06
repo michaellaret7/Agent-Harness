@@ -54,3 +54,101 @@ A tool module exports a `tool` dict with exactly four keys: `name`, `description
 `.env` is required. `.env.example` lists all three provider blocks (`ANTHROPIC_*`, `OPENAI_*`, `VLLM_*`). Only the credentials for the provider you actually use need real values.
 
 System prompt and persistent memory are plain markdown at `agent/context/system_prompt.md` and `agent/context/memory.md`. Both are read at `Agent.__init__` and concatenated into the initial system message — there is no runtime reload.
+
+## Development Guidelines
+
+### Core Philosophy
+
+- **KISS** — choose straightforward solutions; simple is easier to maintain and debug.
+- **YAGNI** — implement only what's needed now, not what might be useful later.
+- **DRY** — single source of truth for every piece of knowledge. Search for an existing helper before writing a new one; extract shared logic into pure reusable functions.
+
+### Design Principles
+
+- **Dependency Inversion** — high-level modules depend on abstractions, not low-level modules.
+- **Open/Closed** — open for extension, closed for modification.
+- **Single Responsibility** — one clear purpose per function/class/module.
+- **Fail Fast** — validate early, raise immediately when something's wrong.
+- **Type safety** — type hints and explicit return types are mandatory; the codebase should read as self-documenting.
+- **Resource efficiency** — context managers for all I/O; vectorize data-heavy work.
+
+### Code Constraints
+
+- Files: max 500 lines — split into modules if approaching the limit.
+- Functions: max 50 lines, single responsibility.
+- Classes: max 100 lines, one concept.
+- Group code by feature/responsibility.
+
+### Whitespace & Vertical Formatting (CRITICAL)
+
+Code must breathe. Use blank lines to separate logical blocks within functions:
+
+- Blank line after the initial declaration block.
+- Blank line between distinct steps inside a loop (fetch → validate → transform → assign).
+- Blank line before `return`.
+- Blank line between independent `if` checks in a loop.
+
+```python
+def process_items(items: list[str], lookup: dict):
+    results: dict[str, float] = {}
+    errors: list[str] = []
+
+    for item in items:
+        value = lookup.get(item)
+
+        if value is None:
+            errors.append(item)
+            continue
+
+        transformed = value * 2.0
+
+        results[item] = transformed
+
+    return results, errors
+```
+
+### Naming
+
+- Variables/functions: `snake_case`
+- Classes: `PascalCase`
+- Constants: `UPPER_SNAKE_CASE`
+- Private attributes: `_leading_underscore`
+- Type aliases / Enums: `PascalCase` / `UPPER_SNAKE_CASE`
+- Never prefix folders or files with `_`.
+
+### Documentation
+
+- Module docstring explaining purpose.
+- Complete docstrings on public functions.
+- Inline comments with `# Reason:` prefix only when the WHY is non-obvious.
+- Helper functions live at the **top** of the file under a banner block:
+
+  ```
+      ================================
+  --> Helper funcs
+      ================================
+  ```
+
+### Complexity Gauging
+
+Before writing or planning: assess whether the approach is under-engineered, optimally engineered, or over-engineered. Aim for the middle.
+
+### Testing
+
+- No pytest scaffolding — write **real tests with real data**.
+- A test exercises the full flow: pull real inputs, call the function, grade the output. Lint/format afterward.
+- Don't create parallel `test_x.py` and `test_x_fixed.py` files — fix the one test in place.
+
+### Hard Rules
+
+- **No backwards-compatibility shims.** If a change is needed, build the new solution and update every caller. Backwards-compat violates the design principles.
+- **Never create CLI flag–driven test scripts** like `tests/foo.py --mode long-only`. If behavior needs to switch, write separate entry points or pass arguments programmatically.
+- **Never auto-create READMEs** for specific functionality unless explicitly requested.
+- **Disagree freely** — correctness beats agreement. If the user is wrong, say so.
+- For specs, standards, or patterns worth referencing later, write a document under `docs/`, organized by topic (e.g. `docs/tools/`, `docs/agents/`). Institutional knowledge belongs in the repo, not just chat history.
+- **Agent system prompts use XML tags** (`<role>`, `<methodology>`, `<constraints>`, `<output_format>`) for top-level structure; markdown headers are sub-structure within those XML sections.
+- Use the LSP / Pyright server when available.
+
+### Branching
+
+`main` (production) · `dev` (integration) · `feature/*` · `fix/*` · `refactor/*` · `docs/*` · `test/*`
