@@ -13,7 +13,6 @@ HOSTED_PROVIDER_ENV: dict[str, tuple[str, str]] = {
     'openai': ('OPENAI_API_KEY', 'OPENAI_API_URL'),
 }
 
-
 def build_client(provider: str = 'vllm', model: str | None = None) -> tuple[OpenAI, str]:
     """Return (client, model). provider is 'anthropic', 'openai', or 'vllm'."""
 
