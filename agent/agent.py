@@ -1,13 +1,5 @@
 from __future__ import annotations
 
-# When run directly (`python agent/agent.py`), Python only puts agent/ on
-# sys.path, so `import agent.loop` fails. Add the project root so both
-# `python agent/agent.py` and `python -m agent.agent` work.
-if __package__ in (None, ''):
-    import sys
-    from pathlib import Path
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
 from pathlib import Path
 from typing import Any, Callable
 
@@ -84,14 +76,3 @@ class Agent:
         return execution_loop(self, model=self.model, stream=True)
 
 
-if __name__ == '__main__':
-    agent = Agent(provider='anthropic', model='claude-opus-4-7')
-
-    print(agent.messages)
-
-    while True:
-        prompt = input('>>> ')
-        if prompt == 'exit':
-            break
-        agent.run(prompt)
-        print()
