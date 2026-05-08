@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 def execution_loop(
     agent: 'Agent',
     model: str,
-    max_iters: int = 10,
+    max_iters: int = 100,
     stream: bool = False,
 ) -> str:
 

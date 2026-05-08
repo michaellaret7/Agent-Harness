@@ -5,7 +5,7 @@ from pathlib import Path
 
 # Heavy or noisy directories — skip outright so the tree stays readable.
 SKIP = {
-    '.venv', '__pycache__', '.git', 'node_modules', 'models',
+    '.venv', '__pycache__', '.git', '.claude', 'node_modules', 'models',
     '.pytest_cache', '.mypy_cache', '.ruff_cache', '.idea', '.vscode',
     'dist', 'build', '.next',
 }
