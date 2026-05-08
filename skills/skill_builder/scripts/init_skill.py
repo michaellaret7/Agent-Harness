@@ -32,7 +32,7 @@ def validate_skill_name(name: str) -> bool:
     return True
 
 
-def create_skill_md(skill_name: str, include_examples: bool = False) -> str:
+def create_skill_md(skill_name: str) -> str:
     """Generate SKILL.md content."""
     content = f'''---
 name: {skill_name}
@@ -235,7 +235,7 @@ This directory contains static files used by the skill:
 def init_skill(
     skill_name: str,
     output_path: str = ".",
-    resources: list = None,
+    resources: list[str] | None = None,
     include_examples: bool = False
 ) -> Path:
     """
@@ -267,7 +267,7 @@ def init_skill(
     
     # Create SKILL.md
     skill_md_path = skill_dir / "SKILL.md"
-    skill_md_path.write_text(create_skill_md(skill_name, include_examples))
+    skill_md_path.write_text(create_skill_md(skill_name))
     print(f"Created: {skill_md_path}")
     
     # Create resource directories
@@ -300,7 +300,7 @@ def init_skill(
     license_path.write_text("Apache-2.0\n\nSee: https://www.apache.org/licenses/LICENSE-2.0\n")
     print(f"Created: {license_path}")
     
-    print(f"\n✓ Skill initialized at: {skill_dir.absolute()}")
+    print(f"\n[OK] Skill initialized at: {skill_dir.absolute()}")
     print("\nNext steps:")
     print("1. Edit SKILL.md to add your skill's instructions")
     print("2. Update the name and description in the YAML frontmatter")

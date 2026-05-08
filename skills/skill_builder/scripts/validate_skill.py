@@ -13,7 +13,6 @@ Examples:
 """
 
 import argparse
-import os
 import re
 import sys
 from pathlib import Path
@@ -29,13 +28,13 @@ class ValidationResult:
         self.info: List[str] = []
     
     def add_error(self, message: str):
-        self.errors.append(f"❌ ERROR: {message}")
-    
+        self.errors.append(f"[ERROR] {message}")
+
     def add_warning(self, message: str):
-        self.warnings.append(f"⚠️  WARNING: {message}")
-    
+        self.warnings.append(f"[WARN]  {message}")
+
     def add_info(self, message: str):
-        self.info.append(f"ℹ️  INFO: {message}")
+        self.info.append(f"[INFO]  {message}")
     
     @property
     def is_valid(self) -> bool:
@@ -51,11 +50,11 @@ class ValidationResult:
         
         print()
         if self.is_valid:
-            print("✅ Skill validation PASSED")
+            print("[PASS] Skill validation PASSED")
             if self.warnings:
                 print(f"   ({len(self.warnings)} warning(s))")
         else:
-            print(f"❌ Skill validation FAILED ({len(self.errors)} error(s))")
+            print(f"[FAIL] Skill validation FAILED ({len(self.errors)} error(s))")
 
 
 def parse_yaml_frontmatter(content: str) -> Tuple[Optional[dict], str]:
@@ -125,10 +124,10 @@ def validate_skill_name(name: str) -> List[str]:
     return errors
 
 
-def validate_description(description: str) -> List[str]:
+def validate_description(description: str) -> Tuple[List[str], List[str]]:
     """Validate the description field."""
-    errors = []
-    warnings = []
+    errors: List[str] = []
+    warnings: List[str] = []
     
     if not description:
         errors.append("description field is empty")

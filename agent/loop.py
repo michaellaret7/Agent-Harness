@@ -45,8 +45,6 @@ def execution_loop(
         if tool_calls:
             assistant_msg['tool_calls'] = tool_calls
         
-        print(len(tool_calls))
-
         agent.messages.append(assistant_msg)
 
         if not tool_calls:
