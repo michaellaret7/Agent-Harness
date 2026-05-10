@@ -105,13 +105,11 @@ def call_llm_stream(
 ) -> tuple[str, list[dict]]:
     """Call the LLM and stream the response."""
 
-    stream = client.chat.completions.create(
+    response = client.chat.completions.create(
         model=model,
         messages=messages,
         tools=tools,
         tool_choice='auto',
-        # temperature=0.6,
-        # top_p=0.95,
         stream=True,
     )
 
@@ -120,7 +118,7 @@ def call_llm_stream(
     # first fragment; arguments accumulate across the rest.
     tool_calls: dict[int, dict] = {}
 
-    for chunk in stream:
+    for chunk in response:
         if not chunk.choices:
             continue
 
