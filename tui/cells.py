@@ -9,6 +9,8 @@ Background color is never set — terminal inherits its own theme.
 from __future__ import annotations
 
 import io
+import json
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Literal
@@ -24,14 +26,29 @@ from rich.text import Text
 
 ToolStatus = Literal['running', 'ok', 'error']
 
-ARGS_TRUNCATE = 80
-RESULT_LINES_TRUNCATE = 20
+ARG_VALUE_TRUNCATE = 60
+ARGS_LINE_TRUNCATE = 120
+RESULT_INDENT = '     '
 
-BORDER_BY_STATUS: dict[ToolStatus, str] = {
+STATUS_COLOR: dict[ToolStatus, str] = {
     'running': 'yellow',
     'ok': 'green',
     'error': 'red',
 }
+
+STATUS_GLYPH: dict[ToolStatus, str] = {
+    'running': '⟳',
+    'ok': '✓',
+    'error': '✗',
+}
+
+# Keys checked first when picking the header's primary-arg display.
+ARG_PRIORITY_KEYS = (
+    'command', 'cmd',
+    'path', 'file', 'file_path', 'filename',
+    'pattern', 'query', 'q',
+    'url',
+)
 
 
 def render_to_ansi(renderable: RenderableType, width: int) -> str:
@@ -60,16 +77,70 @@ def truncate_oneline(text: str, limit: int) -> str:
     return flat[:limit] + '…'
 
 
-def truncate_lines(text: str, limit: int) -> str:
-    """Keep first `limit` lines, append `… [+N lines]` marker."""
-    lines = text.splitlines()
+def extract_primary_arg(args_json: str) -> str:
+    """Pick the most informative scalar value from args for the header line."""
+    try:
+        data = json.loads(args_json) if args_json else {}
 
-    if len(lines) <= limit:
-        return text
+    except (ValueError, TypeError):
+        return ''
 
-    head = '\n'.join(lines[:limit])
+    if not isinstance(data, dict) or not data:
+        return ''
 
-    return f'{head}\n… [+{len(lines) - limit} lines]'
+    for key in ARG_PRIORITY_KEYS:
+        value = data.get(key)
+
+        if isinstance(value, (str, int, float, bool)):
+            return truncate_oneline(str(value), ARG_VALUE_TRUNCATE)
+
+    for value in data.values():
+        if isinstance(value, (str, int, float, bool)):
+            return truncate_oneline(str(value), ARG_VALUE_TRUNCATE)
+
+    return ''
+
+
+def format_duration(seconds: float) -> str:
+    """Human-friendly duration: '120ms', '3.4s', '1m12s'."""
+    if seconds < 1:
+        return f'{seconds * 1000:.0f}ms'
+
+    if seconds < 60:
+        return f'{seconds:.1f}s'
+
+    minutes, secs = divmod(int(seconds), 60)
+
+    return f'{minutes}m{secs}s'
+
+
+def format_result_summary(cell: 'ToolCell') -> str:
+    """Status-side tail: '28 lines · 0.4s', 'exit 1 · 0.2s', 'running… · 1.3s'."""
+    if cell.status == 'running':
+        if cell.started_at is None:
+            return 'running…'
+
+        return f'running… · {format_duration(time.monotonic() - cell.started_at)}'
+
+    duration_part = ''
+
+    if cell.started_at is not None and cell.ended_at is not None:
+        duration_part = f' · {format_duration(cell.ended_at - cell.started_at)}'
+
+    if cell.result is None:
+        return f'done{duration_part}'
+
+    if cell.status == 'error':
+        first_line = (cell.result.splitlines() or ['error'])[0]
+
+        return f'{truncate_oneline(first_line, 40)}{duration_part}'
+
+    line_count = cell.result.count('\n') + 1 if cell.result else 0
+
+    if line_count > 1:
+        return f'{line_count} lines{duration_part}'
+
+    return f'{len(cell.result)} chars{duration_part}'
 
 #     ================================
 # --> Cells
@@ -103,6 +174,9 @@ class AssistantCell(Cell):
     done: bool = False
     interrupted: bool = False
     ansi: str = field(default='', init=False)
+    # Wall-clock of last render(). History.append_* uses this to throttle
+    # streaming re-renders (Rich Markdown is expensive on growing content).
+    _last_render_t: float = field(default=0.0, init=False)
 
     def is_empty(self) -> bool:
         return not self.reasoning and not self.content
@@ -135,27 +209,52 @@ class ToolCell(Cell):
     tool_call_id: str
     result: str | None = None
     status: ToolStatus = 'running'
+    expanded: bool = False
+    started_at: float | None = None
+    ended_at: float | None = None
     ansi: str = field(default='', init=False)
 
     def render(self, width: int) -> None:
-        body_parts: list[RenderableType] = [
-            Text(truncate_oneline(self.args_json, ARGS_TRUNCATE), style='dim'),
-        ]
+        color = STATUS_COLOR[self.status]
+        arrow = '⮟' if self.expanded else '⮞'
+        glyph = STATUS_GLYPH[self.status]
+        chevron = '▴' if self.expanded else '▾'
 
-        if self.result is not None:
-            body_parts.append(Text(truncate_lines(self.result, RESULT_LINES_TRUNCATE)))
-        elif self.status == 'running':
-            body_parts.append(Text('running…', style='yellow'))
+        primary = extract_primary_arg(self.args_json)
+        summary = format_result_summary(self)
+        hint = 'ctrl+e to collapse' if self.expanded else 'ctrl+e to expand'
 
-        panel = Panel(
-            Group(*body_parts),
-            title=f'tool: {self.name}',
-            border_style=BORDER_BY_STATUS[self.status],
-            title_align='left',
-            expand=True,
-        )
+        header = Text()
+        header.append(f'{arrow} ', style=color)
+        header.append(self.name, style='bold')
 
-        self.ansi = render_to_ansi(panel, width)
+        if primary:
+            header.append('  → ', style='dim')
+            header.append(primary, style=color)
+
+        header.append('   ')
+        header.append(f'{glyph} {summary}', style=color)
+        header.append(f'   ({hint}) {chevron}', style='dim')
+
+        parts: list[RenderableType] = [header]
+
+        if self.args_json and self.args_json.strip() not in ('', '{}'):
+            sub = Text()
+            sub.append('  ⤷ ', style='dim')
+            sub.append(
+                truncate_oneline(self.args_json, ARGS_LINE_TRUNCATE),
+                style='dim',
+            )
+            parts.append(sub)
+
+        if self.expanded and self.result is not None:
+            indented = '\n'.join(
+                f'{RESULT_INDENT}{line}' for line in self.result.splitlines()
+            )
+            parts.append(Text(''))
+            parts.append(Text(indented))
+
+        self.ansi = render_to_ansi(Group(*parts), width)
 
 
 @dataclass

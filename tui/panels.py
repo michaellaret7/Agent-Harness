@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Callable
 
 from prompt_toolkit.data_structures import Point
-from prompt_toolkit.formatted_text import ANSI, FormattedText
+from prompt_toolkit.formatted_text import ANSI, FormattedText, to_formatted_text
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.layout.containers import Window
 from prompt_toolkit.layout.controls import FormattedTextControl
@@ -87,12 +87,10 @@ class OutputPanel:
         self.history = history
         self.follow_tail = True
         self._scroll_target = 0  # logical line index of topmost visible line
-        # Snapshot cache shared by _get_text and _get_cursor_position so they
-        # always see the same content. Without this, the worker thread can
-        # append a cell between the two calls, leaving the cursor's `y` past
-        # `line_count` and triggering a render-time IndexError.
-        self._cached_text: str = ''
+        # Version-keyed cache: rebuild only when history.version advances.
+        self._cached_version: int = -1
         self._cached_total_lines: int = 0
+        self._cached_ft: FormattedText = FormattedText()
 
         self.control = _OutputControl(
             panel=self,
@@ -113,22 +111,31 @@ class OutputPanel:
     # Render hooks
     # ----------------------------------------
 
-    def _refresh_text(self) -> str:
+    def _ensure_fresh(self) -> None:
+        """Rebuild the cache iff history.version advanced. No-op otherwise."""
+        v = self.history.version
+
+        if v == self._cached_version:
+            return
+
         full = _joined_ansi(self.history)
-        self._cached_text = full
+
+        self._cached_version = v
         self._cached_total_lines = full.count('\n') + 1 if full else 0
+        self._cached_ft = to_formatted_text(ANSI(full)) if full else FormattedText()
 
-        return full
+    def _get_text(self) -> FormattedText:
+        self._ensure_fresh()
 
-    def _get_text(self) -> ANSI:
-        return ANSI(self._refresh_text())
+        return self._cached_ft
 
     def _total_lines(self) -> int:
-        self._refresh_text()
+        self._ensure_fresh()
 
         return self._cached_total_lines
 
     def _get_cursor_position(self) -> Point:
+        self._ensure_fresh()
         total = self._cached_total_lines
 
         if self.follow_tail or total == 0:
@@ -257,6 +264,6 @@ class StatusBar:
             left_segments.append(('class:status.copy', '  ·  [COPY MODE — drag to select, Ctrl+G to exit]'))
             right = '  Enter send · PgUp/PgDn scroll · End jump · Ctrl+G exit copy · Ctrl+C exit '
         else:
-            right = '  Enter send · PgUp/PgDn or wheel scroll · Ctrl+G copy mode · Esc cancel · Ctrl+C exit '
+            right = '  Enter send · PgUp/PgDn or wheel scroll · Ctrl+E tools · Ctrl+G copy mode · Esc cancel · Ctrl+C exit '
 
         return FormattedText(left_segments + [('class:status', '   '), ('class:status', right)])

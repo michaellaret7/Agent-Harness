@@ -181,6 +181,11 @@ class TUIApp:
         def _on_tab(event: KeyPressEvent) -> None:
             event.app.layout.focus_next()
 
+        @kb.add('c-e')
+        def _on_ctrl_e(event: KeyPressEvent) -> None:
+            self.history.toggle_tools_expand()
+            event.app.invalidate()
+
         return kb
 
     # ----------------------------------------
