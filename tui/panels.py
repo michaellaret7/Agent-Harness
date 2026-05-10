@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Callable
 
+from prompt_toolkit.application import get_app
 from prompt_toolkit.data_structures import Point
 from prompt_toolkit.formatted_text import ANSI, FormattedText, to_formatted_text
 from prompt_toolkit.history import InMemoryHistory
@@ -21,18 +22,10 @@ from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
 from prompt_toolkit.widgets import TextArea
 
+from tui.cells import ToolCell
+
 if TYPE_CHECKING:
     from tui.history import History
-
-#     ================================
-# --> Helper funcs
-#     ================================
-
-
-def _joined_ansi(history: 'History') -> str:
-    cells = history.snapshot()
-
-    return '\n\n'.join(cell.ansi for cell in cells if cell.ansi)
 
 #     ================================
 # --> Output panel
@@ -54,6 +47,13 @@ class _OutputControl(FormattedTextControl):
 
     def mouse_handler(self, mouse_event: MouseEvent) -> Any:
         et = mouse_event.event_type
+
+        # DIAGNOSTIC — remove after click-to-toggle is confirmed working.
+        try:
+            with open('mouse_debug.log', 'a', encoding='utf-8') as f:
+                f.write(f'{et} pos={mouse_event.position}\n')
+        except Exception:
+            pass
 
         if et == MouseEventType.SCROLL_UP:
             self._panel.scroll_lines(-self._panel.WHEEL_STEP)
@@ -112,17 +112,67 @@ class OutputPanel:
     # ----------------------------------------
 
     def _ensure_fresh(self) -> None:
-        """Rebuild the cache iff history.version advanced. No-op otherwise."""
+        """Rebuild the cache iff history.version advanced. No-op otherwise.
+
+        ToolCell fragments are tagged with a per-cell mouse handler so the user
+        can click any tool block to toggle just its expand state. Other cells
+        pass through as plain (style, text) fragments.
+        """
         v = self.history.version
 
         if v == self._cached_version:
             return
 
-        full = _joined_ansi(self.history)
+        cells = self.history.snapshot()
+        fragments: list = []
+
+        for cell in cells:
+            if not cell.ansi:
+                continue
+
+            if fragments:
+                fragments.append(('', '\n\n'))
+
+            cell_frags = to_formatted_text(ANSI(cell.ansi))
+
+            if isinstance(cell, ToolCell):
+                handler = self._make_toggle_handler(cell.tool_call_id)
+                cell_frags = [
+                    (style, text, handler) for (style, text, *_) in cell_frags
+                ]
+
+            fragments.extend(cell_frags)
+
+        plain = ''.join(text for _, text, *_ in fragments)
 
         self._cached_version = v
-        self._cached_total_lines = full.count('\n') + 1 if full else 0
-        self._cached_ft = to_formatted_text(ANSI(full)) if full else FormattedText()
+        self._cached_total_lines = plain.count('\n') + 1 if plain else 0
+        self._cached_ft = FormattedText(fragments)
+
+    def _make_toggle_handler(self, tool_call_id: str) -> Callable[[MouseEvent], Any]:
+        """Build a per-fragment mouse handler that toggles one tool cell.
+
+        Listens to MOUSE_DOWN since several terminals (Windows Terminal, some
+        xterm modes) deliver press-only events without the matching MOUSE_UP.
+        """
+        history = self.history
+
+        def handler(mouse_event: MouseEvent) -> Any:
+            # DIAGNOSTIC — remove after click-to-toggle is confirmed working.
+            try:
+                with open('mouse_debug.log', 'a', encoding='utf-8') as f:
+                    f.write(f'  -> tool handler {tool_call_id}: {mouse_event.event_type}\n')
+            except Exception:
+                pass
+
+            if mouse_event.event_type == MouseEventType.MOUSE_DOWN:
+                history.toggle_tool_expand(tool_call_id)
+                get_app().invalidate()
+                return None
+
+            return NotImplemented
+
+        return handler
 
     def _get_text(self) -> FormattedText:
         self._ensure_fresh()
@@ -264,6 +314,6 @@ class StatusBar:
             left_segments.append(('class:status.copy', '  ·  [COPY MODE — drag to select, Ctrl+G to exit]'))
             right = '  Enter send · PgUp/PgDn scroll · End jump · Ctrl+G exit copy · Ctrl+C exit '
         else:
-            right = '  Enter send · PgUp/PgDn or wheel scroll · Ctrl+E tools · Ctrl+G copy mode · Esc cancel · Ctrl+C exit '
+            right = '  Enter send · PgUp/PgDn or wheel scroll · click tool to expand · Ctrl+G copy mode · Esc cancel · Ctrl+C exit '
 
         return FormattedText(left_segments + [('class:status', '   '), ('class:status', right)])

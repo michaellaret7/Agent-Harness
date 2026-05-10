@@ -1,15 +1,10 @@
 """Conversation history container.
 
 Single source of truth for what the UI renders. Mutated by Sink (worker
-thread); read by the renderer (UI thread). Uses a single threading.Lock —
-mutations and the render walk both take it. Render walk is fast (string
-join), so contention is fine.
-
-A monotonic `version` counter is bumped whenever a mutation produces a new
-visible frame. The UI uses it to short-circuit cache invalidation — if the
-version hasn't changed, the previously joined+parsed FormattedText can be
-reused as-is. Streaming cell renders are throttled (see STREAM_RENDER_INTERVAL_S)
-so we don't re-run Rich Markdown on every single token delta.
+thread); read by the renderer (UI thread). A monotonic `version` counter
+keys the OutputPanel's render cache — bumped once per visible mutation.
+Streaming cell renders are throttled (STREAM_RENDER_INTERVAL_S) to keep
+Rich Markdown off the hot path during token-by-token deltas.
 """
 from __future__ import annotations
 
@@ -170,23 +165,15 @@ class History:
         cell.render(self.width)
         self.version += 1
 
-    def toggle_tools_expand(self) -> None:
-        """Toggle every ToolCell's expand state in unison.
+    def toggle_tool_expand(self, tool_call_id: str) -> None:
+        """Flip the expand state of one tool cell, identified by call id."""
+        cell = self._tool_index.get(tool_call_id)
 
-        If any tool is currently collapsed, expand all; otherwise collapse all.
-        """
-        with self._lock:
-            tools = [c for c in self._cells if isinstance(c, ToolCell)]
-
-        if not tools:
+        if cell is None:
             return
 
-        target = any(not c.expanded for c in tools)
-
-        for cell in tools:
-            cell.expanded = target
-            cell.render(self.width)
-
+        cell.expanded = not cell.expanded
+        cell.render(self.width)
         self.version += 1
 
     def append_error(self, message: str) -> None:

@@ -174,9 +174,7 @@ class AssistantCell(Cell):
     done: bool = False
     interrupted: bool = False
     ansi: str = field(default='', init=False)
-    # Wall-clock of last render(). History.append_* uses this to throttle
-    # streaming re-renders (Rich Markdown is expensive on growing content).
-    _last_render_t: float = field(default=0.0, init=False)
+    _last_render_t: float = field(default=0.0, init=False)  # throttles streaming renders
 
     def is_empty(self) -> bool:
         return not self.reasoning and not self.content
@@ -222,7 +220,7 @@ class ToolCell(Cell):
 
         primary = extract_primary_arg(self.args_json)
         summary = format_result_summary(self)
-        hint = 'ctrl+e to collapse' if self.expanded else 'ctrl+e to expand'
+        hint = 'click to collapse' if self.expanded else 'click to expand'
 
         header = Text()
         header.append(f'{arrow} ', style=color)
