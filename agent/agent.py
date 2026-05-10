@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any, Callable
 
@@ -9,8 +10,10 @@ from agent.client import build_client
 from agent.loop import execution_loop
 from agent.tool_handler import ToolHandler
 from tools.base import bash, edit, glob, grep, read, tree, write
+from tui.sink import Sink
 
 load_dotenv()
+
 
 class Agent:
     def __init__(
@@ -71,8 +74,22 @@ class Agent:
         else:
             self.messages.append({'role': 'system', 'content': self.system_prompt})
 
-    def run(self, prompt: str) -> str:
+    def run(
+        self,
+        prompt: str,
+        sink: Sink | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> str:
+
+    
         self.messages.append({'role': 'user', 'content': prompt})
-        return execution_loop(self, model=self.model, stream=True)
+
+        return execution_loop(
+            self,
+            model=self.model,
+            stream=True,
+            sink=sink,
+            cancel_event=cancel_event,
+        )
 
 

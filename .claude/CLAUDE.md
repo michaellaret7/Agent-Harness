@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Dependencies live in the `agent` group, not the default group. Use `uv sync --group agent` to install — a plain `uv sync` will leave `openai`, `httpx`, and `pydantic` missing.
 
-Entry point: `uv run python -m agent.agent` (or `uv run python agent/agent.py`). The README's `python -m agent` does not work — there is no `agent/__main__.py`. `agent/agent.py` adds the project root to `sys.path` at import time so both invocation forms work.
+Entry point: `uv run python -m agent`. This launches the TUI (`tui/app.py`). The legacy `python -m agent.agent` / `python agent/agent.py` paths are gone — there is no headless CLI mode. To use the agent programmatically, import `Agent` and call `agent.run(prompt, sink=..., cancel_event=...)`. If `sink` is None, output goes to stdout via `StdoutSink` (used for tests/scripts).
 
 Pinned to Python 3.12 (`<3.13`) via `pyproject.toml` and `.python-version`. uv will refuse to sync on a 3.13 interpreter.
 
@@ -14,9 +14,20 @@ There is no test suite, linter, or build step configured.
 
 ## Architecture
 
-### Tool location
+### Top-level package layout
 
-Tools live at the **top-level `tools/` package**, not `agent/tools/` as the README claims. `agent/agent.py` imports them as `from tools.base import bash, edit, glob, grep, read, tree, write`. When adding tools, follow this layout — do not create `agent/tools/`.
+`tools/` and `tui/` both live at the **project root**, not under `agent/`. `agent/agent.py` imports them as `from tools.base import ...` and `from tui.sink import Sink`. When adding new packages, follow this convention — keep them top-level so they're importable from anywhere in the repo.
+
+### TUI
+
+`tui/` is the prompt_toolkit + Rich frontend. Architecture:
+- `tui/cells.py` — Cell taxonomy (User/Assistant/Tool/Error). Each cell renders to ANSI via Rich and caches the result on `cell.ansi`.
+- `tui/history.py` — Lock-protected list of cells. Mutated by Sink (worker thread); read by renderer (UI thread).
+- `tui/sink.py` — `Sink` Protocol with 8 methods (`on_user_message`, `on_reasoning_delta`, `on_content_delta`, `on_assistant_end`, `on_tool_start`, `on_tool_end`, `on_error`, `on_interrupted`). Two implementations: `TUISink` (mutates History + invalidates app), `StdoutSink` (legacy fallback).
+- `tui/panels.py` — `OutputPanel` (FormattedTextControl + ANSI), `InputPanel` (TextArea, multi-line, Shift+Enter newline), `StatusBar`.
+- `tui/app.py` — `TUIApp` class. Async shell, sync loop. On Enter, `agent.run(prompt, sink, cancel_event)` runs in a worker via `asyncio.to_thread`. Esc sets `cancel_event` AND closes the in-flight stream. Ctrl+C double-tap exits.
+
+**Transparent background is a hard constraint** — Rich and prompt_toolkit are configured to never set a background color, so the terminal's native theme shows through.
 
 ### Provider abstraction
 
