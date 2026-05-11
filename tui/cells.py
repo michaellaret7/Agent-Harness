@@ -405,7 +405,7 @@ class ToolCell(Cell):
         header.append(self.name, style='bold')
 
         if primary:
-            header.append('  → ', style='dim')
+            header.append(' → ', style='dim')
             header.append(primary, style=color)
 
         header.append('   ')

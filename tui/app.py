@@ -185,7 +185,7 @@ class TUIApp:
             self.output.jump_to_bottom()
             event.app.invalidate()
 
-        @kb.add('c-g')
+        @kb.add('c-t')
         def _on_toggle_copy_mode(event: KeyPressEvent) -> None:
             self.copy_mode = not self.copy_mode
             event.app.invalidate()

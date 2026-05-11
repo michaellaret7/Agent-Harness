@@ -533,9 +533,9 @@ class StatusBar:
             left_segments.append(('class:status.locked', f'  ·  [scrolled y={scroll_y}]'))
 
         if copy_mode:
-            left_segments.append(('class:status.copy', '  ·  [COPY MODE — drag to select, Ctrl+G to exit]'))
-            right = '  Enter send · PgUp/PgDn scroll · End jump · Ctrl+G exit copy · Ctrl+C exit '
+            left_segments.append(('class:status.copy', '  ·  [COPY MODE — drag to select, Ctrl+T to exit]'))
+            right = '  Enter send · PgUp/PgDn scroll · End jump · Ctrl+T exit copy · Ctrl+C exit '
         else:
-            right = '  Enter send · PgUp/PgDn or wheel scroll · click tool to expand · Ctrl+G copy mode · Esc cancel · Ctrl+C exit '
+            right = '  Enter send · PgUp/PgDn or wheel scroll · click tool to expand · Ctrl+T copy mode · Esc cancel · Ctrl+C exit '
 
         return FormattedText(left_segments + [('class:status', '   '), ('class:status', right)])

@@ -28,7 +28,7 @@ The client supports three backends:
 - **Streaming token-by-token output** with live reasoning passthrough (the `<think>...</think>` blocks thinking models emit).
 - **Tool calling** in the standard OpenAI tool-call format, with fragment reassembly across stream chunks.
 - **Cancellable turns** — `Esc` aborts an in-flight stream; `Ctrl+C` double-tap exits.
-- **Click-to-copy mode** — `Ctrl+G` releases mouse capture so the terminal's native click-drag selection works.
+- **Click-to-copy mode** — `Ctrl+T` releases mouse capture so the terminal's native click-drag selection works.
 - **Built-in tools** — bash, read/write/edit, glob, grep, tree, and search.
 
 ## Requirements
@@ -73,7 +73,7 @@ read agent/loop.py and explain how tool calls are reassembled across stream chun
 | `PgUp` / `PgDn`    | Scroll the output panel                               |
 | `Ctrl+↑` / `Ctrl+↓`| Scroll the output panel                               |
 | `End`              | Jump to bottom and re-lock to tail                    |
-| `Ctrl+G`           | Toggle copy mode (releases mouse for text selection)  |
+| `Ctrl+T`           | Toggle copy mode (releases mouse for text selection)  |
 | `Tab`              | Cycle focus                                           |
 
 ## Configuring the endpoint
