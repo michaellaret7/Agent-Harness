@@ -24,7 +24,7 @@ from prompt_toolkit.layout.processors import Processor, Transformation, Transfor
 from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
 from prompt_toolkit.widgets import TextArea
 
-from tui.cells import ToolCell
+from tui.cells import AssistantCell, Cell, ErrorCell, HeaderCell, ToolCell, UserCell
 
 if TYPE_CHECKING:
     from tui.history import History
@@ -34,15 +34,30 @@ if TYPE_CHECKING:
 #     ================================
 
 TOOL_ARROW_CHARS = ('⮞', '⮟')
+ASSISTANT_ARROW_CHARS = ('▸', '▾')
+
+# Cells that mark a turn boundary — anything that introduces or interrupts an
+# agent turn. Adjacent cells in this set get a full blank line of breathing
+# room; everything else (assistant↔tool within a turn) stacks tight.
+TURN_BOUNDARY_TYPES = (UserCell, HeaderCell, ErrorCell)
+
+
+def cell_separator(prev: Cell, curr: Cell) -> str:
+    """Vertical breathing room between two adjacent cells."""
+    if isinstance(prev, TURN_BOUNDARY_TYPES) or isinstance(curr, TURN_BOUNDARY_TYPES):
+        return '\n\n'
+
+    return '\n'
 
 
 def attach_arrow_handler(
     fragments: list,
     handler: Callable[[MouseEvent], Any],
+    arrows: tuple[str, ...] = TOOL_ARROW_CHARS,
 ) -> list:
     """Wrap the click handler around only the leading arrow glyph.
 
-    Scans fragments left-to-right, finds the first ⮞/⮟ character, and splits
+    Scans fragments left-to-right, finds the first arrow character, and splits
     that fragment so the handler is bound to the arrow (plus its trailing
     space, if any) and nothing else. Everything before/after stays inert.
     """
@@ -57,7 +72,7 @@ def attach_arrow_handler(
 
         idx = -1
 
-        for ch in TOOL_ARROW_CHARS:
+        for ch in arrows:
             i = text.find(ch)
 
             if i != -1 and (idx == -1 or i < idx):
@@ -183,13 +198,14 @@ class OutputPanel:
 
         cells = self.history.snapshot()
         fragments: list = []
+        prev_cell: Cell | None = None
 
         for cell in cells:
             if not cell.ansi:
                 continue
 
-            if fragments:
-                fragments.append(('', '\n\n'))
+            if prev_cell is not None:
+                fragments.append(('', cell_separator(prev_cell, cell)))
 
             cell_frags: list = list(cell.fragments)
 
@@ -197,7 +213,12 @@ class OutputPanel:
                 handler = self._make_toggle_handler(cell.tool_call_id)
                 cell_frags = attach_arrow_handler(cell_frags, handler)
 
+            elif isinstance(cell, AssistantCell) and cell.reasoning and (cell.content or cell.done):
+                handler = self._make_reasoning_handler(cell.cell_id)
+                cell_frags = attach_arrow_handler(cell_frags, handler, arrows=ASSISTANT_ARROW_CHARS)
+
             fragments.extend(cell_frags)
+            prev_cell = cell
 
         newline_count = sum(text.count('\n') for _, text, *_ in fragments)
 
@@ -220,6 +241,26 @@ class OutputPanel:
             if mouse_event.event_type == MouseEventType.MOUSE_DOWN:
                 self._freeze_viewport()
                 history.toggle_tool_expand(tool_call_id)
+                self._reclamp_after_resize()
+                get_app().invalidate()
+                return None
+
+            return NotImplemented
+
+        return handler
+
+    def _make_reasoning_handler(self, cell_id: str) -> Callable[[MouseEvent], Any]:
+        """Per-fragment mouse handler that toggles an AssistantCell's reasoning.
+
+        Same viewport-freeze pattern as `_make_toggle_handler` so expanding the
+        thinking block pushes content downward instead of jumping the page.
+        """
+        history = self.history
+
+        def handler(mouse_event: MouseEvent) -> Any:
+            if mouse_event.event_type == MouseEventType.MOUSE_DOWN:
+                self._freeze_viewport()
+                history.toggle_assistant_reasoning(cell_id)
                 self._reclamp_after_resize()
                 get_app().invalidate()
                 return None

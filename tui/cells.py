@@ -13,6 +13,7 @@ from __future__ import annotations
 import io
 import json
 import time
+import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -335,6 +336,11 @@ class AssistantCell(Cell):
     content: str = ''
     done: bool = False
     interrupted: bool = False
+    # Collapsible reasoning. Live-shown while streaming; once `done`, the
+    # reasoning hides behind a clickable header that toggles this flag.
+    reasoning_expanded: bool = False
+    # Stable id used by the OutputPanel to route clicks back to this cell.
+    cell_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     ansi: str = field(default='', init=False)
     _last_render_t: float = field(default=0.0, init=False)  # throttles streaming renders
 
@@ -345,10 +351,22 @@ class AssistantCell(Cell):
         parts: list[RenderableType] = []
 
         if self.reasoning:
-            parts.append(Text(self.reasoning, style='dim italic'))
+            # Reasoning is "finished" the moment the model starts emitting
+            # content (or the turn ends with reasoning-only). Collapse as soon
+            # as that flips so the user's eyes track to the answer.
+            reasoning_finished = bool(self.content) or self.done
 
-            if self.content:
-                parts.append(Text('─── thinking ───', style='dim'))
+            if not reasoning_finished:
+                parts.append(Text(self.reasoning, style='dim italic'))
+            else:
+                arrow = '▾' if self.reasoning_expanded else '▸'
+                parts.append(Text(f'{arrow} thinking', style='dim'))
+
+                if self.reasoning_expanded:
+                    parts.append(Text(self.reasoning, style='dim italic'))
+
+                if self.content:
+                    parts.append(Text(''))  # blank line so dropdown reads as a header
 
         if self.content:
             parts.append(Markdown(self.content))

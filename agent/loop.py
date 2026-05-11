@@ -27,6 +27,26 @@ if TYPE_CHECKING:
 #     ================================
 
 
+def _extract_reasoning(obj) -> str:
+    """Pull reasoning text from any of the provider shapes: `reasoning`,
+    `reasoning_content`, or structured `reasoning_details[].text`."""
+    text = getattr(obj, 'reasoning_content', None) or getattr(obj, 'reasoning', None)
+
+    if text:
+        return text
+
+    details = getattr(obj, 'reasoning_details', None) or []
+    parts: list[str] = []
+
+    for d in details:
+        t = d.get('text') if isinstance(d, dict) else getattr(d, 'text', None)
+
+        if t:
+            parts.append(t)
+
+    return ''.join(parts)
+
+
 def _has_partial_tool_call(tool_calls: list[dict]) -> bool:
     """A tool_call missing id/name is malformed and unusable for the next request."""
     for tc in tool_calls:
@@ -147,7 +167,7 @@ def call_llm(
     message = response.choices[0].message
     content = message.content or ''
 
-    reasoning = getattr(message, 'reasoning', None)
+    reasoning = _extract_reasoning(message)
 
     if reasoning:
         sink.on_reasoning_delta(reasoning)
@@ -208,7 +228,7 @@ def call_llm_stream(
         delta = chunk.choices[0].delta
 
         # Surface reasoning live; do not keep it in history.
-        reasoning = getattr(delta, 'reasoning_content', None)
+        reasoning = _extract_reasoning(delta)
 
         if reasoning:
             sink.on_reasoning_delta(reasoning)

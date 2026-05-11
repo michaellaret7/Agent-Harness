@@ -191,6 +191,23 @@ class History:
         cell.render(self.width)
         self.version += 1
 
+    def toggle_assistant_reasoning(self, cell_id: str) -> None:
+        """Flip the reasoning-collapse state of one AssistantCell."""
+        with self._lock:
+            target: AssistantCell | None = None
+
+            for cell in self._cells:
+                if isinstance(cell, AssistantCell) and cell.cell_id == cell_id:
+                    target = cell
+                    break
+
+        if target is None:
+            return
+
+        target.reasoning_expanded = not target.reasoning_expanded
+        target.render(self.width)
+        self.version += 1
+
     def append_error(self, message: str) -> None:
         cell = ErrorCell(message=message)
         cell.render(self.width)

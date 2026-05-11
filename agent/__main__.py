@@ -14,7 +14,8 @@ from tui.app import TUIApp
 
 
 def main() -> None:
-    agent = Agent(provider='anthropic', model='claude-opus-4-7')
+    # agent = Agent(provider='anthropic', model='claude-opus-4-7')
+    agent = Agent(provider='openrouter', model='qwen/qwen3.6-plus')
     app = TUIApp(agent)
 
     asyncio.run(app.run_async())
