@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from prompt_toolkit.application import get_app
 from prompt_toolkit.data_structures import Point
-from prompt_toolkit.formatted_text import ANSI, FormattedText, to_formatted_text
+from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.layout.containers import HSplit, VSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
@@ -168,9 +168,13 @@ class OutputPanel:
     def _ensure_fresh(self) -> None:
         """Rebuild the cache iff history.version advanced. No-op otherwise.
 
+        Each cell publishes its own pre-parsed fragments (built once on the
+        worker thread inside cell.render); we just concatenate them here. That
+        keeps the UI thread off the ANSI parser even when a single streaming
+        cell bumps the version 25 times per second.
+
         ToolCell fragments are tagged with a per-cell mouse handler so the user
-        can click any tool block to toggle just its expand state. Other cells
-        pass through as plain (style, text) fragments.
+        can click any tool block to toggle just its expand state.
         """
         v = self.history.version
 
@@ -187,18 +191,18 @@ class OutputPanel:
             if fragments:
                 fragments.append(('', '\n\n'))
 
-            cell_frags = to_formatted_text(ANSI(cell.ansi))
+            cell_frags: list = list(cell.fragments)
 
             if isinstance(cell, ToolCell):
                 handler = self._make_toggle_handler(cell.tool_call_id)
-                cell_frags = attach_arrow_handler(list(cell_frags), handler)
+                cell_frags = attach_arrow_handler(cell_frags, handler)
 
             fragments.extend(cell_frags)
 
-        plain = ''.join(text for _, text, *_ in fragments)
+        newline_count = sum(text.count('\n') for _, text, *_ in fragments)
 
         self._cached_version = v
-        self._cached_total_lines = plain.count('\n') + 1 if plain else 0
+        self._cached_total_lines = newline_count + 1 if fragments else 0
         self._cached_ft = FormattedText(fragments)
 
     def _make_toggle_handler(self, tool_call_id: str) -> Callable[[MouseEvent], Any]:

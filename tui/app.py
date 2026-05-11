@@ -108,6 +108,11 @@ class TUIApp:
             # to scroll the *focused* window — which is the input. We own
             # pageup/down ourselves to scroll the OutputPanel's slice.
             enable_page_navigation_bindings=False,
+            # Cap render rate at 60 Hz. Smooth-scroll mice fire 60-120 wheel
+            # events/sec; without this floor each one races through a full
+            # re-render. 60 Hz is the smallest interval the eye can resolve
+            # and gives the renderer headroom to coalesce burst events.
+            min_redraw_interval=1 / 60,
         )
 
     # ----------------------------------------
@@ -234,29 +239,57 @@ class TUIApp:
     # Resize handling — keep History.width in sync
     # ----------------------------------------
 
-    def _refresh_size(self) -> None:
-        size = self.application.output.get_size()
-        new_width = max(20, size.columns - 2)
+    RESIZE_DEBOUNCE_S = 0.3
+    RESIZE_POLL_S = 0.05
+
+    def _current_width(self) -> int:
+        return max(20, self.application.output.get_size().columns - 2)
+
+    def _sync_width_now(self) -> None:
+        """Immediate width sync. Used once on startup."""
+        new_width = self._current_width()
 
         if new_width != self.history.width:
             self.history.width = new_width
             self.history.rerender_all()
+
+    async def _watch_size(self) -> None:
+        """Re-render cells once the terminal width has been stable for a beat.
+
+        rerender_all walks every cell through Rich, which is expensive. During
+        an active resize drag the OS fires many width changes in quick
+        succession; running rerender_all on each one starves the event loop.
+        Waiting for the size to settle defers that work to the post-drag idle
+        moment, where it's invisible to the user.
+        """
+        last_seen = self.history.width
+        changed_at: float | None = None
+
+        while True:
+            new_width = self._current_width()
+
+            if new_width != last_seen:
+                last_seen = new_width
+                changed_at = time.monotonic()
+
+            elif changed_at is not None and time.monotonic() - changed_at >= self.RESIZE_DEBOUNCE_S:
+                if new_width != self.history.width:
+                    self.history.width = new_width
+                    self.history.rerender_all()
+                    self.application.invalidate()
+
+                changed_at = None
+
+            await asyncio.sleep(self.RESIZE_POLL_S)
 
     # ----------------------------------------
     # Run
     # ----------------------------------------
 
     async def run_async(self) -> None:
-        # Periodic resize check — prompt_toolkit fires invalidate on resize,
-        # but we need to re-render cells when width changes.
-        async def watch_size() -> None:
-            while True:
-                self._refresh_size()
-                await asyncio.sleep(0.25)
+        self._sync_width_now()
 
-        self._refresh_size()
-
-        size_task = asyncio.create_task(watch_size())
+        size_task = asyncio.create_task(self._watch_size())
 
         try:
             await self.application.run_async()

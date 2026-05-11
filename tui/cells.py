@@ -1,8 +1,10 @@
 """Conversation cells: pure data + Rich-based render to ANSI.
 
 Each cell is a dataclass holding raw state. `render(width)` produces an ANSI
-string and stores it on `self.ansi`. The renderer just walks the History and
-joins `cell.ansi`.
+string, stores it on `self.ansi`, AND pre-parses it into prompt_toolkit
+fragments cached on `self.fragments`. Doing the parse here (worker thread)
+keeps the UI thread's scroll path off the ANSI parser; the OutputPanel just
+concatenates pre-parsed fragments per frame.
 
 Background color is never set — terminal inherits its own theme.
 """
@@ -16,6 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
 
+from prompt_toolkit.formatted_text import ANSI, to_formatted_text
 from rich.box import ROUNDED
 from rich.console import Console, Group, RenderableType
 from rich.markdown import Markdown
@@ -68,6 +71,40 @@ def render_to_ansi(renderable: RenderableType, width: int) -> str:
         console.print(renderable, end='')
 
     return capture.get()
+
+
+def parse_ansi_to_fragments(ansi: str) -> list[tuple[str, str]]:
+    """Parse ANSI escapes into prompt_toolkit fragments, merging same-style runs.
+
+    Rich flips style on every escape boundary, producing 3-10x more fragments
+    than necessary. Coalescing identical-style runs here shrinks the fragment
+    count, which directly cuts the per-frame cost of split_lines and the
+    FormattedTextControl cache-key tuple inside prompt_toolkit's render path.
+    """
+    if not ansi:
+        return []
+
+    raw = to_formatted_text(ANSI(ansi))
+
+    if not raw:
+        return []
+
+    out: list[tuple[str, str]] = []
+    cur_style = raw[0][0]
+    cur_parts: list[str] = [raw[0][1]]
+
+    for style, text, *_ in raw[1:]:
+        if style == cur_style:
+            cur_parts.append(text)
+            continue
+
+        out.append((cur_style, ''.join(cur_parts)))
+        cur_style = style
+        cur_parts = [text]
+
+    out.append((cur_style, ''.join(cur_parts)))
+
+    return out
 
 
 def truncate_oneline(text: str, limit: int) -> str:
@@ -219,12 +256,22 @@ def format_result_summary(cell: 'ToolCell') -> str:
 
 
 class Cell(ABC):
-    """Base cell. Subclasses implement render(width) -> mutates self.ansi."""
+    """Base cell. Subclasses implement render(width) → call self._finalize(ansi).
+
+    `_finalize` stores the ANSI text AND pre-parses it into prompt_toolkit
+    fragments. The OutputPanel reads `cell.fragments` directly on the hot path
+    instead of re-parsing ANSI on every cache miss.
+    """
 
     ansi: str = ''
+    fragments: list[tuple[str, str]] = []
 
     @abstractmethod
     def render(self, width: int) -> None: ...
+
+    def _finalize(self, ansi: str) -> None:
+        self.ansi = ansi
+        self.fragments = parse_ansi_to_fragments(ansi)
 
 
 @dataclass
@@ -268,7 +315,7 @@ class HeaderCell(Cell):
             expand=False,
         )
 
-        self.ansi = render_to_ansi(panel, width)
+        self._finalize(render_to_ansi(panel, width))
 
 
 @dataclass
@@ -279,7 +326,7 @@ class UserCell(Cell):
     def render(self, width: int) -> None:
         renderable = Text('▎ ', style='cyan') + Text(self.text)
 
-        self.ansi = render_to_ansi(renderable, width)
+        self._finalize(render_to_ansi(renderable, width))
 
 
 @dataclass
@@ -312,7 +359,7 @@ class AssistantCell(Cell):
         if self.interrupted:
             parts.append(Text('[interrupted]', style='dim red'))
 
-        self.ansi = render_to_ansi(Group(*parts), width) if parts else ''
+        self._finalize(render_to_ansi(Group(*parts), width) if parts else '')
 
 
 @dataclass
@@ -364,7 +411,7 @@ class ToolCell(Cell):
             parts.append(Text(''))
             parts.append(Text(indented))
 
-        self.ansi = render_to_ansi(Group(*parts), width)
+        self._finalize(render_to_ansi(Group(*parts), width))
 
 
 @dataclass
@@ -381,4 +428,4 @@ class ErrorCell(Cell):
             expand=True,
         )
 
-        self.ansi = render_to_ansi(panel, width)
+        self._finalize(render_to_ansi(panel, width))
