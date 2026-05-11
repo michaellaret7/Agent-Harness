@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from agent.client import build_client
 from agent.loop import execution_loop
 from agent.tool_handler import ToolHandler
-from tools.base import bash, edit, glob, grep, read, tree, write
+from tools.base import bash, edit, glob, grep, read, search, tree, write
 from tui.sink import Sink
 
 load_dotenv()
@@ -43,6 +43,7 @@ class Agent:
         self.add_tool(**glob.tool)
         self.add_tool(**grep.tool)
         self.add_tool(**tree.tool)
+        self.add_tool(**search.tool)
 
         self.build_initial_context()
 

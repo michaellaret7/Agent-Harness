@@ -216,11 +216,9 @@ class ToolCell(Cell):
         color = STATUS_COLOR[self.status]
         arrow = '⮟' if self.expanded else '⮞'
         glyph = STATUS_GLYPH[self.status]
-        chevron = '▴' if self.expanded else '▾'
 
         primary = extract_primary_arg(self.args_json)
         summary = format_result_summary(self)
-        hint = 'click to collapse' if self.expanded else 'click to expand'
 
         header = Text()
         header.append(f'{arrow} ', style=color)
@@ -232,7 +230,6 @@ class ToolCell(Cell):
 
         header.append('   ')
         header.append(f'{glyph} {summary}', style=color)
-        header.append(f'   ({hint}) {chevron}', style='dim')
 
         parts: list[RenderableType] = [header]
 

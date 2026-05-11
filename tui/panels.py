@@ -28,6 +28,65 @@ if TYPE_CHECKING:
     from tui.history import History
 
 #     ================================
+# --> Helper funcs
+#     ================================
+
+TOOL_ARROW_CHARS = ('⮞', '⮟')
+
+
+def attach_arrow_handler(
+    fragments: list,
+    handler: Callable[[MouseEvent], Any],
+) -> list:
+    """Wrap the click handler around only the leading arrow glyph.
+
+    Scans fragments left-to-right, finds the first ⮞/⮟ character, and splits
+    that fragment so the handler is bound to the arrow (plus its trailing
+    space, if any) and nothing else. Everything before/after stays inert.
+    """
+    result: list = []
+    attached = False
+
+    for style, text, *_ in fragments:
+
+        if attached:
+            result.append((style, text))
+            continue
+
+        idx = -1
+
+        for ch in TOOL_ARROW_CHARS:
+            i = text.find(ch)
+
+            if i != -1 and (idx == -1 or i < idx):
+                idx = i
+
+        if idx == -1:
+            result.append((style, text))
+            continue
+
+        end = idx + 1
+
+        if end < len(text) and text[end] == ' ':
+            end += 1
+
+        before = text[:idx]
+        arrow_part = text[idx:end]
+        after = text[end:]
+
+        if before:
+            result.append((style, before))
+
+        result.append((style, arrow_part, handler))
+
+        if after:
+            result.append((style, after))
+
+        attached = True
+
+    return result
+
+#     ================================
 # --> Output panel
 #     ================================
 
@@ -47,13 +106,6 @@ class _OutputControl(FormattedTextControl):
 
     def mouse_handler(self, mouse_event: MouseEvent) -> Any:
         et = mouse_event.event_type
-
-        # DIAGNOSTIC — remove after click-to-toggle is confirmed working.
-        try:
-            with open('mouse_debug.log', 'a', encoding='utf-8') as f:
-                f.write(f'{et} pos={mouse_event.position}\n')
-        except Exception:
-            pass
 
         if et == MouseEventType.SCROLL_UP:
             self._panel.scroll_lines(-self._panel.WHEEL_STEP)
@@ -137,9 +189,7 @@ class OutputPanel:
 
             if isinstance(cell, ToolCell):
                 handler = self._make_toggle_handler(cell.tool_call_id)
-                cell_frags = [
-                    (style, text, handler) for (style, text, *_) in cell_frags
-                ]
+                cell_frags = attach_arrow_handler(list(cell_frags), handler)
 
             fragments.extend(cell_frags)
 
@@ -154,25 +204,63 @@ class OutputPanel:
 
         Listens to MOUSE_DOWN since several terminals (Windows Terminal, some
         xterm modes) deliver press-only events without the matching MOUSE_UP.
+        Freezes the viewport before mutating history so the clicked tool keeps
+        its visual position — expanded content pushes the lines below it down
+        instead of yanking the whole page upward.
         """
         history = self.history
 
         def handler(mouse_event: MouseEvent) -> Any:
-            # DIAGNOSTIC — remove after click-to-toggle is confirmed working.
-            try:
-                with open('mouse_debug.log', 'a', encoding='utf-8') as f:
-                    f.write(f'  -> tool handler {tool_call_id}: {mouse_event.event_type}\n')
-            except Exception:
-                pass
-
             if mouse_event.event_type == MouseEventType.MOUSE_DOWN:
+                self._freeze_viewport()
                 history.toggle_tool_expand(tool_call_id)
+                self._reclamp_after_resize()
                 get_app().invalidate()
                 return None
 
             return NotImplemented
 
         return handler
+
+    def _freeze_viewport(self) -> None:
+        """Pin the viewport at its current top before a history mutation.
+
+        In follow_tail mode the topmost visible line is implicit (total -
+        window_height). We snap that to an explicit `_scroll_target` so the
+        next render doesn't auto-anchor to the new bottom.
+        """
+        info = self.window.render_info
+
+        if not info or not info.window_height:
+            return
+
+        if self.follow_tail:
+            total = self._total_lines()
+            self._scroll_target = max(0, total - info.window_height)
+            self.follow_tail = False
+
+        self.window.vertical_scroll = self._scroll_target
+
+    def _reclamp_after_resize(self) -> None:
+        """Re-validate `_scroll_target` after total_lines changes.
+
+        Collapsing a tool can shrink content below the viewport's top — if so
+        we'd otherwise be pinned past the new bottom. Snap back to follow_tail
+        when that happens so the empty space at the bottom is reclaimed.
+        """
+        info = self.window.render_info
+
+        if not info or not info.window_height:
+            return
+
+        total = self._total_lines()
+        topmost = max(0, total - info.window_height)
+
+        if self._scroll_target >= topmost:
+            self._scroll_target = topmost
+            self.follow_tail = True
+
+        self.window.vertical_scroll = self._scroll_target
 
     def _get_text(self) -> FormattedText:
         self._ensure_fresh()
