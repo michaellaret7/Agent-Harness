@@ -11,6 +11,7 @@ VLLM_PLACEHOLDER_KEY = 'placeholder'  # hosted vLLM endpoint does not require au
 HOSTED_PROVIDER_ENV: dict[str, tuple[str, str]] = {
     'anthropic': ('ANTHROPIC_API_KEY', 'ANTHROPIC_API_URL'),
     'openai': ('OPENAI_API_KEY', 'OPENAI_API_URL'),
+    'openrouter': ('OPENROUTER_API_KEY', 'OPENROUTER_API_URL'),
 }
 
 def build_client(provider: str = 'vllm', model: str | None = None) -> tuple[OpenAI, str]:
