@@ -13,11 +13,14 @@ import json
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Literal
 
+from rich.box import ROUNDED
 from rich.console import Console, Group, RenderableType
 from rich.markdown import Markdown
 from rich.panel import Panel
+from rich.table import Table
 from rich.text import Text
 
 #     ================================
@@ -101,6 +104,74 @@ def extract_primary_arg(args_json: str) -> str:
     return ''
 
 
+TITLE_COLOR = '#15b49e'
+
+TITLE_ROWS = 6
+LETTER_GAP = ''
+WORD_GAP = '   '
+
+# ANSI Shadow figlet font. Glyphs are placed adjacent — their own internal
+# padding provides the visual gap, so LETTER_GAP is empty.
+TITLE_LETTERS: dict[str, tuple[str, ...]] = {
+    'A': (
+        ' █████╗ ',
+        '██╔══██╗',
+        '███████║',
+        '██╔══██║',
+        '██║  ██║',
+        '╚═╝  ╚═╝',
+    ),
+    'T': (
+        '████████╗',
+        '╚══██╔══╝',
+        '   ██║   ',
+        '   ██║   ',
+        '   ██║   ',
+        '   ╚═╝   ',
+    ),
+    'L': (
+        '██╗     ',
+        '██║     ',
+        '██║     ',
+        '██║     ',
+        '███████╗',
+        '╚══════╝',
+    ),
+    'S': (
+        '███████╗',
+        '██╔════╝',
+        '███████╗',
+        '╚════██║',
+        '███████║',
+        '╚══════╝',
+    ),
+}
+
+
+def render_title(text: str) -> str:
+    """Compose a block-letter banner from TITLE_LETTERS, row by row."""
+    rows = [''] * TITLE_ROWS
+
+    chars = text.upper()
+
+    for i, ch in enumerate(chars):
+        if ch == ' ':
+            for r in range(TITLE_ROWS):
+                rows[r] += WORD_GAP
+            continue
+
+        glyph = TITLE_LETTERS[ch]
+
+        for r in range(TITLE_ROWS):
+            rows[r] += glyph[r]
+
+        if i + 1 < len(chars) and chars[i + 1] != ' ':
+            for r in range(TITLE_ROWS):
+                rows[r] += LETTER_GAP
+
+    return '\n'.join(rows)
+
+
 def format_duration(seconds: float) -> str:
     """Human-friendly duration: '120ms', '3.4s', '1m12s'."""
     if seconds < 1:
@@ -154,6 +225,50 @@ class Cell(ABC):
 
     @abstractmethod
     def render(self, width: int) -> None: ...
+
+
+@dataclass
+class HeaderCell(Cell):
+    """Welcome banner: 'CODING AGENT' in block letters with model/cwd/tools.
+
+    Rendered once at TUI startup so the first user message has visible top
+    spacing instead of crowding the terminal's top edge.
+    """
+
+    provider: str
+    model: str
+    cwd: str
+    tools: tuple[str, ...] = ()
+    started_at: datetime = field(default_factory=datetime.now)
+    ansi: str = field(default='', init=False)
+
+    def render(self, width: int) -> None:
+        banner = Text(render_title('ATLAS'), style=f'bold {TITLE_COLOR}')
+
+        info = Text()
+        info.append('model  ', style='dim')
+        info.append(f'{self.provider}/{self.model}\n', style='cyan')
+        info.append('cwd    ', style='dim')
+        info.append(f'{self.cwd}\n')
+        info.append('tools  ', style='dim')
+        info.append(f'{", ".join(self.tools) if self.tools else "(none)"}\n', style='green')
+        info.append('time   ', style='dim')
+        info.append(self.started_at.strftime('%A, %B %d, %Y · %H:%M'), style='magenta')
+
+        layout = Table.grid(padding=(0, 4))
+        layout.add_column(vertical='middle', no_wrap=True)
+        layout.add_column(vertical='middle')
+        layout.add_row(banner, info)
+
+        panel = Panel(
+            layout,
+            border_style='dim',
+            box=ROUNDED,
+            padding=(1, 3),
+            expand=False,
+        )
+
+        self.ansi = render_to_ansi(panel, width)
 
 
 @dataclass
@@ -221,7 +336,7 @@ class ToolCell(Cell):
         summary = format_result_summary(self)
 
         header = Text()
-        header.append(f'{arrow} ', style=color)
+        header.append(f'{arrow}  ', style=color)
         header.append(self.name, style='bold')
 
         if primary:

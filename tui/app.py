@@ -23,7 +23,7 @@ from prompt_toolkit.filters import Condition
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.key_processor import KeyPressEvent
 from prompt_toolkit.layout import Layout
-from prompt_toolkit.layout.containers import HSplit, Window
+from prompt_toolkit.layout.containers import HSplit
 from prompt_toolkit.styles import Style
 
 from tui.history import History
@@ -45,6 +45,8 @@ APP_STYLE = Style.from_dict({
     'status.running': 'fg:ansiyellow',
     'status.locked': 'fg:ansibrightblue',
     'status.copy': 'fg:ansigreen bold',
+    'input.frame frame.border': 'fg:ansibrightblack',
+    'frame.border': 'fg:ansibrightblack',
 })
 
 #     ================================
@@ -57,6 +59,13 @@ class TUIApp:
         self.agent = agent
 
         self.history = History()
+        self.history.append_header(
+            provider=agent.provider,
+            model=agent.model,
+            cwd=os.getcwd(),
+            tools=tuple(agent.tool_functions.keys()),
+        )
+
         self.output = OutputPanel(self.history)
         self.input = InputPanel()
         self.status = StatusBar(self._get_status)
@@ -79,8 +88,7 @@ class TUIApp:
     def _build_application(self) -> Application:
         root = HSplit([
             self.output.window,
-            Window(height=1, char='─', style='class:status'),
-            self.input.area,
+            self.input.container,
             self.status.window,
         ])
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -70,6 +71,8 @@ class Agent:
         self.tool_functions[name] = function
 
     def build_initial_context(self) -> None:
+        self.system_prompt += f'\nCurrent date: {datetime.now().strftime("%A, %B %d, %Y")}'
+        
         if self.memory:
             self.messages.append({'role': 'system', 'content': self.system_prompt + '\n' + self.memory})
         else:

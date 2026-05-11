@@ -20,7 +20,7 @@ from prompt_toolkit.layout.containers import Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
-from prompt_toolkit.widgets import TextArea
+from prompt_toolkit.widgets import Frame, TextArea
 
 from tui.cells import ToolCell
 
@@ -340,18 +340,27 @@ class OutputPanel:
 
 
 class InputPanel:
-    """Multi-line text entry. Enter submits via the parent App's key binding."""
+    """Multi-line text entry with fixed-height bordered frame.
+
+    Height is pinned (min == max) so the box never resizes as the user types;
+    longer input scrolls within the TextArea instead. The surrounding Frame
+    draws the visible top/bottom/side constraint.
+    """
+
+    CONTENT_LINES = 2
 
     def __init__(self) -> None:
         self.history = InMemoryHistory()
 
         self.area = TextArea(
-            height=Dimension(min=1, max=6),
+            height=Dimension(min=self.CONTENT_LINES, max=self.CONTENT_LINES),
             multiline=True,
             wrap_lines=True,
             history=self.history,
             prompt='> ',
         )
+
+        self.container = Frame(self.area, style='class:input.frame')
 
     @property
     def text(self) -> str:

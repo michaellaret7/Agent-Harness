@@ -11,7 +11,7 @@ from __future__ import annotations
 import threading
 import time
 
-from tui.cells import AssistantCell, Cell, ErrorCell, ToolCell, UserCell
+from tui.cells import AssistantCell, Cell, ErrorCell, HeaderCell, ToolCell, UserCell
 
 # Cap intermediate streaming re-renders to ~25fps. Final render on
 # end_assistant/end_tool always fires regardless.
@@ -32,6 +32,21 @@ class History:
         """Lock-protected read of the cell list (shallow copy)."""
         with self._lock:
             return list(self._cells)
+
+    def append_header(
+        self,
+        provider: str,
+        model: str,
+        cwd: str,
+        tools: tuple[str, ...] = (),
+    ) -> None:
+        cell = HeaderCell(provider=provider, model=model, cwd=cwd, tools=tools)
+        cell.render(self.width)
+
+        with self._lock:
+            self._cells.append(cell)
+
+        self.version += 1
 
     def append_user(self, text: str) -> None:
         cell = UserCell(text=text)
