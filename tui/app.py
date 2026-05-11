@@ -45,8 +45,8 @@ APP_STYLE = Style.from_dict({
     'status.running': 'fg:ansiyellow',
     'status.locked': 'fg:ansibrightblue',
     'status.copy': 'fg:ansigreen bold',
-    'input.frame frame.border': 'fg:ansibrightblack',
     'frame.border': 'fg:ansibrightblack',
+    'input.placeholder': 'fg:ansibrightblack italic',
 })
 
 #     ================================
