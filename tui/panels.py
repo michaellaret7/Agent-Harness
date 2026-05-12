@@ -25,6 +25,7 @@ from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
 from prompt_toolkit.widgets import TextArea
 
 from tui.cells import AssistantCell, Cell, ErrorCell, HeaderCell, ToolCell, UserCell
+from tui.sprites import frame_at
 
 if TYPE_CHECKING:
     from tui.history import History
@@ -527,7 +528,14 @@ class StatusBar:
         ]
 
         if running:
-            left_segments.append(('class:status.running', '  ·  running…'))
+            sprite = s.get('sprite')
+            elapsed = s.get('sprite_elapsed', 0.0)
+
+            if sprite is not None:
+                frame = frame_at(sprite, elapsed)
+                left_segments.append(('class:status.running', f'  ·  running {frame}'))
+            else:
+                left_segments.append(('class:status.running', '  ·  running…'))
 
         if scroll_locked:
             left_segments.append(('class:status.locked', f'  ·  [scrolled y={scroll_y}]'))

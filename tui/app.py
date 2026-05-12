@@ -26,14 +26,17 @@ from prompt_toolkit.layout import Layout
 from prompt_toolkit.layout.containers import HSplit
 from prompt_toolkit.styles import Style
 
+from tui import sprites
 from tui.history import History
 from tui.panels import InputPanel, OutputPanel, StatusBar
 from tui.sink import TUISink
+from tui.sprites import Sprite
 
 if TYPE_CHECKING:
     from agent.agent import Agent
 
 CTRL_C_DOUBLE_TAP_SECONDS = 2.0
+ANIM_TICK_S = 1 / 12  # 12 Hz repaint while a turn is in flight
 
 #     ================================
 # --> Style
@@ -76,6 +79,10 @@ class TUIApp:
         # Toggle via Ctrl+G. When True, mouse capture is disabled so the
         # terminal's native click-drag selection works for copying.
         self.copy_mode = False
+
+        # Sprite for the running indicator. Picked at random per turn.
+        self.active_sprite: Sprite | None = None
+        self.sprite_started_at: float = 0.0
 
         self.application: Application = self._build_application()
 
@@ -207,6 +214,9 @@ class TUIApp:
         self.cancel_event.clear()
         self.sink.on_user_message(prompt)
 
+        self.active_sprite = sprites.pick()
+        self.sprite_started_at = time.monotonic()
+
         self.worker_task = self.application.create_background_task(self._run_turn(prompt))
 
     async def _run_turn(self, prompt: str) -> None:
@@ -218,6 +228,7 @@ class TUIApp:
             self.sink.on_error(f'{type(e).__name__}: {e}\n{tb}')
 
         finally:
+            self.active_sprite = None
             self.application.invalidate()
 
     # ----------------------------------------
@@ -225,15 +236,56 @@ class TUIApp:
     # ----------------------------------------
 
     def _get_status(self) -> dict:
+        running = self._is_running()
+        sprite = self.active_sprite if running else None
+        elapsed = (time.monotonic() - self.sprite_started_at) if running else 0.0
+
         return {
             'provider': self.agent.provider,
             'model': self.agent.model,
             'cwd': os.getcwd(),
-            'running': self._is_running(),
+            'running': running,
+            'sprite': sprite,
+            'sprite_elapsed': elapsed,
             'scroll_locked': not self.output.follow_tail,
             'scroll_y': self.output._scroll_target,
             'copy_mode': self.copy_mode,
         }
+
+    # ----------------------------------------
+    # Animation ticker — repaint while a turn is in flight
+    # ----------------------------------------
+
+    async def _animate_loop(self) -> None:
+        """Tick the sprite while a turn is in flight.
+
+        Two responsibilities, both gated on `_is_running()`:
+          1. Rotate `active_sprite` to a fresh random one once the current
+             sprite has played one full cycle. This is what gives a long turn
+             its slideshow of different little characters.
+          2. Invalidate the app so the status bar repaints the next frame.
+
+        Cheap when idle (one wakeup per tick, no work). The status bar derives
+        the displayed frame from elapsed wall-clock time, so the tick cadence
+        sets *smoothness*, not animation speed.
+        """
+        while True:
+            if self._is_running() and self.active_sprite is not None:
+                self._maybe_rotate_sprite()
+                self.application.invalidate()
+
+            await asyncio.sleep(ANIM_TICK_S)
+
+    def _maybe_rotate_sprite(self) -> None:
+        """Swap to a new random sprite once the current one finishes a cycle."""
+        if self.active_sprite is None:
+            return
+
+        elapsed = time.monotonic() - self.sprite_started_at
+
+        if elapsed >= sprites.cycle_seconds(self.active_sprite):
+            self.active_sprite = sprites.pick_different(self.active_sprite)
+            self.sprite_started_at = time.monotonic()
 
     # ----------------------------------------
     # Resize handling — keep History.width in sync
@@ -290,9 +342,11 @@ class TUIApp:
         self._sync_width_now()
 
         size_task = asyncio.create_task(self._watch_size())
+        anim_task = asyncio.create_task(self._animate_loop())
 
         try:
             await self.application.run_async()
 
         finally:
             size_task.cancel()
+            anim_task.cancel()

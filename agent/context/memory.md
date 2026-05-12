@@ -1,7 +1,7 @@
 # Memory
 
 - The user loves Python.
-- I am model qwen/qwen3.6-plus (via OpenRouter).
+- I am model nvidia/nemotron-3-super-120b-a12b (via OpenRouter).
 - **Core engineering principles (always apply):** Write serious code that follows:
   - **DRY** — Don't Repeat Yourself. Factor out duplication into well-named abstractions, but only once the duplication is real (not speculative).
   - **YAGNI** — You Aren't Gonna Need It. No speculative features, no "just in case" abstractions, no premature generality. Build what's needed now.
