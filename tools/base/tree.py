@@ -19,7 +19,8 @@ def tree(path: str = '.') -> str:
     if not target.is_dir():
         return f'error: not a directory: {path!r}'
 
-    lines: list[str] = [target.name + '/']
+    root_label = path if path.endswith('/') else path + '/'
+    lines: list[str] = [root_label]
     _walk(target, '', lines, depth=0)
 
     if len(lines) > MAX_LINES:
