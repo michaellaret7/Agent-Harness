@@ -23,14 +23,14 @@ if TYPE_CHECKING:
     from agent.agent import Agent
 
 #     ================================
-# --> Helper funcs
+# --> Helper funcs: These are internal helper functions used by the loop.
 #     ================================
 
 
 def _extract_reasoning(obj) -> str:
     """Pull reasoning text from any of the provider shapes: `reasoning`,
     `reasoning_content`, or structured `reasoning_details[].text`."""
-    text = getattr(obj, 'reasoning_content', None) or getattr(obj, 'reasoning', None)
+    text = getattr(obj, 'reasoning_content', None) or getattr(obj, 'reason', None)
 
     if text:
         return text
@@ -72,6 +72,7 @@ def _settle_interrupted_tool_calls(agent: 'Agent', tool_calls: list[dict], sink:
             'content': '[interrupted]',
         })
 
+
 #     ================================
 # --> Loop
 #     ================================
@@ -86,6 +87,25 @@ def execution_loop(
     sink: Sink | None = None,
     cancel_event: threading.Event | None = None,
 ) -> str:
+    """Main agent execution loop.
+
+    This function runs the agent for a maximum of `max_iters` iterations.
+    In each iteration, it calls the LLM (either streaming or non-streaming),
+    processes the response (handling tool calls and cancellations), and
+    continues until the LLM returns content without tool calls or a
+    cancellation is requested.
+
+    Args:
+        agent: The agent instance, containing messages, tools, and tool_handler.
+        model: The model name to use for the LLM call.
+        max_iters: Maximum number of iterations to run.
+        stream: Whether to use streaming for the LLM call.
+        sink: Optional sink for UI updates (defaults to StdoutSink).
+        cancel_event: Optional event to signal cancellation (defaults to a new Event).
+
+    Returns:
+        The final content string from the agent.
+    """
 
     active_sink: Sink = sink if sink is not None else StdoutSink()
     active_cancel: threading.Event = cancel_event if cancel_event is not None else threading.Event()
@@ -95,9 +115,10 @@ def execution_loop(
     for _ in range(max_iters):
         
         if active_cancel.is_set():
-            active_sink.on_interrupted()
+            active_sink.on_interrupted() # this line breaks the loop because the user has cancelled the execution
             break
-
+        
+        # POTENTIAL TODO: just have the llm stream be the base case and get rid of non streaming 
         if stream:
             content, tool_calls, was_cancelled = call_llm_stream(
                 agent.client,
@@ -125,9 +146,11 @@ def execution_loop(
 
         assistant_msg: dict = {'role': 'assistant', 'content': content}
 
+        # Append the tool calls to the assistant message for downstream ToolHandler processing
         if tool_calls:
-            assistant_msg['tool_calls'] = tool_calls
+            assistant_msg['tool_calls'] = tool_calls 
 
+        # Append the assistant message to the agents state aka the message history
         agent.messages.append(assistant_msg)
 
         if was_cancelled:
@@ -138,9 +161,11 @@ def execution_loop(
         if not tool_calls:
             return content
 
+        # Add the output results of the tool calls to the agents state 
         agent.messages.extend(agent.tool_handler.execute(tool_calls, active_sink, active_cancel))
 
     return last_content
+
 
 #     ================================
 # --> LLM calls

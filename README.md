@@ -1,9 +1,9 @@
 <div align="center">
-
-
 # local-agent
 
 **A streaming, tool-calling agent with a Rich + prompt_toolkit TUI, talking to any OpenAI-compatible endpoint.**
+
+
 
 [![Python](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![uv](https://img.shields.io/badge/uv-managed-DE5FE9)](https://github.com/astral-sh/uv)
@@ -29,7 +29,7 @@ The client supports three backends:
 - **Tool calling** in the standard OpenAI tool-call format, with fragment reassembly across stream chunks.
 - **Cancellable turns** — `Esc` aborts an in-flight stream; `Ctrl+C` double-tap exits.
 - **Click-to-copy mode** — `Ctrl+T` releases mouse capture so the terminal's native click-drag selection works.
-- **Built-in tools** — bash, read/write/edit, glob, grep, tree, and search.
+- **Built-in tools** — bash, read/write/edit (updated), glob, grep, tree, and search.
 
 ## Requirements
 
@@ -175,8 +175,9 @@ agent.add_tool(**echo.tool)
 
 ## License
 
-MIT (or whatever you prefer — add a `LICENSE` file).
+MIT — add a `LICENSE` file if you fork this.
 
 ## Acknowledgements
 
 - [wttr.in](https://wttr.in) for the weather endpoint
+- EditFile tool test edit — round 3 ✏️

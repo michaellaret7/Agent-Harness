@@ -33,6 +33,18 @@ class History:
         with self._lock:
             return list(self._cells)
 
+    def _bump_version(self) -> None:
+        """Atomic version increment.
+
+        `self.version += 1` is NOT thread-safe in CPython — the load/add/store
+        sequence can interleave between the worker thread and the UI thread's
+        click handlers, silently losing a bump and leaving the OutputPanel's
+        version-keyed cache stale. Lock-protected here so concurrent toggle
+        clicks and tool-result writes can't drop a frame.
+        """
+        with self._lock:
+            self.version += 1
+
     def append_header(
         self,
         provider: str,
@@ -46,7 +58,7 @@ class History:
         with self._lock:
             self._cells.append(cell)
 
-        self.version += 1
+        self._bump_version()
 
     def append_user(self, text: str) -> None:
         cell = UserCell(text=text)
@@ -55,7 +67,7 @@ class History:
         with self._lock:
             self._cells.append(cell)
 
-        self.version += 1
+        self._bump_version()
 
     def start_assistant(self) -> AssistantCell:
         """Append a fresh AssistantCell. Returns it for streaming mutation."""
@@ -64,7 +76,7 @@ class History:
         with self._lock:
             self._cells.append(cell)
 
-        self.version += 1
+        self._bump_version()
 
         return cell
 
@@ -91,7 +103,7 @@ class History:
         if now - cell._last_render_t >= STREAM_RENDER_INTERVAL_S:
             cell.render(self.width)
             cell._last_render_t = now
-            self.version += 1
+            self._bump_version()
 
     def append_content(self, text: str) -> None:
         cell = self.last_assistant()
@@ -102,10 +114,18 @@ class History:
         if now - cell._last_render_t >= STREAM_RENDER_INTERVAL_S:
             cell.render(self.width)
             cell._last_render_t = now
-            self.version += 1
+            self._bump_version()
 
     def end_assistant(self) -> None:
-        """Mark the last AssistantCell done. Drop if empty."""
+        """Mark the last AssistantCell done. Drop if empty.
+
+        `cell.render()` runs outside the lock — Rich Markdown rendering can
+        take dozens of milliseconds on long replies, and holding `_lock`
+        across it blocks UI-thread click handlers (which call `snapshot()`)
+        on every keystroke.
+        """
+        target: AssistantCell | None = None
+
         with self._lock:
             if not self._cells:
                 return
@@ -121,19 +141,27 @@ class History:
                 return
 
             last.done = True
-            last.render(self.width)
+            target = last
 
-        self.version += 1
+        target.render(self.width)
+        self._bump_version()
 
     def mark_assistant_interrupted(self) -> None:
+        target: AssistantCell | None = None
+
         with self._lock:
             for cell in reversed(self._cells):
                 if isinstance(cell, AssistantCell):
                     cell.done = True
                     cell.interrupted = True
-                    cell.render(self.width)
-                    self.version += 1
-                    return
+                    target = cell
+                    break
+
+        if target is None:
+            return
+
+        target.render(self.width)
+        self._bump_version()
 
     def append_tool_start(self, tool_call_id: str, name: str, args_json: str) -> None:
         cell = ToolCell(
@@ -148,7 +176,7 @@ class History:
             self._cells.append(cell)
             self._tool_index[tool_call_id] = cell
 
-        self.version += 1
+        self._bump_version()
 
     def update_tool_result(self, tool_call_id: str, result: str) -> None:
         cell = self._tool_index.get(tool_call_id)
@@ -165,7 +193,7 @@ class History:
             cell.expanded = True
 
         cell.render(self.width)
-        self.version += 1
+        self._bump_version()
 
     def mark_tool_interrupted(self, tool_call_id: str) -> None:
         cell = self._tool_index.get(tool_call_id)
@@ -178,7 +206,7 @@ class History:
         cell.ended_at = time.monotonic()
         cell.expanded = True
         cell.render(self.width)
-        self.version += 1
+        self._bump_version()
 
     def toggle_tool_expand(self, tool_call_id: str) -> None:
         """Flip the expand state of one tool cell, identified by call id."""
@@ -189,7 +217,31 @@ class History:
 
         cell.expanded = not cell.expanded
         cell.render(self.width)
-        self.version += 1
+        self._bump_version()
+
+    def append_file_diff(self, tool_call_id: str, path: str, before: str, after: str) -> None:
+        """Attach a file diff to its originating ToolCell (no new cell created)."""
+        cell = self._tool_index.get(tool_call_id)
+
+        if cell is None:
+            return
+
+        cell.diff_path = path
+        cell.diff_before = before
+        cell.diff_after = after
+        cell.render(self.width)
+        self._bump_version()
+
+    def toggle_tool_diff_expand(self, tool_call_id: str) -> None:
+        """Flip the diff-expand state of one ToolCell."""
+        cell = self._tool_index.get(tool_call_id)
+
+        if cell is None or not cell.has_diff():
+            return
+
+        cell.diff_expanded = not cell.diff_expanded
+        cell.render(self.width)
+        self._bump_version()
 
     def toggle_assistant_reasoning(self, cell_id: str) -> None:
         """Flip the reasoning-collapse state of one AssistantCell."""
@@ -206,7 +258,7 @@ class History:
 
         target.reasoning_expanded = not target.reasoning_expanded
         target.render(self.width)
-        self.version += 1
+        self._bump_version()
 
     def append_error(self, message: str) -> None:
         cell = ErrorCell(message=message)
@@ -215,7 +267,7 @@ class History:
         with self._lock:
             self._cells.append(cell)
 
-        self.version += 1
+        self._bump_version()
 
     def rerender_all(self) -> None:
         """Re-render every cell at the current width (called on resize)."""
@@ -225,4 +277,4 @@ class History:
         for cell in cells:
             cell.render(self.width)
 
-        self.version += 1
+        self._bump_version()

@@ -36,6 +36,10 @@ if TYPE_CHECKING:
 
 TOOL_ARROW_CHARS = ('⮞', '⮟')
 ASSISTANT_ARROW_CHARS = ('▸', '▾')
+# Diff sub-arrow on ToolCell shares glyphs with AssistantCell's reasoning
+# toggle — safe because the scan is scoped per cell, so they never appear
+# in the same fragment list.
+DIFF_ARROW_CHARS = ('▸', '▾')
 
 # Cells that mark a turn boundary — anything that introduces or interrupts an
 # agent turn. Adjacent cells in this set get a full blank line of breathing
@@ -60,15 +64,18 @@ def attach_arrow_handler(
 
     Scans fragments left-to-right, finds the first arrow character, and splits
     that fragment so the handler is bound to the arrow (plus its trailing
-    space, if any) and nothing else. Everything before/after stays inert.
+    space, if any). Other fragments — including ones that already carry a
+    handler from a previous attach_arrow_handler call — are preserved
+    verbatim so chains compose: tool main arrow + diff sub-arrow.
     """
     result: list = []
     attached = False
 
-    for style, text, *_ in fragments:
+    for entry in fragments:
+        style, text = entry[0], entry[1]
 
         if attached:
-            result.append((style, text))
+            result.append(entry)
             continue
 
         idx = -1
@@ -80,7 +87,7 @@ def attach_arrow_handler(
                 idx = i
 
         if idx == -1:
-            result.append((style, text))
+            result.append(entry)
             continue
 
         end = idx + 1
@@ -160,7 +167,13 @@ class OutputPanel:
         # Version-keyed cache: rebuild only when history.version advances.
         self._cached_version: int = -1
         self._cached_total_lines: int = 0
+        self._cached_cell_count: int = 0
         self._cached_ft: FormattedText = FormattedText()
+        # True while the viewport was pinned by a click (vs. a wheel scroll).
+        # Auto-clears when new cells arrive so the view re-follows the bottom
+        # instead of getting stuck on the old position while a tool keeps
+        # adding output below.
+        self._click_pinned = False
 
         self.control = _OutputControl(
             panel=self,
@@ -198,6 +211,14 @@ class OutputPanel:
             return
 
         cells = self.history.snapshot()
+
+        # New cells appended since the last rebuild → re-engage follow_tail if
+        # the viewport was only click-pinned. A wheel scroll clears
+        # `_click_pinned`, so genuine user scrolling is preserved.
+        if self._click_pinned and len(cells) > self._cached_cell_count:
+            self.follow_tail = True
+            self._click_pinned = False
+
         fragments: list = []
         prev_cell: Cell | None = None
 
@@ -211,8 +232,12 @@ class OutputPanel:
             cell_frags: list = list(cell.fragments)
 
             if isinstance(cell, ToolCell):
-                handler = self._make_toggle_handler(cell.tool_call_id)
-                cell_frags = attach_arrow_handler(cell_frags, handler)
+                tool_handler = self._make_toggle_handler(cell.tool_call_id)
+                cell_frags = attach_arrow_handler(cell_frags, tool_handler)
+
+                if cell.has_diff():
+                    diff_handler = self._make_diff_handler(cell.tool_call_id)
+                    cell_frags = attach_arrow_handler(cell_frags, diff_handler, arrows=DIFF_ARROW_CHARS)
 
             elif isinstance(cell, AssistantCell) and cell.reasoning and (cell.content or cell.done):
                 handler = self._make_reasoning_handler(cell.cell_id)
@@ -225,6 +250,7 @@ class OutputPanel:
 
         self._cached_version = v
         self._cached_total_lines = newline_count + 1 if fragments else 0
+        self._cached_cell_count = len(cells)
         self._cached_ft = FormattedText(fragments)
 
     def _make_toggle_handler(self, tool_call_id: str) -> Callable[[MouseEvent], Any]:
@@ -242,6 +268,27 @@ class OutputPanel:
             if mouse_event.event_type == MouseEventType.MOUSE_DOWN:
                 self._freeze_viewport()
                 history.toggle_tool_expand(tool_call_id)
+                self._reclamp_after_resize()
+                get_app().invalidate()
+                return None
+
+            return NotImplemented
+
+        return handler
+
+    def _make_diff_handler(self, tool_call_id: str) -> Callable[[MouseEvent], Any]:
+        """Per-fragment mouse handler that toggles a ToolCell's diff expansion.
+
+        The diff lives inline within the ToolCell — this handler is bound only
+        to the secondary ▸/▾ glyph (DIFF_ARROW_CHARS), so it can coexist with
+        the outer ⮞/⮟ tool-result toggle.
+        """
+        history = self.history
+
+        def handler(mouse_event: MouseEvent) -> Any:
+            if mouse_event.event_type == MouseEventType.MOUSE_DOWN:
+                self._freeze_viewport()
+                history.toggle_tool_diff_expand(tool_call_id)
                 self._reclamp_after_resize()
                 get_app().invalidate()
                 return None
@@ -275,7 +322,10 @@ class OutputPanel:
 
         In follow_tail mode the topmost visible line is implicit (total -
         window_height). We snap that to an explicit `_scroll_target` so the
-        next render doesn't auto-anchor to the new bottom.
+        next render doesn't auto-anchor to the new bottom. The pin is tagged
+        as click-induced (`_click_pinned`) so `_ensure_fresh` can release it
+        once new cells arrive — otherwise the viewport stays frozen while
+        the worker keeps emitting tool output below the visible area.
         """
         info = self.window.render_info
 
@@ -286,6 +336,7 @@ class OutputPanel:
             total = self._total_lines()
             self._scroll_target = max(0, total - info.window_height)
             self.follow_tail = False
+            self._click_pinned = True
 
         self.window.vertical_scroll = self._scroll_target
 
@@ -307,6 +358,7 @@ class OutputPanel:
         if self._scroll_target >= topmost:
             self._scroll_target = topmost
             self.follow_tail = True
+            self._click_pinned = False
 
         self.window.vertical_scroll = self._scroll_target
 
@@ -335,6 +387,11 @@ class OutputPanel:
 
     def scroll_lines(self, delta: int) -> None:
         """Scroll by `delta` logical lines (negative = up, positive = down)."""
+        # User-driven scroll overrides any click-pin: from here on, only
+        # `jump_to_bottom` (End key) or scrolling all the way down should
+        # re-engage follow_tail.
+        self._click_pinned = False
+
         total = self._total_lines()
 
         if total == 0:
@@ -380,6 +437,7 @@ class OutputPanel:
 
     def jump_to_bottom(self) -> None:
         self.follow_tail = True
+        self._click_pinned = False
         self._scroll_target = max(0, self._total_lines() - 1)
 
 #     ================================
@@ -523,9 +581,7 @@ class StatusBar:
         scroll_y = s.get('scroll_y', 0)
         copy_mode = s.get('copy_mode', False)
 
-        left_segments: list[tuple[str, str]] = [
-            ('class:status', f' {provider}/{model}  ·  {cwd}'),
-        ]
+        left_segments: list[tuple[str, str]] = []
 
         if running:
             sprite = s.get('sprite')
@@ -533,17 +589,21 @@ class StatusBar:
 
             if sprite is not None:
                 frame = frame_at(sprite, elapsed)
-                left_segments.append(('class:status.running', f'  ·  running {frame}'))
+                left_segments.append(('class:status.running', f' running {frame}  ·  '))
             else:
-                left_segments.append(('class:status.running', '  ·  running…'))
+                left_segments.append(('class:status.running', ' running…  ·  '))
+        else:
+            left_segments.append(('class:status', ' '))
+
+        left_segments.append(('class:status', f'{provider}/{model}  ·  {cwd}'))
 
         if scroll_locked:
             left_segments.append(('class:status.locked', f'  ·  [scrolled y={scroll_y}]'))
 
         if copy_mode:
             left_segments.append(('class:status.copy', '  ·  [COPY MODE — drag to select, Ctrl+T to exit]'))
-            right = '  Enter send · PgUp/PgDn scroll · End jump · Ctrl+T exit copy · Ctrl+C exit '
+            right = '  Enter send · End jump · Ctrl+T exit copy · Ctrl+C exit '
         else:
-            right = '  Enter send · PgUp/PgDn or wheel scroll · click tool to expand · Ctrl+T copy mode · Esc cancel · Ctrl+C exit '
+            right = '  Enter send · click tool to expand · Ctrl+T copy mode · Esc cancel · Ctrl+C exit '
 
         return FormattedText(left_segments + [('class:status', '   '), ('class:status', right)])

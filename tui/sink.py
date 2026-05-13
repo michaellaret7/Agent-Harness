@@ -1,11 +1,12 @@
 """Sink Protocol — the seam between the agent loop and the UI.
 
-The loop calls these six methods from a worker thread. TUISink mutates the
+The loop calls these methods from a worker thread. TUISink mutates the
 shared History and signals the prompt_toolkit app to repaint. StdoutSink is
 the legacy fallback that prints exactly like the pre-TUI loop did.
 """
 from __future__ import annotations
 
+import difflib
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
@@ -21,6 +22,7 @@ class Sink(Protocol):
     def on_assistant_end(self) -> None: ...
     def on_tool_start(self, tool_call_id: str, name: str, args_json: str) -> None: ...
     def on_tool_end(self, tool_call_id: str, result: str) -> None: ...
+    def on_file_diff(self, tool_call_id: str, path: str, before: str, after: str) -> None: ...
     def on_error(self, message: str) -> None: ...
     def on_interrupted(self) -> None: ...
 
@@ -58,6 +60,10 @@ class TUISink:
         self.history.update_tool_result(tool_call_id, result)
         self._invalidate()
 
+    def on_file_diff(self, tool_call_id: str, path: str, before: str, after: str) -> None:
+        self.history.append_file_diff(tool_call_id, path, before, after)
+        self._invalidate()
+
     def on_error(self, message: str) -> None:
         self.history.append_error(message)
         self._invalidate()
@@ -87,6 +93,22 @@ class StdoutSink:
 
     def on_tool_end(self, tool_call_id: str, result: str) -> None:
         print(f'  [tool] -> {result}')
+
+    def on_file_diff(self, tool_call_id: str, path: str, before: str, after: str) -> None:
+        lines = difflib.unified_diff(
+            before.splitlines(keepends=True),
+            after.splitlines(keepends=True),
+            fromfile=path,
+            tofile=path,
+        )
+
+        for line in lines:
+            if line.startswith('+') and not line.startswith('+++'):
+                print(f'\033[32m{line}\033[0m', end='')
+            elif line.startswith('-') and not line.startswith('---'):
+                print(f'\033[31m{line}\033[0m', end='')
+            else:
+                print(line, end='')
 
     def on_error(self, message: str) -> None:
         print(f'\033[31m[error] {message}\033[0m')
