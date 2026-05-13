@@ -178,7 +178,12 @@ class OutputPanel:
         self.control = _OutputControl(
             panel=self,
             text=self._get_text,
-            focusable=True,
+            # focusable=False so a click anywhere in the output region (text,
+            # not just on an arrow handler) doesn't move keyboard focus away
+            # from the input prompt — that used to read as "TUI frozen, typing
+            # does nothing". Mouse handlers and `get_cursor_position` still
+            # fire regardless of focusability.
+            focusable=False,
             show_cursor=False,
             get_cursor_position=self._get_cursor_position,
         )

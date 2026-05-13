@@ -96,33 +96,48 @@ class History:
 
     def append_reasoning(self, text: str) -> None:
         cell = self.last_assistant()
-        cell.reasoning += text
 
-        now = time.monotonic()
+        with cell.render_lock:
+            cell.reasoning += text
 
-        if now - cell._last_render_t >= STREAM_RENDER_INTERVAL_S:
-            cell.render(self.width)
-            cell._last_render_t = now
+            now = time.monotonic()
+
+            if now - cell._last_render_t >= STREAM_RENDER_INTERVAL_S:
+                cell.render(self.width)
+                cell._last_render_t = now
+                bump = True
+            else:
+                bump = False
+
+        if bump:
             self._bump_version()
 
     def append_content(self, text: str) -> None:
         cell = self.last_assistant()
-        cell.content += text
 
-        now = time.monotonic()
+        with cell.render_lock:
+            cell.content += text
 
-        if now - cell._last_render_t >= STREAM_RENDER_INTERVAL_S:
-            cell.render(self.width)
-            cell._last_render_t = now
+            now = time.monotonic()
+
+            if now - cell._last_render_t >= STREAM_RENDER_INTERVAL_S:
+                cell.render(self.width)
+                cell._last_render_t = now
+                bump = True
+            else:
+                bump = False
+
+        if bump:
             self._bump_version()
 
     def end_assistant(self) -> None:
         """Mark the last AssistantCell done. Drop if empty.
 
-        `cell.render()` runs outside the lock — Rich Markdown rendering can
-        take dozens of milliseconds on long replies, and holding `_lock`
-        across it blocks UI-thread click handlers (which call `snapshot()`)
-        on every keystroke.
+        `cell.render()` runs outside `History._lock` — Rich Markdown can take
+        dozens of ms on long replies, and holding the history lock across it
+        blocks UI-thread click handlers (which call `snapshot()`) every frame.
+        We still hold the per-cell `render_lock` so concurrent UI toggles on
+        the same cell can't run a second render in parallel.
         """
         target: AssistantCell | None = None
 
@@ -143,7 +158,9 @@ class History:
             last.done = True
             target = last
 
-        target.render(self.width)
+        with target.render_lock:
+            target.render(self.width)
+
         self._bump_version()
 
     def mark_assistant_interrupted(self) -> None:
@@ -152,15 +169,17 @@ class History:
         with self._lock:
             for cell in reversed(self._cells):
                 if isinstance(cell, AssistantCell):
-                    cell.done = True
-                    cell.interrupted = True
                     target = cell
                     break
 
         if target is None:
             return
 
-        target.render(self.width)
+        with target.render_lock:
+            target.done = True
+            target.interrupted = True
+            target.render(self.width)
+
         self._bump_version()
 
     def append_tool_start(self, tool_call_id: str, name: str, args_json: str) -> None:
@@ -184,15 +203,17 @@ class History:
         if cell is None:
             return
 
-        cell.result = result
-        cell.status = 'error' if result.startswith('error:') else 'ok'
-        cell.ended_at = time.monotonic()
+        with cell.render_lock:
+            cell.result = result
+            cell.status = 'error' if result.startswith('error:') else 'ok'
+            cell.ended_at = time.monotonic()
 
-        # Auto-expand failures so the user immediately sees what broke.
-        if cell.status == 'error':
-            cell.expanded = True
+            # Auto-expand failures so the user immediately sees what broke.
+            if cell.status == 'error':
+                cell.expanded = True
 
-        cell.render(self.width)
+            cell.render(self.width)
+
         self._bump_version()
 
     def mark_tool_interrupted(self, tool_call_id: str) -> None:
@@ -201,11 +222,13 @@ class History:
         if cell is None:
             return
 
-        cell.result = '[interrupted]'
-        cell.status = 'error'
-        cell.ended_at = time.monotonic()
-        cell.expanded = True
-        cell.render(self.width)
+        with cell.render_lock:
+            cell.result = '[interrupted]'
+            cell.status = 'error'
+            cell.ended_at = time.monotonic()
+            cell.expanded = True
+            cell.render(self.width)
+
         self._bump_version()
 
     def toggle_tool_expand(self, tool_call_id: str) -> None:
@@ -215,8 +238,10 @@ class History:
         if cell is None:
             return
 
-        cell.expanded = not cell.expanded
-        cell.render(self.width)
+        with cell.render_lock:
+            cell.expanded = not cell.expanded
+            cell.render(self.width)
+
         self._bump_version()
 
     def append_file_diff(self, tool_call_id: str, path: str, before: str, after: str) -> None:
@@ -226,10 +251,12 @@ class History:
         if cell is None:
             return
 
-        cell.diff_path = path
-        cell.diff_before = before
-        cell.diff_after = after
-        cell.render(self.width)
+        with cell.render_lock:
+            cell.diff_path = path
+            cell.diff_before = before
+            cell.diff_after = after
+            cell.render(self.width)
+
         self._bump_version()
 
     def toggle_tool_diff_expand(self, tool_call_id: str) -> None:
@@ -239,8 +266,10 @@ class History:
         if cell is None or not cell.has_diff():
             return
 
-        cell.diff_expanded = not cell.diff_expanded
-        cell.render(self.width)
+        with cell.render_lock:
+            cell.diff_expanded = not cell.diff_expanded
+            cell.render(self.width)
+
         self._bump_version()
 
     def toggle_assistant_reasoning(self, cell_id: str) -> None:
@@ -256,8 +285,10 @@ class History:
         if target is None:
             return
 
-        target.reasoning_expanded = not target.reasoning_expanded
-        target.render(self.width)
+        with target.render_lock:
+            target.reasoning_expanded = not target.reasoning_expanded
+            target.render(self.width)
+
         self._bump_version()
 
     def append_error(self, message: str) -> None:
@@ -270,11 +301,18 @@ class History:
         self._bump_version()
 
     def rerender_all(self) -> None:
-        """Re-render every cell at the current width (called on resize)."""
+        """Re-render every cell at the current width (called on resize).
+
+        Each cell's `render_lock` serializes with concurrent worker-thread
+        mutations on the same cell — important here because this method runs
+        from a worker thread (off the UI loop) while streaming may still be
+        going on.
+        """
         with self._lock:
             cells = list(self._cells)
 
         for cell in cells:
-            cell.render(self.width)
+            with cell.render_lock:
+                cell.render(self.width)
 
         self._bump_version()

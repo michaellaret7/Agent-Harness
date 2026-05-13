@@ -227,9 +227,11 @@ class TUIApp:
             self.copy_mode = not self.copy_mode
             event.app.invalidate()
 
-        @kb.add('tab')
-        def _on_tab(event: KeyPressEvent) -> None:
-            event.app.layout.focus_next()
+        # Tab is intentionally unbound at the app level so it stays as
+        # in-buffer text insertion in the input. A previous binding cycled
+        # focus via `focus_next()`, which (combined with the output panel
+        # being focusable) routinely moved focus to the output and made
+        # the TUI look frozen — keys typed there go nowhere visible.
 
         return kb
 
@@ -343,6 +345,11 @@ class TUIApp:
         succession; running rerender_all on each one starves the event loop.
         Waiting for the size to settle defers that work to the post-drag idle
         moment, where it's invisible to the user.
+
+        The actual re-render is offloaded to a worker thread via
+        `asyncio.to_thread` — on a long history a single rerender can take
+        100+ ms, and running it on the event-loop thread blocks all input
+        (clicks, scroll, keystrokes) for that entire window.
         """
         last_seen = self.history.width
         changed_at: float | None = None
@@ -357,7 +364,7 @@ class TUIApp:
             elif changed_at is not None and time.monotonic() - changed_at >= self.RESIZE_DEBOUNCE_S:
                 if new_width != self.history.width:
                     self.history.width = new_width
-                    self.history.rerender_all()
+                    await asyncio.to_thread(self.history.rerender_all)
                     self.application.invalidate()
 
                 changed_at = None

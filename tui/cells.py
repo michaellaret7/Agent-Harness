@@ -13,6 +13,7 @@ from __future__ import annotations
 import difflib
 import io
 import json
+import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -568,10 +569,33 @@ class Cell(ABC):
     `_finalize` stores the ANSI text AND pre-parses it into prompt_toolkit
     fragments. The OutputPanel reads `cell.fragments` directly on the hot path
     instead of re-parsing ANSI on every cache miss.
+
+    `render_lock` serializes concurrent render() calls on the same cell. The
+    worker thread (streaming deltas, tool result updates) and the UI thread
+    (toggle clicks on arrows) can otherwise race inside Rich, producing torn
+    fragment lists or raising mid-render. History acquires this lock around
+    every mutate-then-render path. Lazy-initialized so dataclass children
+    don't need to declare it themselves.
     """
 
     ansi: str = ''
     fragments: list[tuple[str, str]] = []
+
+    @property
+    def render_lock(self) -> threading.Lock:
+        lock: threading.Lock | None = getattr(self, '_render_lock', None)
+
+        if lock is None:
+            # Double-checked init under a class-level guard so the first two
+            # concurrent callers can't each create their own lock.
+            with _LOCK_INIT_GUARD:
+                lock = getattr(self, '_render_lock', None)
+
+                if lock is None:
+                    lock = threading.Lock()
+                    object.__setattr__(self, '_render_lock', lock)
+
+        return lock
 
     @abstractmethod
     def render(self, width: int) -> None: ...
@@ -579,6 +603,9 @@ class Cell(ABC):
     def _finalize(self, ansi: str) -> None:
         self.ansi = ansi
         self.fragments = parse_ansi_to_fragments(ansi)
+
+
+_LOCK_INIT_GUARD = threading.Lock()
 
 
 @dataclass
