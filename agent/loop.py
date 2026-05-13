@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 from openai import OpenAI
 
-from tui.sink import Sink, StdoutSink
+from agent.sinks import Sink, StdoutSink
 
 if TYPE_CHECKING:
     from agent.agent import Agent

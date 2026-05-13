@@ -16,7 +16,8 @@ import os
 import threading
 import time
 import traceback
-from typing import TYPE_CHECKING
+import uuid
+from typing import TYPE_CHECKING, cast
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.filters import Condition
@@ -26,6 +27,7 @@ from prompt_toolkit.layout import Layout
 from prompt_toolkit.layout.containers import HSplit
 from prompt_toolkit.styles import Style
 
+from agent.sinks import MultiSink, Sink
 from tui import sprites
 from tui.history import History
 from tui.panels import InputPanel, OutputPanel, StatusBar
@@ -86,7 +88,35 @@ class TUIApp:
 
         self.application: Application = self._build_application()
 
-        self.sink = TUISink(history=self.history, app=self.application)
+        self.sink: Sink = self._build_sink()
+
+    def _build_sink(self) -> Sink:
+        sinks: list[Sink] = [TUISink(history=self.history, app=self.application)]
+
+        # Presence of LANGFUSE_PUBLIC_KEY is the on switch. Lazy-import the
+        # sink so the langfuse package is only required when tracing is on.
+        if os.getenv('LANGFUSE_PUBLIC_KEY'):
+            from agent.sinks.langfuse import LangfuseSink
+
+            # One TUI launch = one Langfuse session. Every turn during this
+            # process lifetime gets tagged with the same session_id and
+            # appears bundled under one "Session" in the Langfuse UI.
+            session_id = uuid.uuid4().hex
+
+            sinks.append(LangfuseSink(
+                session_id=session_id,
+                metadata={
+                    'provider': self.agent.provider,
+                    'model': self.agent.model,
+                },
+            ))
+
+        if len(sinks) == 1:
+            return sinks[0]
+
+        # MultiSink uses __getattr__ to fan events out — Pyright can't see
+        # that as Protocol-conforming, so cast.
+        return cast(Sink, MultiSink(sinks))
 
     # ----------------------------------------
     # Layout

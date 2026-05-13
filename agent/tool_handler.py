@@ -20,7 +20,7 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from tui.sink import Sink
+from agent.sinks import Sink
 
 if TYPE_CHECKING:
     from agent.agent import Agent

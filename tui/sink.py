@@ -1,30 +1,20 @@
-"""Sink Protocol — the seam between the agent loop and the UI.
+"""TUISink — Sink implementation that mutates the prompt_toolkit History.
 
-The loop calls these methods from a worker thread. TUISink mutates the
-shared History and signals the prompt_toolkit app to repaint. StdoutSink is
-the legacy fallback that prints exactly like the pre-TUI loop did.
+The agent loop calls these methods from a worker thread. TUISink writes
+into the shared History (lock-protected) and signals the prompt_toolkit
+app to repaint. `Application.invalidate()` is documented thread-safe.
+
+The Sink Protocol and the headless StdoutSink live in `agent/sink.py`
+— this file is for TUI-specific implementation only.
 """
 from __future__ import annotations
 
-import difflib
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from prompt_toolkit.application import Application
 
     from tui.history import History
-
-
-class Sink(Protocol):
-    def on_user_message(self, text: str) -> None: ...
-    def on_reasoning_delta(self, text: str) -> None: ...
-    def on_content_delta(self, text: str) -> None: ...
-    def on_assistant_end(self) -> None: ...
-    def on_tool_start(self, tool_call_id: str, name: str, args_json: str) -> None: ...
-    def on_tool_end(self, tool_call_id: str, result: str) -> None: ...
-    def on_file_diff(self, tool_call_id: str, path: str, before: str, after: str) -> None: ...
-    def on_error(self, message: str) -> None: ...
-    def on_interrupted(self) -> None: ...
 
 
 class TUISink:
@@ -33,8 +23,13 @@ class TUISink:
         self.app = app
 
     def _invalidate(self) -> None:
-        # Application.invalidate() is documented thread-safe.
         self.app.invalidate()
+
+    def on_turn_start(self, prompt: str) -> None:
+        pass
+
+    def on_turn_end(self, result: str) -> None:
+        pass
 
     def on_user_message(self, text: str) -> None:
         self.history.append_user(text)
@@ -71,47 +66,3 @@ class TUISink:
     def on_interrupted(self) -> None:
         self.history.mark_assistant_interrupted()
         self._invalidate()
-
-
-class StdoutSink:
-    """Legacy fallback. Used when no TUI is running (tests, pipes)."""
-
-    def on_user_message(self, text: str) -> None:
-        print(f'> {text}')
-
-    def on_reasoning_delta(self, text: str) -> None:
-        print(f'\033[90m{text}\033[0m', end='', flush=True)
-
-    def on_content_delta(self, text: str) -> None:
-        print(text, end='', flush=True)
-
-    def on_assistant_end(self) -> None:
-        print()
-
-    def on_tool_start(self, tool_call_id: str, name: str, args_json: str) -> None:
-        print(f'  [tool] {name}({args_json})')
-
-    def on_tool_end(self, tool_call_id: str, result: str) -> None:
-        print(f'  [tool] -> {result}')
-
-    def on_file_diff(self, tool_call_id: str, path: str, before: str, after: str) -> None:
-        lines = difflib.unified_diff(
-            before.splitlines(keepends=True),
-            after.splitlines(keepends=True),
-            fromfile=path,
-            tofile=path,
-        )
-
-        for line in lines:
-            if line.startswith('+') and not line.startswith('+++'):
-                print(f'\033[32m{line}\033[0m', end='')
-            elif line.startswith('-') and not line.startswith('---'):
-                print(f'\033[31m{line}\033[0m', end='')
-            else:
-                print(line, end='')
-
-    def on_error(self, message: str) -> None:
-        print(f'\033[31m[error] {message}\033[0m')
-
-    def on_interrupted(self) -> None:
-        print('\n[interrupted]')

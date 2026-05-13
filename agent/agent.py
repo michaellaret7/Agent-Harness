@@ -9,9 +9,9 @@ from dotenv import load_dotenv
 
 from agent.client import build_client
 from agent.loop import execution_loop
+from agent.sinks import Sink
 from agent.tool_handler import ToolHandler
 from tools.base import bash, edit, glob, grep, read, search, tree, write
-from tui.sink import Sink
 
 load_dotenv()
 
@@ -85,15 +85,28 @@ class Agent:
         cancel_event: threading.Event | None = None,
     ) -> str:
 
-    
+        active_sink: Sink | None = sink
+
+        if active_sink is not None:
+            active_sink.on_turn_start(prompt)
+
         self.messages.append({'role': 'user', 'content': prompt})
 
-        return execution_loop(
-            self,
-            model=self.model,
-            stream=True,
-            sink=sink,
-            cancel_event=cancel_event,
-        )
+        result = ''
+
+        try:
+            result = execution_loop(
+                self,
+                model=self.model,
+                stream=True,
+                sink=sink,
+                cancel_event=cancel_event,
+            )
+
+            return result
+
+        finally:
+            if active_sink is not None:
+                active_sink.on_turn_end(result)
 
 
