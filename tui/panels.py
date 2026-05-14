@@ -425,7 +425,13 @@ class OutputPanel:
         return self._cached_total_lines
 
     def _get_cursor_position(self) -> Point:
-        self._ensure_fresh()
+        # Do NOT call _ensure_fresh() here. prompt_toolkit invokes this
+        # immediately after _get_text() inside create_content, so the cache
+        # is already populated for the fragments it just received. Refreshing
+        # again here can race the worker thread bumping history.version, which
+        # would return a cursor sized for a newer cache version than the
+        # fragments prompt_toolkit is about to index — yielding IndexError
+        # inside _scroll_when_linewrapping when y exceeds len(fragment_lines).
         total = self._cached_total_lines
 
         if self.follow_tail or total == 0:

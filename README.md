@@ -16,11 +16,10 @@
 
 A minimal agent loop wrapped in a full-screen terminal UI. It streams tokens from a chat-completions endpoint, parses tool calls, executes them, and feeds the results back — until the model stops asking for tools and returns a final answer.
 
-The client supports three backends:
+The client supports two backends:
 
 - A hosted vLLM endpoint (e.g. RunPod proxy) — original target was NVIDIA Nemotron 3 Nano on vLLM.
-- OpenAI's API.
-- Anthropic's API (via its OpenAI-compatible shim).
+- OpenRouter — gives you access to OpenAI, Anthropic, Google, Meta, and other models through a single OpenAI-compatible endpoint.
 
 ## Features
 
@@ -35,7 +34,7 @@ The client supports three backends:
 
 - Python 3.12 (pinned; uv refuses to sync on 3.13)
 - [`uv`](https://github.com/astral-sh/uv) for dependency management
-- An endpoint to talk to — Anthropic, OpenAI, or a hosted vLLM endpoint
+- An endpoint to talk to — OpenRouter or a hosted vLLM endpoint
 
 ## Setup
 
@@ -78,15 +77,13 @@ read agent/loop.py and explain how tool calls are reassembled across stream chun
 
 ## Configuring the endpoint
 
-`agent/client.py` builds the OpenAI-compatible client. Three modes:
+`agent/client.py` builds the OpenAI-compatible client. Two modes:
 
-**Anthropic (default for `python -m agent`)** — `agent/__main__.py` constructs `Agent(provider='anthropic', model='claude-opus-4-7')`. The client reads `ANTHROPIC_API_KEY` and optionally `ANTHROPIC_API_URL`. Reached via Anthropic's OpenAI-compatible shim, not the `anthropic` SDK.
-
-**OpenAI** — pass `provider='openai'` and a `model` name. The client reads `OPENAI_API_KEY` / `OPENAI_API_URL`.
+**OpenRouter (default for `python -m agent`)** — `agent/__main__.py` constructs `Agent(provider='openrouter', model='nvidia/nemotron-3-super-120b-a12b')`. The client reads `OPENROUTER_API_KEY` and optionally `OPENROUTER_API_URL`. OpenRouter exposes every supported model (OpenAI, Anthropic, Google, Meta, etc.) through a single OpenAI-compatible endpoint — pick whatever `model` string you want from openrouter.ai/models.
 
 **Hosted vLLM** — `Agent(provider='vllm')`. The client reads `VLLM_API_URL` and `VLLM_MODEL` from `.env`. Point `VLLM_API_URL` at your RunPod (or other) endpoint. The hosted endpoint is treated as unauthenticated.
 
-The `Agent` class default is `provider='vllm'`, but the `python -m agent` entry point overrides it to Anthropic. To change what `python -m agent` launches, edit `agent/__main__.py`.
+The `Agent` class default is `provider='vllm'`, but the `python -m agent` entry point overrides it to OpenRouter. To change what `python -m agent` launches, edit `agent/__main__.py`.
 
 ## Project layout
 
@@ -95,7 +92,7 @@ local-agent/
 ├── agent/
 │   ├── __main__.py         # TUI entry point (uv run python -m agent)
 │   ├── agent.py            # Agent class — message history, tool registry, context wiring
-│   ├── client.py           # OpenAI-compatible client builder (vllm / openai / anthropic)
+│   ├── client.py           # OpenAI-compatible client builder (vllm / openrouter)
 │   ├── loop.py             # streaming execution loop, tool-call reassembly
 │   ├── tool_handler.py     # tool dispatch (execution only)
 │   └── context/
@@ -134,7 +131,7 @@ To drive the agent from a script instead of the TUI, import `Agent` directly and
 from agent.agent import Agent
 from tui.sink import StdoutSink
 
-agent = Agent(provider='anthropic', model='claude-opus-4-7')
+agent = Agent(provider='openrouter', model='nvidia/nemotron-3-super-120b-a12b')
 agent.run('summarize agent/loop.py', sink=StdoutSink())
 ```
 

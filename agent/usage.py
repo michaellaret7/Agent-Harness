@@ -4,17 +4,17 @@
 instance per LLM call; the TUI accumulates them into per-turn and
 per-session totals for the status bar.
 
-Providers disagree on which fields they populate. Reliable across all
-three configured providers (vLLM, OpenAI, Anthropic-via-shim) are only
-`prompt_tokens` and `completion_tokens`. `reasoning_tokens` shows up on
-thinking models. `cached_tokens` shows up on OpenAI and Anthropic-shim
-prompt caching. `cache_write_tokens` is read from both the OpenAI shape
-(`prompt_tokens_details.cache_write_tokens`) and Anthropic's top-level
-`cache_creation_input_tokens` — whichever the provider supplies. `cost`
-is only populated by gateways like OpenRouter; vLLM/OpenAI/Anthropic
-direct will return 0. `from_response` defaults every field to 0 so a
-missing field is indistinguishable from a real zero, which is the right
-call for accumulation.
+Providers disagree on which fields they populate. Reliable across both
+configured providers (vLLM, OpenRouter) are only `prompt_tokens` and
+`completion_tokens`. `reasoning_tokens` shows up on thinking models.
+`cached_tokens` shows up when the upstream model supports prompt caching
+and OpenRouter forwards it. `cache_write_tokens` is read from both the
+standard OpenAI shape (`prompt_tokens_details.cache_write_tokens`) and
+the Anthropic-style top-level `cache_creation_input_tokens` — whichever
+the upstream model surfaces through OpenRouter. `cost` is populated by
+OpenRouter; vLLM returns 0. `from_response` defaults every field to 0 so
+a missing field is indistinguishable from a real zero, which is the
+right call for accumulation.
 """
 from __future__ import annotations
 
@@ -44,9 +44,10 @@ class Usage:
         completion_details = getattr(usage, 'completion_tokens_details', None)
         prompt_details = getattr(usage, 'prompt_tokens_details', None)
 
-        # cache_write tokens: OpenAI puts them under prompt_tokens_details,
-        # Anthropic's OpenAI-shim surfaces them as top-level
-        # `cache_creation_input_tokens`. Take whichever the provider gives.
+        # cache_write tokens: the standard OpenAI shape puts them under
+        # prompt_tokens_details; Anthropic-style upstreams surface them as
+        # top-level `cache_creation_input_tokens`. Take whichever shape
+        # OpenRouter forwards from the upstream model.
         cache_write = (
             getattr(prompt_details, 'cache_write_tokens', 0)
             or getattr(usage, 'cache_creation_input_tokens', 0)

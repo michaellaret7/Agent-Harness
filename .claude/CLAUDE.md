@@ -31,12 +31,12 @@ There is no test suite, linter, or build step configured.
 
 ### Provider abstraction
 
-All three providers (`vllm`, `openai`, `anthropic`) talk through the **OpenAI Python SDK**. Anthropic is reached via its OpenAI-compatible shim, not the `anthropic` SDK. `agent/client.py` is the single place that knows about provider differences:
+Both providers (`vllm`, `openrouter`) talk through the **OpenAI Python SDK**. `agent/client.py` is the single place that knows about provider differences:
 
 - `vllm` uses a placeholder API key (the hosted endpoint is unauthenticated) and pulls `VLLM_API_URL` / `VLLM_MODEL` from env.
-- `openai` / `anthropic` require both an API key env var and a model argument; the URL env var is optional.
+- `openrouter` requires `OPENROUTER_API_KEY` and a `model` argument (any model string from openrouter.ai/models); `OPENROUTER_API_URL` is optional.
 
-Note: the `Agent` class default is `provider='vllm'`, but `agent/agent.py`'s `__main__` block overrides it to `provider='anthropic', model='claude-opus-4-7'`. Changing the default behavior of `python -m agent.agent` means editing that block, not the class default.
+Note: the `Agent` class default is `provider='vllm'`, but `agent/__main__.py` overrides it to `provider='openrouter', model='nvidia/nemotron-3-super-120b-a12b'`. Changing the default behavior of `python -m agent` means editing that file, not the class default.
 
 ### The streaming loop (`agent/loop.py`)
 
@@ -62,7 +62,7 @@ A tool module exports a `tool` dict with exactly four keys: `name`, `description
 
 ## Configuration
 
-`.env` is required. `.env.example` lists all three provider blocks (`ANTHROPIC_*`, `OPENAI_*`, `VLLM_*`). Only the credentials for the provider you actually use need real values.
+`.env` is required. `.env.example` lists both provider blocks (`OPENROUTER_*`, `VLLM_*`). Only the credentials for the provider you actually use need real values.
 
 System prompt and persistent memory are plain markdown at `agent/context/system_prompt.md` and `agent/context/memory.md`. Both are read at `Agent.__init__` and concatenated into the initial system message — there is no runtime reload.
 

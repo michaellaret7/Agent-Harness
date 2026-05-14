@@ -1,4 +1,4 @@
-"""Build an OpenAI-compatible client for Anthropic, OpenAI, or our hosted vLLM (RunPod).
+"""Build an OpenAI-compatible client for OpenRouter or our hosted vLLM (RunPod).
 
 When LANGFUSE_PUBLIC_KEY is set, importing `langfuse.openai` monkey-patches
 `openai.resources.chat.completions.Completions.create` (via wrapt) so every
@@ -14,7 +14,6 @@ from openai import OpenAI
 
 VLLM_PLACEHOLDER_KEY = 'placeholder'  # hosted vLLM endpoint does not require auth
 
-
 def _maybe_enable_langfuse_instrumentation() -> None:
     """Trigger the langfuse.openai import side effect when keys are present.
 
@@ -27,13 +26,11 @@ def _maybe_enable_langfuse_instrumentation() -> None:
 
 # provider -> (api_key env var, base_url env var)
 HOSTED_PROVIDER_ENV: dict[str, tuple[str, str]] = {
-    'anthropic': ('ANTHROPIC_API_KEY', 'ANTHROPIC_API_URL'),
-    'openai': ('OPENAI_API_KEY', 'OPENAI_API_URL'),
     'openrouter': ('OPENROUTER_API_KEY', 'OPENROUTER_API_URL'),
 }
 
 def build_client(provider: str = 'vllm', model: str | None = None) -> tuple[OpenAI, str]:
-    """Return (client, model). provider is 'anthropic', 'openai', or 'vllm'."""
+    """Return (client, model). provider is 'openrouter' or 'vllm'."""
 
     provider = provider.lower()
     _maybe_enable_langfuse_instrumentation()
