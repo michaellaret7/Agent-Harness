@@ -20,6 +20,7 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from agent.messages import tool_msg
 from agent.sinks import Sink
 
 if TYPE_CHECKING:
@@ -75,11 +76,7 @@ class ToolHandler:
 
             sink.on_tool_end(tool_call_id, result)
 
-            messages.append({
-                'role': 'tool',
-                'tool_call_id': tool_call_id,
-                'content': result,
-            })
+            messages.append(tool_msg(tool_call_id, result))
 
         return messages
 

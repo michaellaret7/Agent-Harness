@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from openai import OpenAI
 
+from agent.messages import assistant_msg, tool_msg
 from agent.sinks import Sink, StdoutSink
 from agent.usage import Usage
 
@@ -67,11 +68,7 @@ def _settle_interrupted_tool_calls(agent: 'Agent', tool_calls: list[dict], sink:
     for tc in tool_calls:
         sink.on_tool_end(tc['id'], '[interrupted]')
 
-        agent.messages.append({
-            'role': 'tool',
-            'tool_call_id': tc['id'],
-            'content': '[interrupted]',
-        })
+        agent.messages.append(tool_msg(tc['id'], '[interrupted]'))
 
 
 #     ================================
@@ -134,14 +131,8 @@ def execution_loop(
             active_sink.on_interrupted()
             break
 
-        assistant_msg: dict = {'role': 'assistant', 'content': content}
-
-        # Append the tool calls to the assistant message for downstream ToolHandler processing
-        if tool_calls:
-            assistant_msg['tool_calls'] = tool_calls 
-
         # Append the assistant message to the agents state aka the message history
-        agent.messages.append(assistant_msg)
+        agent.messages.append(assistant_msg(content, tool_calls))
 
         if was_cancelled:
             _settle_interrupted_tool_calls(agent, tool_calls, active_sink)

@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 
 from agent.client import build_client
 from agent.loop import execution_loop
+from agent.messages import system_msg, user_msg
 from agent.sinks import Sink
 from agent.tool_handler import ToolHandler
 from tools.base import bash, edit, glob, grep, read, search, tree, write
@@ -72,11 +73,10 @@ class Agent:
 
     def build_initial_context(self) -> None:
         self.system_prompt += f'\nCurrent date: {datetime.now().strftime("%A, %B %d, %Y")}'
-        
-        if self.memory:
-            self.messages.append({'role': 'system', 'content': self.system_prompt + '\n' + self.memory})
-        else:
-            self.messages.append({'role': 'system', 'content': self.system_prompt})
+
+        content = f'{self.system_prompt}\n{self.memory}' if self.memory else self.system_prompt
+
+        self.messages.append(system_msg(content))
 
     def run(
         self,
@@ -90,7 +90,7 @@ class Agent:
         if active_sink is not None:
             active_sink.on_turn_start(prompt)
 
-        self.messages.append({'role': 'user', 'content': prompt})
+        self.messages.append(user_msg(prompt))
 
         result = ''
 
