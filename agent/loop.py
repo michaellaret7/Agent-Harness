@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from openai import OpenAI
 
 from agent.sinks import Sink, StdoutSink
+from agent.usage import Usage
 
 if TYPE_CHECKING:
     from agent.agent import Agent
@@ -82,7 +83,6 @@ def execution_loop(
     agent: 'Agent',
     model: str,
     max_iters: int = 100,
-    stream: bool = False,
     # --------------------------------------------
     sink: Sink | None = None,
     cancel_event: threading.Event | None = None,
@@ -90,16 +90,14 @@ def execution_loop(
     """Main agent execution loop.
 
     This function runs the agent for a maximum of `max_iters` iterations.
-    In each iteration, it calls the LLM (either streaming or non-streaming),
-    processes the response (handling tool calls and cancellations), and
-    continues until the LLM returns content without tool calls or a
-    cancellation is requested.
+    In each iteration, it streams an LLM call, processes the response
+    (handling tool calls and cancellations), and continues until the LLM
+    returns content without tool calls or a cancellation is requested.
 
     Args:
         agent: The agent instance, containing messages, tools, and tool_handler.
         model: The model name to use for the LLM call.
         max_iters: Maximum number of iterations to run.
-        stream: Whether to use streaming for the LLM call.
         sink: Optional sink for UI updates (defaults to StdoutSink).
         cancel_event: Optional event to signal cancellation (defaults to a new Event).
 
@@ -113,30 +111,22 @@ def execution_loop(
     last_content = ''
 
     for _ in range(max_iters):
-        
+
         if active_cancel.is_set():
             active_sink.on_interrupted() # this line breaks the loop because the user has cancelled the execution
             break
-        
-        # POTENTIAL TODO: just have the llm stream be the base case and get rid of non streaming 
-        if stream:
-            content, tool_calls, was_cancelled = call_llm_stream(
-                agent.client,
-                agent.messages,
-                agent.tools,
-                model,
-                active_sink,
-                active_cancel,
-            )
-        else:
-            content, tool_calls = call_llm(
-                agent.client,
-                agent.messages,
-                agent.tools,
-                model,
-                active_sink,
-            )
-            was_cancelled = False
+
+        content, tool_calls, was_cancelled, usage = call_llm(
+            agent.client,
+            agent.messages,
+            agent.tools,
+            model,
+            active_sink,
+            active_cancel,
+        )
+
+        if usage is not None:
+            active_sink.on_usage(usage)
 
         last_content = content
 
@@ -178,54 +168,9 @@ def call_llm(
     tools: list[dict] | None,
     model: str,
     sink: Sink,
-) -> tuple[str, list[dict]]:
-    """Call the LLM (non-stream) and return (content, tool_calls) as plain dicts."""
-
-    response = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        tools=tools,
-        tool_choice='auto',
-        stream=False,
-    )
-
-    message = response.choices[0].message
-    content = message.content or ''
-
-    reasoning = _extract_reasoning(message)
-
-    if reasoning:
-        sink.on_reasoning_delta(reasoning)
-
-    if content:
-        sink.on_content_delta(content)
-
-    sink.on_assistant_end()
-
-    tool_calls: list[dict] = []
-
-    for tc in message.tool_calls or []:
-        tool_calls.append({
-            'id': tc.id,
-            'type': 'function',
-            'function': {
-                'name': tc.function.name,
-                'arguments': tc.function.arguments or '',
-            },
-        })
-
-    return content, tool_calls
-
-
-def call_llm_stream(
-    client: OpenAI,
-    messages: list[dict],
-    tools: list[dict] | None,
-    model: str,
-    sink: Sink,
     cancel_event: threading.Event,
-) -> tuple[str, list[dict], bool]:
-    """Call the LLM with streaming. Returns (content, tool_calls, was_cancelled)."""
+) -> tuple[str, list[dict], bool, Usage | None]:
+    """Call the LLM with streaming. Returns (content, tool_calls, was_cancelled, usage)."""
 
     response = client.chat.completions.create(
         model=model,
@@ -233,6 +178,8 @@ def call_llm_stream(
         tools=tools,
         tool_choice='auto',
         stream=True,
+        # Final chunk arrives with empty choices and populated usage.
+        stream_options={'include_usage': True},
     )
 
     content_pieces: list[str] = []
@@ -240,12 +187,18 @@ def call_llm_stream(
     # first fragment; arguments accumulate across the rest.
     tool_call_slots: dict[int, dict] = {}
     was_cancelled = False
+    usage: Usage | None = None
 
     for chunk in response:
         if cancel_event.is_set():
             was_cancelled = True
             response.close()
             break
+
+        # The final usage-only chunk has empty choices but a populated
+        # `usage` field. Capture it before the `not chunk.choices` skip.
+        if getattr(chunk, 'usage', None):
+            usage = Usage.from_response(chunk.usage)
 
         if not chunk.choices:
             continue
@@ -284,4 +237,4 @@ def call_llm_stream(
     content = ''.join(content_pieces)
     tool_calls: list[dict] = [tool_call_slots[i] for i in sorted(tool_call_slots)]
 
-    return content, tool_calls, was_cancelled
+    return content, tool_calls, was_cancelled, usage

@@ -88,10 +88,14 @@ class TUIApp:
 
         self.application: Application = self._build_application()
 
+        # `tui_sink` is the concrete TUISink used for accumulator reads
+        # in `_get_status`; `sink` is what the agent loop sees (may be a
+        # MultiSink wrapping it alongside Langfuse).
+        self.tui_sink: TUISink = TUISink(history=self.history, app=self.application)
         self.sink: Sink = self._build_sink()
 
     def _build_sink(self) -> Sink:
-        sinks: list[Sink] = [TUISink(history=self.history, app=self.application)]
+        sinks: list[Sink] = [self.tui_sink]
 
         # Presence of LANGFUSE_PUBLIC_KEY is the on switch. Lazy-import the
         # sink so the langfuse package is only required when tracing is on.
@@ -282,6 +286,9 @@ class TUIApp:
             'scroll_locked': not self.output.follow_tail,
             'scroll_y': self.output._scroll_target,
             'copy_mode': self.copy_mode,
+            'last_call_usage': self.tui_sink.last_call_usage,
+            'last_turn_usage': self.tui_sink.last_turn_usage,
+            'session_usage': self.tui_sink.session_usage,
         }
 
     # ----------------------------------------

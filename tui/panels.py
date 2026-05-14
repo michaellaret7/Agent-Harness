@@ -24,6 +24,7 @@ from prompt_toolkit.layout.processors import Processor, Transformation, Transfor
 from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
 from prompt_toolkit.widgets import TextArea
 
+from agent.usage import Usage
 from tui.cells import AssistantCell, Cell, ErrorCell, HeaderCell, ToolCell, UserCell
 from tui.sprites import frame_at
 
@@ -33,6 +34,52 @@ if TYPE_CHECKING:
 #     ================================
 # --> Helper funcs
 #     ================================
+
+
+def _format_tokens(n: int) -> str:
+    """Compact token count: 1234 -> '1.2k', 421 -> '421'."""
+    if n < 1000:
+        return str(n)
+
+    return f'{n / 1000:.1f}k'
+
+
+def _format_usage_segment(
+    last_call: Usage | None,
+    last_turn: Usage | None,
+    session: Usage | None,
+) -> str:
+    """Build the dim usage segment for the status bar.
+
+    Returns '' when no LLM call has completed yet, so the bar stays clean
+    on a fresh launch. The `$ turn` / `$ session` parts hide themselves
+    when cost is 0 (vLLM endpoints don't return cost — better to omit
+    than to lie with '$0.00').
+    """
+    if last_call is None:
+        return ''
+
+    turn = last_turn if last_turn is not None else Usage.zero()
+    session_total = session if session is not None else Usage.zero()
+
+    # `ctx` is the prompt size on the *last* call (current context occupancy);
+    # `out` is the completion total *across the turn* — completion tokens sum
+    # cleanly across the tool-call loop, prompt tokens don't. `out` is shown
+    # unconditionally once a call has landed (0 is a legitimate state for a
+    # tool-call-only response and worth surfacing). `$` segments hide at 0
+    # because vLLM doesn't supply cost and "$0.00" would be a lie.
+    parts: list[str] = [
+        f'{_format_tokens(last_call.prompt_tokens)} ctx',
+        f'{_format_tokens(turn.completion_tokens)} out',
+    ]
+
+    if turn.cost > 0:
+        parts.append(f'${turn.cost:.4f} turn')
+
+    if session_total.cost > 0:
+        parts.append(f'${session_total.cost:.4f} session')
+
+    return '  ·  ' + '  ·  '.join(parts)
 
 TOOL_ARROW_CHARS = ('⮞', '⮟')
 ASSISTANT_ARROW_CHARS = ('▸', '▾')
@@ -601,6 +648,15 @@ class StatusBar:
             left_segments.append(('class:status', ' '))
 
         left_segments.append(('class:status', f'{provider}/{model}  ·  {cwd}'))
+
+        usage_text = _format_usage_segment(
+            s.get('last_call_usage'),
+            s.get('last_turn_usage'),
+            s.get('session_usage'),
+        )
+
+        if usage_text:
+            left_segments.append(('class:status', usage_text))
 
         if scroll_locked:
             left_segments.append(('class:status.locked', f'  ·  [scrolled y={scroll_y}]'))

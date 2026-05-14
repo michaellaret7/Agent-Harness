@@ -19,9 +19,12 @@ The Sink calls happen on the agent worker thread. Each turn owns its own
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from langfuse import Langfuse, propagate_attributes
+
+if TYPE_CHECKING:
+    from agent.usage import Usage
 
 log = logging.getLogger(__name__)
 
@@ -208,4 +211,9 @@ class LangfuseSink:
         pass
 
     def on_assistant_end(self) -> None:
+        pass
+
+    def on_usage(self, usage: Usage) -> None:
+        # Already captured by the langfuse.openai monkey-patch on the
+        # auto-generation span — do not double-send.
         pass

@@ -98,7 +98,6 @@ class Agent:
             result = execution_loop(
                 self,
                 model=self.model,
-                stream=True,
                 sink=sink,
                 cancel_event=cancel_event,
             )

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from agent.usage import Usage
+
 if TYPE_CHECKING:
     from prompt_toolkit.application import Application
 
@@ -22,14 +24,35 @@ class TUISink:
         self.history = history
         self.app = app
 
+        # Usage telemetry. `last_call_usage` is per-LLM-call (so the
+        # status bar shows the *current* context size, not a turn sum).
+        # `last_turn_usage` accumulates across the tool-call cycle inside
+        # one Agent.run; reset on on_turn_start. `session_usage` runs
+        # for the lifetime of the TUI process.
+        #
+        # Thread safety: these three attrs are rebound (never mutated in
+        # place) by the worker thread; the UI thread reads them lock-free.
+        # Safe because Usage is frozen=True, so each rebind is an atomic
+        # swap under the GIL — a torn read is impossible. Do not add
+        # mutable per-turn buffers here without re-evaluating this.
+        self.last_call_usage: Usage | None = None
+        self.last_turn_usage: Usage = Usage.zero()
+        self.session_usage: Usage = Usage.zero()
+
     def _invalidate(self) -> None:
         self.app.invalidate()
 
     def on_turn_start(self, prompt: str) -> None:
-        pass
+        self.last_turn_usage = Usage.zero()
 
     def on_turn_end(self, result: str) -> None:
         pass
+
+    def on_usage(self, usage: Usage) -> None:
+        self.last_call_usage = usage
+        self.last_turn_usage = self.last_turn_usage + usage
+        self.session_usage = self.session_usage + usage
+        self._invalidate()
 
     def on_user_message(self, text: str) -> None:
         self.history.append_user(text)

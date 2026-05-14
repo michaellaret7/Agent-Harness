@@ -19,6 +19,8 @@ import difflib
 import logging
 from typing import Protocol
 
+from agent.usage import Usage
+
 log = logging.getLogger(__name__)
 
 
@@ -32,6 +34,7 @@ class Sink(Protocol):
     def on_tool_start(self, tool_call_id: str, name: str, args_json: str) -> None: ...
     def on_tool_end(self, tool_call_id: str, result: str) -> None: ...
     def on_file_diff(self, tool_call_id: str, path: str, before: str, after: str) -> None: ...
+    def on_usage(self, usage: Usage) -> None: ...
     def on_error(self, message: str) -> None: ...
     def on_interrupted(self) -> None: ...
 
@@ -78,6 +81,9 @@ class StdoutSink:
                 print(f'\033[31m{line}\033[0m', end='')
             else:
                 print(line, end='')
+
+    def on_usage(self, usage: Usage) -> None:
+        pass
 
     def on_error(self, message: str) -> None:
         print(f'\033[31m[error] {message}\033[0m')
