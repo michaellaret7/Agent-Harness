@@ -4,6 +4,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from tools.helpers.paths import resolve_path
+
 MAX_MATCHES = 200
 SKIP_DIRS = {
     '.venv', '__pycache__', '.git', 'node_modules', 'models',
@@ -13,7 +15,7 @@ SKIP_DIRS = {
 
 
 def grep(pattern: str, path: str = '.', glob: str = '*', ignore_case: bool = False) -> str:
-    base = Path(path).expanduser().resolve()
+    base = resolve_path(path)
     if not base.exists():
         return f'error: path not found: {path!r}'
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tools.helpers.paths import resolve_path
+
 # Heavy or noisy directories — skip outright so the tree stays readable.
 SKIP = {
     '.venv', '__pycache__', '.git', '.claude', 'node_modules', 'models',
@@ -15,7 +17,7 @@ MAX_DEPTH = 5
 
 
 def tree(path: str = '.') -> str:
-    target = Path(path).expanduser().resolve()
+    target = resolve_path(path)
     if not target.is_dir():
         return f'error: not a directory: {path!r}'
 

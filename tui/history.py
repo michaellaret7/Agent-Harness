@@ -208,10 +208,12 @@ class History:
             cell.status = 'error' if result.startswith('error:') else 'ok'
             cell.ended_at = time.monotonic()
 
-            # Auto-expand failures so the user immediately sees what broke.
-            if cell.status == 'error':
-                cell.expanded = True
-
+            # Reason: do NOT auto-expand errors. The status tail already shows
+            # the first 40 chars of the error in red — enough to read what
+            # broke. Expanding every failure turned bursts of failed tool
+            # calls into a wall of red blocks, multiplying Rich render work
+            # on the worker and FormattedText rebuilds on the UI thread.
+            # Users can click ⮞ to expand any specific cell.
             cell.render(self.width)
 
         self._bump_version()

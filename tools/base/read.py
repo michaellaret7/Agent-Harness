@@ -1,14 +1,14 @@
 """Read a file from the local filesystem with line numbers."""
 from __future__ import annotations
 
-from pathlib import Path
+from tools.helpers.paths import resolve_path
 
 DEFAULT_LIMIT = 2000
 MAX_LINE_CHARS = 2000
 
 
 def read(file_path: str, offset: int = 0, limit: int = DEFAULT_LIMIT) -> str:
-    target = Path(file_path).expanduser().resolve()
+    target = resolve_path(file_path)
     if not target.is_file():
         return f'error: not a file: {file_path!r}'
     try:

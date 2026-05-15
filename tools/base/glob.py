@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tools.helpers.paths import resolve_path
+
 MAX_RESULTS = 200
 SKIP_DIRS = {
     '.venv', '__pycache__', '.git', 'node_modules', 'models',
@@ -20,7 +22,7 @@ def glob(
     if not pattern or not pattern.strip():
         return "error: pattern must be a non-empty string"
 
-    base = Path(path).expanduser().resolve()
+    base = resolve_path(path)
     if not base.is_dir():
         return f'error: not a directory: {path!r}'
 

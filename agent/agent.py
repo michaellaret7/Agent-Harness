@@ -11,8 +11,10 @@ from agent.client import build_client
 from agent.loop import execution_loop
 from agent.messages import system_msg, user_msg
 from agent.sinks import Sink
+from agent.skills import Skill, format_skill_listing, load_skills
 from agent.tool_handler import ToolHandler
 from tools.base import bash, edit, glob, grep, read, search, tree, write
+from tools.base.skill import make_skill_tool
 
 load_dotenv()
 
@@ -37,6 +39,8 @@ class Agent:
         self.system_prompt = (Path(__file__).parent / 'context' / 'system_prompt.md').read_text(encoding='utf-8').strip()
         self.memory = (Path(__file__).parent / 'context' / 'memory.md').read_text(encoding='utf-8').strip()
 
+        self.skills: list[Skill] = load_skills()
+
         # ---- Register base tools ---- #
         self.add_tool(**bash.tool)
         self.add_tool(**read.tool)
@@ -46,6 +50,7 @@ class Agent:
         self.add_tool(**grep.tool)
         self.add_tool(**tree.tool)
         self.add_tool(**search.tool)
+        self.add_tool(**make_skill_tool(self.skills))
 
         self.build_initial_context()
 
@@ -74,7 +79,17 @@ class Agent:
     def build_initial_context(self) -> None:
         self.system_prompt += f'\nCurrent date: {datetime.now().strftime("%A, %B %d, %Y")}'
 
-        content = f'{self.system_prompt}\n{self.memory}' if self.memory else self.system_prompt
+        parts: list[str] = [self.system_prompt]
+
+        listing = format_skill_listing(self.skills)
+
+        if listing:
+            parts.append(listing)
+
+        if self.memory:
+            parts.append(self.memory)
+
+        content = '\n\n'.join(parts)
 
         self.messages.append(system_msg(content))
 

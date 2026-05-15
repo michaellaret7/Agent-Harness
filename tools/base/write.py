@@ -1,11 +1,11 @@
 """Write content to a file on the local filesystem."""
 from __future__ import annotations
 
-from pathlib import Path
+from tools.helpers.paths import resolve_path
 
 
 def write(file_path: str, content: str) -> str:
-    target = Path(file_path).expanduser().resolve()
+    target = resolve_path(file_path)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding='utf-8')
     return f'wrote {len(content)} chars to {target}'

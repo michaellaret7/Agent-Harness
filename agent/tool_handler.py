@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from agent.messages import tool_msg
 from agent.sinks import Sink
+from tools.helpers.paths import resolve_path
 
 if TYPE_CHECKING:
     from agent.agent import Agent
@@ -100,7 +101,7 @@ class ToolHandler:
             raw = kwargs.get('file_path')
 
             if isinstance(raw, str) and raw:
-                target = Path(raw).expanduser().resolve()
+                target = resolve_path(raw)
 
         before = _snapshot(target) if target else ''
 

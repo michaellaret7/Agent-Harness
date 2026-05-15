@@ -1,11 +1,11 @@
 """Replace a literal string in a file."""
 from __future__ import annotations
 
-from pathlib import Path
+from tools.helpers.paths import resolve_path
 
 
 def edit(file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> str:
-    target = Path(file_path).expanduser().resolve()
+    target = resolve_path(file_path)
     if not target.is_file():
         return f'error: not a file: {file_path!r}'
     if old_string == new_string:

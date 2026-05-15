@@ -74,8 +74,9 @@ tool = {
     'description': (
         'Execute a bash command and return combined stdout/stderr. Runs in real '
         'bash on every platform (Git Bash on Windows), so POSIX syntax works '
-        'everywhere — use forward slashes and `/c/...`-style paths on Windows. '
-        'Default timeout is 120 seconds (max 600).'
+        'everywhere. For file paths passed to OTHER tools (ReadFile, EditFile, '
+        'Glob, etc.) prefer the native form (`C:\\Dev\\foo` or `C:/Dev/foo` on '
+        'Windows). Default timeout is 120 seconds (max 600).'
     ),
     'parameters': {
         'type': 'object',
