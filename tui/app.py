@@ -21,8 +21,6 @@ from typing import TYPE_CHECKING, cast
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.filters import Condition
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.key_binding.key_processor import KeyPressEvent
 from prompt_toolkit.layout import Layout
 from prompt_toolkit.layout.containers import HSplit
 from prompt_toolkit.styles import Style
@@ -30,6 +28,7 @@ from prompt_toolkit.styles import Style
 from agent.sinks import MultiSink, Sink
 from tui import sprites
 from tui.history import History
+from tui.keybindings import build_key_bindings
 from tui.panels import InputPanel, OutputPanel, StatusBar
 from tui.sink import TUISink
 from tui.sprites import Sprite
@@ -37,7 +36,6 @@ from tui.sprites import Sprite
 if TYPE_CHECKING:
     from agent.agent import Agent
 
-CTRL_C_DOUBLE_TAP_SECONDS = 2.0
 ANIM_TICK_S = 1 / 12  # 12 Hz repaint while a turn is in flight
 
 #     ================================
@@ -133,7 +131,7 @@ class TUIApp:
             self.status.window,
         ])
 
-        kb = self._build_key_bindings()
+        kb = build_key_bindings(self)
 
         return Application(
             layout=Layout(root, focused_element=self.input.area),
@@ -155,89 +153,6 @@ class TUIApp:
             # and gives the renderer headroom to coalesce burst events.
             min_redraw_interval=1 / 60,
         )
-
-    # ----------------------------------------
-    # Key bindings
-    # ----------------------------------------
-
-    def _build_key_bindings(self) -> KeyBindings:
-        kb = KeyBindings()
-
-        @kb.add('enter')
-        def _on_enter(event: KeyPressEvent) -> None:
-            if self._is_running():
-                return  # silently no-op while a turn is in flight
-
-            text = self.input.text.strip()
-
-            if not text:
-                return
-
-            self.input.clear()
-            self._submit(text)
-
-        @kb.add('c-j')
-        def _on_ctrl_j(event: KeyPressEvent) -> None:
-            event.current_buffer.insert_text('\n')
-
-        @kb.add('escape', eager=True)
-        def _on_escape(event: KeyPressEvent) -> None:
-            if self._is_running():
-                self.cancel_event.set()
-            else:
-                self.input.clear()
-
-        @kb.add('c-c')
-        def _on_ctrl_c(event: KeyPressEvent) -> None:
-            now = time.monotonic()
-
-            if self._is_running():
-                self.cancel_event.set()
-                self.last_ctrl_c = now
-                return
-
-            if now - self.last_ctrl_c < CTRL_C_DOUBLE_TAP_SECONDS:
-                event.app.exit()
-                return
-
-            self.last_ctrl_c = now
-
-        @kb.add('c-d')
-        def _on_ctrl_d(event: KeyPressEvent) -> None:
-            if not self.input.text:
-                event.app.exit()
-
-        # Alt+arrows are deliberately not bound — `escape, eager=True` above
-        # consumes the lead byte and they would never fire anyway.
-        @kb.add('pageup')
-        @kb.add('c-up')
-        def _on_pgup(event: KeyPressEvent) -> None:
-            self.output.page_up()
-            event.app.invalidate()
-
-        @kb.add('pagedown')
-        @kb.add('c-down')
-        def _on_pgdn(event: KeyPressEvent) -> None:
-            self.output.page_down()
-            event.app.invalidate()
-
-        @kb.add('end')
-        def _on_end(event: KeyPressEvent) -> None:
-            self.output.jump_to_bottom()
-            event.app.invalidate()
-
-        @kb.add('c-t')
-        def _on_toggle_copy_mode(event: KeyPressEvent) -> None:
-            self.copy_mode = not self.copy_mode
-            event.app.invalidate()
-
-        # Tab is intentionally unbound at the app level so it stays as
-        # in-buffer text insertion in the input. A previous binding cycled
-        # focus via `focus_next()`, which (combined with the output panel
-        # being focusable) routinely moved focus to the output and made
-        # the TUI look frozen — keys typed there go nowhere visible.
-
-        return kb
 
     # ----------------------------------------
     # Worker dispatch

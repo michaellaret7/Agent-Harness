@@ -13,9 +13,12 @@ import time
 
 from tui.cells import AssistantCell, Cell, ErrorCell, HeaderCell, ToolCell, UserCell
 
-# Cap intermediate streaming re-renders to ~25fps. Final render on
+# Cap intermediate streaming re-renders to ~12fps. The eye can't resolve
+# faster than that and the renderer would coalesce the surplus anyway,
+# while each extra render holds the GIL away from the asyncio event loop
+# (and starves mouse/scroll handling). Final render on
 # end_assistant/end_tool always fires regardless.
-STREAM_RENDER_INTERVAL_S = 0.04
+STREAM_RENDER_INTERVAL_S = 0.08
 
 
 class History:

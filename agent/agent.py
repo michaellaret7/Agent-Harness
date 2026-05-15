@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -78,6 +79,7 @@ class Agent:
 
     def build_initial_context(self) -> None:
         self.system_prompt += f'\nCurrent date: {datetime.now().strftime("%A, %B %d, %Y")}'
+        self.system_prompt += f'\nWorking directory: {os.getcwd()}'
 
         parts: list[str] = [self.system_prompt]
 

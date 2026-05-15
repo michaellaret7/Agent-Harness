@@ -1,165 +1,41 @@
-"""prompt_toolkit panels: OutputPanel, InputPanel, StatusBar.
+"""OutputPanel — scrollable ANSI view of the conversation History.
 
-OutputPanel renders the joined ANSI of all cells. Scrolling is driven by a
-`_scroll_target` line index. We mutate `window.vertical_scroll` directly,
-because `Window._scroll_when_linewrapping` ignores `get_vertical_scroll` when
-`wrap_lines=True`. The virtual cursor is pinned to the same line so the
-Window's auto-scroll-to-cursor logic stays consistent with our requested
-position. Status bar pulls live state from a callback. No background colors
-are set anywhere — the terminal's native theme shows through.
+Scrolling is driven by a `_scroll_target` line index. We mutate
+`window.vertical_scroll` directly, because `Window._scroll_when_linewrapping`
+ignores `get_vertical_scroll` when `wrap_lines=True`. The virtual cursor is
+pinned to the same line so the Window's auto-scroll-to-cursor logic stays
+consistent with our requested position.
+
+Click handlers (tool dropdown, diff sub-arrow, reasoning toggle) all
+dispatch their History mutation to a daemon thread via `_dispatch_toggle`
+— Rich rendering on a huge tool result would otherwise freeze the
+prompt_toolkit event loop for seconds.
 """
 from __future__ import annotations
 
-from functools import partial
+import threading
 from typing import TYPE_CHECKING, Any, Callable
 
 from prompt_toolkit.application import get_app
 from prompt_toolkit.data_structures import Point
 from prompt_toolkit.formatted_text import FormattedText
-from prompt_toolkit.history import InMemoryHistory
-from prompt_toolkit.layout.containers import HSplit, VSplit, Window
+from prompt_toolkit.layout.containers import Window
 from prompt_toolkit.layout.controls import FormattedTextControl
-from prompt_toolkit.layout.dimension import Dimension
-from prompt_toolkit.layout.processors import Processor, Transformation, TransformationInput
 from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
-from prompt_toolkit.widgets import TextArea
 
-from agent.usage import Usage
-from tui.cells import AssistantCell, Cell, ErrorCell, HeaderCell, ToolCell, UserCell
-from tui.sprites import frame_at
+from tui.cells import AssistantCell, Cell, ToolCell
+from tui.panels.fragments import (
+    ASSISTANT_ARROW_CHARS,
+    DIFF_ARROW_CHARS,
+    attach_arrow_handler,
+    cell_separator,
+)
 
 if TYPE_CHECKING:
     from tui.history import History
 
 #     ================================
-# --> Helper funcs
-#     ================================
-
-
-def _format_tokens(n: int) -> str:
-    """Compact token count: 1234 -> '1.2k', 421 -> '421'."""
-    if n < 1000:
-        return str(n)
-
-    return f'{n / 1000:.1f}k'
-
-
-def _format_usage_segment(
-    last_call: Usage | None,
-    last_turn: Usage | None,
-    session: Usage | None,
-) -> str:
-    """Build the dim usage segment for the status bar.
-
-    Returns '' when no LLM call has completed yet, so the bar stays clean
-    on a fresh launch. The `$ turn` / `$ session` parts hide themselves
-    when cost is 0 (vLLM endpoints don't return cost — better to omit
-    than to lie with '$0.00').
-    """
-    if last_call is None:
-        return ''
-
-    turn = last_turn if last_turn is not None else Usage.zero()
-    session_total = session if session is not None else Usage.zero()
-
-    # `ctx` is the prompt size on the *last* call (current context occupancy);
-    # `out` is the completion total *across the turn* — completion tokens sum
-    # cleanly across the tool-call loop, prompt tokens don't. `out` is shown
-    # unconditionally once a call has landed (0 is a legitimate state for a
-    # tool-call-only response and worth surfacing). `$` segments hide at 0
-    # because vLLM doesn't supply cost and "$0.00" would be a lie.
-    parts: list[str] = [
-        f'{_format_tokens(last_call.prompt_tokens)} ctx',
-        f'{_format_tokens(turn.completion_tokens)} out',
-    ]
-
-    if turn.cost > 0:
-        parts.append(f'${turn.cost:.4f} turn')
-
-    if session_total.cost > 0:
-        parts.append(f'${session_total.cost:.4f} session')
-
-    return '  ·  ' + '  ·  '.join(parts)
-
-TOOL_ARROW_CHARS = ('⮞', '⮟')
-ASSISTANT_ARROW_CHARS = ('▸', '▾')
-# Diff sub-arrow on ToolCell shares glyphs with AssistantCell's reasoning
-# toggle — safe because the scan is scoped per cell, so they never appear
-# in the same fragment list.
-DIFF_ARROW_CHARS = ('▸', '▾')
-
-# Cells that mark a turn boundary — anything that introduces or interrupts an
-# agent turn. Adjacent cells in this set get a full blank line of breathing
-# room; everything else (assistant↔tool within a turn) stacks tight.
-TURN_BOUNDARY_TYPES = (UserCell, HeaderCell, ErrorCell)
-
-
-def cell_separator(prev: Cell, curr: Cell) -> str:
-    """Vertical breathing room between two adjacent cells."""
-    if isinstance(prev, TURN_BOUNDARY_TYPES) or isinstance(curr, TURN_BOUNDARY_TYPES):
-        return '\n\n'
-
-    return '\n'
-
-
-def attach_arrow_handler(
-    fragments: list,
-    handler: Callable[[MouseEvent], Any],
-    arrows: tuple[str, ...] = TOOL_ARROW_CHARS,
-) -> list:
-    """Wrap the click handler around only the leading arrow glyph.
-
-    Scans fragments left-to-right, finds the first arrow character, and splits
-    that fragment so the handler is bound to the arrow (plus its trailing
-    space, if any). Other fragments — including ones that already carry a
-    handler from a previous attach_arrow_handler call — are preserved
-    verbatim so chains compose: tool main arrow + diff sub-arrow.
-    """
-    result: list = []
-    attached = False
-
-    for entry in fragments:
-        style, text = entry[0], entry[1]
-
-        if attached:
-            result.append(entry)
-            continue
-
-        idx = -1
-
-        for ch in arrows:
-            i = text.find(ch)
-
-            if i != -1 and (idx == -1 or i < idx):
-                idx = i
-
-        if idx == -1:
-            result.append(entry)
-            continue
-
-        end = idx + 1
-
-        if end < len(text) and text[end] == ' ':
-            end += 1
-
-        before = text[:idx]
-        arrow_part = text[idx:end]
-        after = text[end:]
-
-        if before:
-            result.append((style, before))
-
-        result.append((style, arrow_part, handler))
-
-        if after:
-            result.append((style, after))
-
-        attached = True
-
-    return result
-
-#     ================================
-# --> Output panel
+# --> Output control
 #     ================================
 
 
@@ -188,6 +64,10 @@ class _OutputControl(FormattedTextControl):
             return None
 
         return super().mouse_handler(mouse_event)
+
+#     ================================
+# --> Output panel
+#     ================================
 
 
 class OutputPanel:
@@ -318,10 +198,7 @@ class OutputPanel:
 
         def handler(mouse_event: MouseEvent) -> Any:
             if mouse_event.event_type == MouseEventType.MOUSE_DOWN:
-                self._freeze_viewport()
-                history.toggle_tool_expand(tool_call_id)
-                self._reclamp_after_resize()
-                get_app().invalidate()
+                self._dispatch_toggle(lambda: history.toggle_tool_expand(tool_call_id))
                 return None
 
             return NotImplemented
@@ -339,10 +216,7 @@ class OutputPanel:
 
         def handler(mouse_event: MouseEvent) -> Any:
             if mouse_event.event_type == MouseEventType.MOUSE_DOWN:
-                self._freeze_viewport()
-                history.toggle_tool_diff_expand(tool_call_id)
-                self._reclamp_after_resize()
-                get_app().invalidate()
+                self._dispatch_toggle(lambda: history.toggle_tool_diff_expand(tool_call_id))
                 return None
 
             return NotImplemented
@@ -359,15 +233,44 @@ class OutputPanel:
 
         def handler(mouse_event: MouseEvent) -> Any:
             if mouse_event.event_type == MouseEventType.MOUSE_DOWN:
-                self._freeze_viewport()
-                history.toggle_assistant_reasoning(cell_id)
-                self._reclamp_after_resize()
-                get_app().invalidate()
+                self._dispatch_toggle(lambda: history.toggle_assistant_reasoning(cell_id))
                 return None
 
             return NotImplemented
 
         return handler
+
+    def _dispatch_toggle(self, toggle_fn: Callable[[], None]) -> None:
+        """Run a History toggle+render on a worker thread.
+
+        Reason: Rich rendering and ANSI-fragment parsing scale with content
+        size. A click on a tool with a multi-MB result, or on a `▸ diff` over
+        a full-file rewrite, would otherwise run cell.render() synchronously
+        inside the prompt_toolkit event loop and block clicks, scroll, and
+        keystrokes for the full render duration. Worse, cell.render_lock can
+        already be held by the worker thread mid-render, so the UI would
+        block on lock acquisition before even starting its own render.
+
+        Freezing the viewport is done synchronously (needs the pre-toggle
+        total_lines), then the render is dispatched off the loop. _reclamp
+        and invalidate are scheduled back on the loop once the render lands
+        so they touch UI-thread state only.
+        """
+        self._freeze_viewport()
+
+        app = get_app()
+        loop = app.loop
+
+        def _worker() -> None:
+            try:
+                toggle_fn()
+
+            finally:
+                if loop is not None and not loop.is_closed():
+                    loop.call_soon_threadsafe(self._reclamp_after_resize)
+                    loop.call_soon_threadsafe(app.invalidate)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _freeze_viewport(self) -> None:
         """Pin the viewport at its current top before a history mutation.
@@ -497,180 +400,3 @@ class OutputPanel:
         self.follow_tail = True
         self._click_pinned = False
         self._scroll_target = max(0, self._total_lines() - 1)
-
-#     ================================
-# --> Input panel
-#     ================================
-
-
-class PlaceholderProcessor(Processor):
-    """Append dim placeholder text after the prompt when the buffer is empty.
-
-    Applies only to line 0 — the prompt's line. Once the buffer has any text
-    the fragments pass through unchanged, so the placeholder disappears as
-    the user types.
-    """
-
-    def __init__(self, text: str, style: str = '') -> None:
-        self.text = text
-        self.style = style
-
-    def apply_transformation(self, transformation_input: TransformationInput) -> Transformation:
-        ti = transformation_input
-
-        if ti.lineno != 0 or ti.document.text:
-            return Transformation(ti.fragments)
-
-        return Transformation(list(ti.fragments) + [(self.style, self.text)])
-
-
-class InputPanel:
-    """Multi-line text entry with a rounded frame and vertical breathing room.
-
-    The frame is hand-rolled from Window primitives because prompt_toolkit's
-    stock `Frame` hardcodes square corners. A 1-row blank pad above and below
-    the TextArea centers the prompt vertically. The input grows from 1 to
-    MAX_LINES rows as the user types past the visible content; longer input
-    scrolls within the area.
-    """
-
-    MIN_LINES = 1
-    MAX_LINES = 4
-    PLACEHOLDER = 'Ask Atlas anything…'
-    PROMPT_STR = '   > '
-
-    def __init__(self) -> None:
-        self.history = InMemoryHistory()
-
-        # dont_extend_height pins the body's max to its content height.
-        # Reason: without it, the parent HSplit absorbs spare rows into the
-        # body (max=4), pushing the cursor to the top of an oversized box and
-        # leaving the bottom padding visually larger than the top.
-        self.area = TextArea(
-            height=Dimension(min=self.MIN_LINES, max=self.MAX_LINES),
-            multiline=True,
-            wrap_lines=True,
-            history=self.history,
-            prompt=self.PROMPT_STR,
-            dont_extend_height=True,
-            get_line_prefix=self._continuation_prefix,
-            input_processors=[
-                PlaceholderProcessor(self.PLACEHOLDER, style='class:input.placeholder'),
-            ],
-        )
-
-        self.container = self._build_rounded_frame(self.area)
-
-    @classmethod
-    def _continuation_prefix(cls, lineno: int, wrap_count: int) -> str:
-        """Indent wrap continuations and subsequent logical lines.
-
-        prompt_toolkit renders the `prompt` only on line 0/wrap 0. Every other
-        visual row needs leading spaces so wrapped text and Shift+Enter newlines
-        hang under the cursor instead of resetting to the left border.
-        """
-        if lineno == 0 and wrap_count == 0:
-            return ''
-
-        return ' ' * len(cls.PROMPT_STR)
-
-    @staticmethod
-    def _build_rounded_frame(body: Any) -> HSplit:
-        fill = partial(Window, style='class:frame.border')
-
-        top = VSplit([
-            fill(width=1, height=1, char='╭'),
-            fill(char='─', height=1),
-            fill(width=1, height=1, char='╮'),
-        ], height=1)
-
-        padded_body = HSplit([
-            Window(height=1),
-            body,
-            Window(height=1),
-        ])
-
-        middle = VSplit([
-            fill(width=1, char='│'),
-            padded_body,
-            fill(width=1, char='│'),
-        ])
-
-        bottom = VSplit([
-            fill(width=1, height=1, char='╰'),
-            fill(char='─', height=1),
-            fill(width=1, height=1, char='╯'),
-        ], height=1)
-
-        return HSplit([top, middle, bottom])
-
-    @property
-    def text(self) -> str:
-        return self.area.text
-
-    def clear(self) -> None:
-        self.area.text = ''
-
-#     ================================
-# --> Status bar
-#     ================================
-
-
-class StatusBar:
-    """Single-line dim status: provider/model · cwd · iter · keybinds."""
-
-    def __init__(self, get_status: Callable[[], dict]) -> None:
-        self.get_status = get_status
-
-        self.control = FormattedTextControl(text=self._get_text)
-
-        self.window = Window(
-            content=self.control,
-            height=1,
-        )
-
-    def _get_text(self) -> FormattedText:
-        s = self.get_status()
-        provider = s.get('provider', '?')
-        model = s.get('model', '?')
-        cwd = s.get('cwd', '?')
-        running = s.get('running', False)
-        scroll_locked = s.get('scroll_locked', False)
-        scroll_y = s.get('scroll_y', 0)
-        copy_mode = s.get('copy_mode', False)
-
-        left_segments: list[tuple[str, str]] = []
-
-        if running:
-            sprite = s.get('sprite')
-            elapsed = s.get('sprite_elapsed', 0.0)
-
-            if sprite is not None:
-                frame = frame_at(sprite, elapsed)
-                left_segments.append(('class:status.running', f' running {frame}  ·  '))
-            else:
-                left_segments.append(('class:status.running', ' running…  ·  '))
-        else:
-            left_segments.append(('class:status', ' '))
-
-        left_segments.append(('class:status', f'{provider}/{model}  ·  {cwd}'))
-
-        usage_text = _format_usage_segment(
-            s.get('last_call_usage'),
-            s.get('last_turn_usage'),
-            s.get('session_usage'),
-        )
-
-        if usage_text:
-            left_segments.append(('class:status', usage_text))
-
-        if scroll_locked:
-            left_segments.append(('class:status.locked', f'  ·  [scrolled y={scroll_y}]'))
-
-        if copy_mode:
-            left_segments.append(('class:status.copy', '  ·  [COPY MODE — drag to select, Ctrl+T to exit]'))
-            right = '  Enter send · End jump · Ctrl+T exit copy · Ctrl+C exit '
-        else:
-            right = '  Enter send · click tool to expand · Ctrl+T copy mode · Esc cancel · Ctrl+C exit '
-
-        return FormattedText(left_segments + [('class:status', '   '), ('class:status', right)])
