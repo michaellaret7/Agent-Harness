@@ -6,14 +6,16 @@ ignores `get_vertical_scroll` when `wrap_lines=True`. The virtual cursor is
 pinned to the same line so the Window's auto-scroll-to-cursor logic stays
 consistent with our requested position.
 
-Click handlers (tool dropdown, diff sub-arrow, reasoning toggle) all
-dispatch their History mutation to a daemon thread via `_dispatch_toggle`
-— Rich rendering on a huge tool result would otherwise freeze the
-prompt_toolkit event loop for seconds.
+Click handlers (tool dropdown, diff sub-arrow, reasoning toggle) all submit
+their History mutation to the single-worker render pool owned by History
+(`history.submit_render`). Routing every background Rich render through the
+same worker keeps the GIL available to the prompt_toolkit event loop —
+spawning a fresh daemon thread per click, as the previous design did, let
+clicks pile up and made the TUI feel frozen when the user spam-clicked or
+expanded a giant tool result.
 """
 from __future__ import annotations
 
-import threading
 from typing import TYPE_CHECKING, Any, Callable
 
 from prompt_toolkit.application import get_app
@@ -155,7 +157,11 @@ class OutputPanel:
         prev_cell: Cell | None = None
 
         for cell in cells:
-            if not cell.ansi:
+            # Fragments-truthiness instead of ansi-truthiness: the streaming
+            # fast path on AssistantCell sets fragments directly without
+            # going through the ANSI roundtrip, so a fast-path-only cell has
+            # truthy fragments but an effectively-empty `ansi` sentinel.
+            if not cell.fragments:
                 continue
 
             if prev_cell is not None:
@@ -241,20 +247,26 @@ class OutputPanel:
         return handler
 
     def _dispatch_toggle(self, toggle_fn: Callable[[], None]) -> None:
-        """Run a History toggle+render on a worker thread.
+        """Submit a History toggle+render to the shared render pool.
 
         Reason: Rich rendering and ANSI-fragment parsing scale with content
         size. A click on a tool with a multi-MB result, or on a `▸ diff` over
         a full-file rewrite, would otherwise run cell.render() synchronously
         inside the prompt_toolkit event loop and block clicks, scroll, and
-        keystrokes for the full render duration. Worse, cell.render_lock can
-        already be held by the worker thread mid-render, so the UI would
-        block on lock acquisition before even starting its own render.
+        keystrokes for the full render duration.
 
-        Freezing the viewport is done synchronously (needs the pre-toggle
-        total_lines), then the render is dispatched off the loop. _reclamp
-        and invalidate are scheduled back on the loop once the render lands
-        so they touch UI-thread state only.
+        Routing through `history.submit_render` ensures all heavy renders
+        — final Markdown, resize re-renders, toggle re-renders — share a
+        single worker. Two consequences:
+          - The GIL never has multiple Rich renders racing against the UI
+            event loop simultaneously.
+          - Spam-clicking queues renders behind each other instead of
+            spawning unbounded daemon threads.
+
+        Freezing the viewport is done synchronously on the UI thread (needs
+        the pre-toggle total_lines), then the render is dispatched off the
+        loop. _reclamp and invalidate are scheduled back on the loop once the
+        render lands so they touch UI-thread state only.
         """
         self._freeze_viewport()
 
@@ -270,7 +282,7 @@ class OutputPanel:
                     loop.call_soon_threadsafe(self._reclamp_after_resize)
                     loop.call_soon_threadsafe(app.invalidate)
 
-        threading.Thread(target=_worker, daemon=True).start()
+        self.history.submit_render(_worker)
 
     def _freeze_viewport(self) -> None:
         """Pin the viewport at its current top before a history mutation.

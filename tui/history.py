@@ -4,21 +4,31 @@ Single source of truth for what the UI renders. Mutated by Sink (worker
 thread); read by the renderer (UI thread). A monotonic `version` counter
 keys the OutputPanel's render cache — bumped once per visible mutation.
 Streaming cell renders are throttled (STREAM_RENDER_INTERVAL_S) to keep
-Rich Markdown off the hot path during token-by-token deltas.
+even the fast plain-text fragment build off the hot path during
+token-by-token deltas.
+
+Heavy renders (final Markdown after end_assistant, toggle re-renders on
+clicks) are submitted to `_render_pool` — a single-worker executor — so they
+never pile up and contend for the GIL. Serializing them onto one worker is
+the right trade: each individual render reads/writes one cell under its own
+render_lock, and the UI never blocks on background renders since it just
+reads cached `cell.fragments`.
 """
 from __future__ import annotations
 
 import threading
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
+from typing import Callable
 
 from tui.cells import AssistantCell, Cell, ErrorCell, HeaderCell, ToolCell, UserCell
 
-# Cap intermediate streaming re-renders to ~12fps. The eye can't resolve
-# faster than that and the renderer would coalesce the surplus anyway,
-# while each extra render holds the GIL away from the asyncio event loop
-# (and starves mouse/scroll handling). Final render on
-# end_assistant/end_tool always fires regardless.
-STREAM_RENDER_INTERVAL_S = 0.08
+# Throttle the fast-path streaming render. Even the plain-text fragment build
+# isn't free — at 12 Hz with growing content it still walks O(n) text per
+# delta, and each invalidate schedules a redraw the UI loop must service.
+# 8 Hz is below the human flicker-fusion threshold for text and gives the
+# event loop generous breathing room between bumps.
+STREAM_RENDER_INTERVAL_S = 1 / 8
 
 
 class History:
@@ -30,6 +40,24 @@ class History:
         # Bumped whenever a frame should be re-rendered. UI uses this as a
         # cache key — equal version means the FormattedText can be reused.
         self.version = 0
+        # Single-worker pool for heavy renders (final Markdown, toggle
+        # re-renders, resize re-renders). Serializing onto one worker keeps
+        # Rich from spinning up multiple concurrent renders that all fight
+        # for the GIL — which is exactly what made the UI feel locked up
+        # during streaming. `max_workers=1` is intentional.
+        self._render_pool = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix='history-render',
+        )
+
+    def submit_render(self, fn: Callable[[], None]) -> Future:
+        """Schedule a render callable on the single background worker.
+
+        Callers should already hold or take the relevant `cell.render_lock`
+        inside `fn` so concurrent renders on the same cell stay serialized
+        with foreground writes from this History.
+        """
+        return self._render_pool.submit(fn)
 
     def snapshot(self) -> list[Cell]:
         """Lock-protected read of the cell list (shallow copy)."""
@@ -136,11 +164,20 @@ class History:
     def end_assistant(self) -> None:
         """Mark the last AssistantCell done. Drop if empty.
 
-        `cell.render()` runs outside `History._lock` — Rich Markdown can take
-        dozens of ms on long replies, and holding the history lock across it
-        blocks UI-thread click handlers (which call `snapshot()`) every frame.
-        We still hold the per-cell `render_lock` so concurrent UI toggles on
-        the same cell can't run a second render in parallel.
+        Splits into two phases:
+          1. Immediate, on the worker thread: flip `done=True`, run the fast
+             plain-text render, bump version. The user sees the final
+             content right away, with the streaming cursor removed. This
+             frees the worker to move on to the next tool call.
+          2. Background, on the render pool: run the full Rich Markdown
+             render. Once it lands, flip `markdown_ready=True` and bump
+             version again so the UI swaps in the styled output.
+
+        The previous synchronous Markdown render here is the single biggest
+        worker-thread GIL hog at end-of-message — for multi-KB replies it
+        could hold the GIL for hundreds of ms, starving every UI event in
+        flight (scroll, click) for that window. Deferral fixes that without
+        regressing visual fidelity.
         """
         target: AssistantCell | None = None
 
@@ -165,6 +202,17 @@ class History:
             target.render(self.width)
 
         self._bump_version()
+
+        width = self.width
+
+        def _markdown_render() -> None:
+            with target.render_lock:
+                target.markdown_ready = True
+                target.render(width)
+
+            self._bump_version()
+
+        self._render_pool.submit(_markdown_render)
 
     def mark_assistant_interrupted(self) -> None:
         target: AssistantCell | None = None
