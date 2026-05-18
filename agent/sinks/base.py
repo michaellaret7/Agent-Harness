@@ -12,6 +12,12 @@ live wherever they make sense:
 `on_turn_start` / `on_turn_end` bracket one call to `Agent.run`. They are
 emitted by Agent.run itself, not the execution loop, so adding new
 observability sinks does not require touching agent/loop.py.
+
+`on_loop_start` / `on_loop_end` and `on_iteration_start` / `on_iteration_end`
+bracket the execution loop and each iteration through it. They give
+trace-emitting sinks the boundaries they need to build a nested
+hierarchy (`turn > loop > iteration > {tool, generation}`). UI sinks
+typically no-op these.
 """
 from __future__ import annotations
 
@@ -27,6 +33,10 @@ log = logging.getLogger(__name__)
 class Sink(Protocol):
     def on_turn_start(self, prompt: str) -> None: ...
     def on_turn_end(self, result: str) -> None: ...
+    def on_loop_start(self, model: str, max_iters: int, tool_names: list[str]) -> None: ...
+    def on_loop_end(self, stop_reason: str, iterations: int) -> None: ...
+    def on_iteration_start(self, number: int, message_count: int) -> None: ...
+    def on_iteration_end(self, number: int, action: str, content: str, tools_called: list[str]) -> None: ...
     def on_user_message(self, text: str) -> None: ...
     def on_reasoning_delta(self, text: str) -> None: ...
     def on_content_delta(self, text: str) -> None: ...
@@ -46,6 +56,18 @@ class StdoutSink:
         pass
 
     def on_turn_end(self, result: str) -> None:
+        pass
+
+    def on_loop_start(self, model: str, max_iters: int, tool_names: list[str]) -> None:
+        pass
+
+    def on_loop_end(self, stop_reason: str, iterations: int) -> None:
+        pass
+
+    def on_iteration_start(self, number: int, message_count: int) -> None:
+        pass
+
+    def on_iteration_end(self, number: int, action: str, content: str, tools_called: list[str]) -> None:
         pass
 
     def on_user_message(self, text: str) -> None:

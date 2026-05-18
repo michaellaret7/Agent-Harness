@@ -48,6 +48,18 @@ class TUISink:
     def on_turn_end(self, result: str) -> None:
         pass
 
+    def on_loop_start(self, model: str, max_iters: int, tool_names: list[str]) -> None:
+        pass
+
+    def on_loop_end(self, stop_reason: str, iterations: int) -> None:
+        pass
+
+    def on_iteration_start(self, number: int, message_count: int) -> None:
+        pass
+
+    def on_iteration_end(self, number: int, action: str, content: str, tools_called: list[str]) -> None:
+        pass
+
     def on_usage(self, usage: Usage) -> None:
         self.last_call_usage = usage
         self.last_turn_usage = self.last_turn_usage + usage

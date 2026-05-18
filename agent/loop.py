@@ -71,6 +71,25 @@ def _settle_interrupted_tool_calls(agent: 'Agent', tool_calls: list[dict], sink:
         agent.messages.append(tool_msg(tc['id'], '[interrupted]'))
 
 
+def _classify(was_cancelled: bool, tool_calls: list[dict]) -> str:
+    """Bucket an iteration's outcome into one terminal action string.
+
+    The loop dispatches on this; sinks log it. Order matters:
+    `partial_cancelled` must beat `cancelled` because a cancel during
+    a partial tool-call fragment cannot be settled the same way.
+    """
+    if was_cancelled and _has_partial_tool_call(tool_calls):
+        return 'partial_cancelled'
+
+    if was_cancelled:
+        return 'cancelled'
+
+    if not tool_calls:
+        return 'answer_ready'
+
+    return 'tool_calls'
+
+
 def _refresh_rolling_cache_breakpoint(messages: list[dict]) -> None:
     """Move the rolling cache_control marker to the last assistant/tool message.
 
@@ -137,12 +156,20 @@ def execution_loop(
 
     last_content = ''
 
-    for _ in range(max_iters):
+    # Activate langfuse loop span to track the loop iterations and tool calls
+    active_sink.on_loop_start(model, max_iters, [t['function']['name'] for t in agent.tools]) 
+
+    # Begin execution loop
+    for i in range(1, max_iters + 1):
 
         if active_cancel.is_set():
             active_sink.on_interrupted() # this line breaks the loop because the user has cancelled the execution
             break
+        
+        # Activate langfuse iteration span 
+        active_sink.on_iteration_start(i, len(agent.messages))
 
+        # Call the LLM aka the completions api and stream the response
         content, tool_calls, was_cancelled, usage = call_llm(
             agent.client,
             agent.messages,
@@ -153,27 +180,39 @@ def execution_loop(
         )
 
         if usage is not None:
-            active_sink.on_usage(usage)
+            active_sink.on_usage(usage) # send the llm useage to the sink protocol
 
         last_content = content
 
-        if was_cancelled and _has_partial_tool_call(tool_calls):
+        # Bucket the iteration outcome (normal / cancelled / partial_cancelled) so the loop can dispatch and sinks can log it
+        action = _classify(was_cancelled, tool_calls)
+        # Pull just the tool names from the tool calls for lightweight logging (args/ids are dropped)
+        tool_names = [tc['function']['name'] for tc in tool_calls]
+        active_sink.on_iteration_end(i, action, content, tool_names)
+
+        if action == 'partial_cancelled':
             active_sink.on_interrupted()
             break
 
-        # Append the assistant message to the agents state aka the message history
+        # Append the assistant message to the agents state aka the message history as an assistant message
+        # Include the content from the llm response and the tool calls returned from the llm 
+        # The tool calls will be executed downstream by the tool handler and then appended to the message history as tool output messages
         agent.messages.append(assistant_msg(content, tool_calls))
 
-        if was_cancelled:
+        if action == 'cancelled':
             _settle_interrupted_tool_calls(agent, tool_calls, active_sink)
             active_sink.on_interrupted()
             break
 
-        if not tool_calls:
+        if action == 'answer_ready':
+            active_sink.on_loop_end('answer_ready', i)
             return content
 
-        # Add the output results of the tool calls to the agents state 
+        # Add the output results of the tool calls to the agents state as tool output messages
+        # The tool handler class executes the tool calls and returns the output results as tool output messages
         agent.messages.extend(agent.tool_handler.execute(tool_calls, active_sink, active_cancel))
+
+    active_sink.on_loop_end('max_iterations', max_iters)
 
     return last_content
 
