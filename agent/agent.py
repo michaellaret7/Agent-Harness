@@ -33,6 +33,7 @@ class Agent:
         self,
         provider: str = 'vllm',
         model: str | None = None,
+        tools: list[dict[str, Any] | Callable] | None = None,
     ) -> None:
 
         self.client, self.model = build_client(provider, model)
@@ -61,6 +62,10 @@ class Agent:
         self.add_tool(search)
         self.add_tool(extract)
         self.add_tool(skill_loader(self.skills))
+
+        if tools:
+            for tool in tools:
+                self.add_tool(tool)
 
         self.build_initial_context()
 
