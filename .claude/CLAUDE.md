@@ -131,7 +131,6 @@ def process_items(items: list[str], lookup: dict):
 
 - Module docstring explaining purpose.
 - Complete docstrings on public functions.
-- Inline comments with `# Reason:` prefix only when the WHY is non-obvious.
 - Helper functions live at the **top** of the file under a banner block:
 
   ```

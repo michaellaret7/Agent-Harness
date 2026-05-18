@@ -48,15 +48,23 @@ def _format_usage_segment(
     session_total = session if session is not None else Usage.zero()
 
     # `ctx` is the prompt size on the *last* call (current context occupancy);
-    # `out` is the completion total *across the turn* — completion tokens sum
-    # cleanly across the tool-call loop, prompt tokens don't. `out` is shown
-    # unconditionally once a call has landed (0 is a legitimate state for a
-    # tool-call-only response and worth surfacing). `$` segments hide at 0
-    # because vLLM doesn't supply cost and "$0.00" would be a lie.
+    # `cached` shows prompt-cache hits when the upstream model supports caching
+    # (Anthropic/Gemini/DeepSeek via OpenRouter); hidden at 0 to stay clean on
+    # models that don't cache. `out` is the completion total *across the turn* —
+    # completion tokens sum cleanly across the tool-call loop, prompt tokens
+    # don't. `out` is shown unconditionally once a call has landed (0 is a
+    # legitimate state for a tool-call-only response and worth surfacing).
+    # `$` segments hide at 0 because vLLM doesn't supply cost and "$0.00"
+    # would be a lie.
     parts: list[str] = [
         f'{_format_tokens(last_call.prompt_tokens)} ctx',
-        f'{_format_tokens(turn.completion_tokens)} out',
     ]
+
+    if last_call.cached_tokens > 0:
+        pct = last_call.cached_tokens / last_call.prompt_tokens * 100
+        parts.append(f'{_format_tokens(last_call.cached_tokens)} cached ({pct:.0f}%)')
+
+    parts.append(f'{_format_tokens(turn.completion_tokens)} out')
 
     if turn.cost > 0:
         parts.append(f'${turn.cost:.4f} turn')

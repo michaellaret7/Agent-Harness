@@ -93,7 +93,8 @@ class Agent:
 
         content = '\n\n'.join(parts)
 
-        self.messages.append(system_msg(content))
+        self.messages.append(system_msg(content, cache=True))
+
 
     def run(
         self,

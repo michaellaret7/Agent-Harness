@@ -10,8 +10,18 @@ from __future__ import annotations
 from typing import Any
 
 
-def system_msg(content: str) -> dict[str, Any]:
-    return {'role': 'system', 'content': content}
+def cached_text(text: str) -> list[dict[str, Any]]:
+    """Wrap text as a content-parts list with an Anthropic-style cache breakpoint.
+
+    OpenRouter reads `cache_control` and forwards to upstream caching
+    (Anthropic explicit, Gemini explicit, etc.). Models without caching
+    support silently drop the field.
+    """
+    return [{'type': 'text', 'text': text, 'cache_control': {'type': 'ephemeral'}}]
+
+
+def system_msg(content: str, cache: bool = False) -> dict[str, Any]:
+    return {'role': 'system', 'content': cached_text(content) if cache else content}
 
 
 def user_msg(content: str) -> dict[str, Any]:
