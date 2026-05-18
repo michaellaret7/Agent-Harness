@@ -16,6 +16,7 @@ from agent.skills import Skill, format_skill_listing, load_skills
 from agent.tool_handler import ToolHandler
 from tools.base.bash import bash
 from tools.base.edit import edit
+from tools.base.extract import extract
 from tools.base.glob import glob
 from tools.base.grep import grep
 from tools.base.read import read
@@ -58,6 +59,7 @@ class Agent:
         self.add_tool(grep)
         self.add_tool(tree)
         self.add_tool(search)
+        self.add_tool(extract)
         self.add_tool(skill_loader(self.skills))
 
         self.build_initial_context()
