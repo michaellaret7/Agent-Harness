@@ -11,6 +11,9 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Annotated
+
+from agent.decorator import Param, agent_tool
 
 MAX_CHARS = 16000
 DEFAULT_TIMEOUT = 120
@@ -42,7 +45,16 @@ def _resolve_bash() -> str | None:
 _BASH = _resolve_bash()
 
 
-def bash(command: str, timeout: int = DEFAULT_TIMEOUT) -> str:
+@agent_tool(name='Bash')
+def bash(
+    command: Annotated[str, Param(description='The bash command to execute.')],
+    timeout: Annotated[int, Param(description='Timeout in seconds. Default 120, max 600.')] = DEFAULT_TIMEOUT,
+) -> str:
+    """
+    Execute a bash command and return combined stdout/stderr. Runs in real bash on every platform (Git Bash on Windows), 
+    so POSIX syntax works everywhere. For file paths passed to OTHER tools (ReadFile, EditFile, Glob, etc.) prefer the native form (`C:\\Dev\\foo` or `C:/Dev/foo` on Windows). 
+    Default timeout is 120 seconds (max 600).
+    """
     if _BASH is None:
         return (
             'error: bash not found. Install Git for Windows '
@@ -67,30 +79,3 @@ def bash(command: str, timeout: int = DEFAULT_TIMEOUT) -> str:
     if len(output) > MAX_CHARS:
         output = output[:MAX_CHARS] + f'\n\n... [truncated; {len(output) - MAX_CHARS} more chars]'
     return output or '[no output]'
-
-
-tool = {
-    'name': 'Bash',
-    'description': (
-        'Execute a bash command and return combined stdout/stderr. Runs in real '
-        'bash on every platform (Git Bash on Windows), so POSIX syntax works '
-        'everywhere. For file paths passed to OTHER tools (ReadFile, EditFile, '
-        'Glob, etc.) prefer the native form (`C:\\Dev\\foo` or `C:/Dev/foo` on '
-        'Windows). Default timeout is 120 seconds (max 600).'
-    ),
-    'parameters': {
-        'type': 'object',
-        'properties': {
-            'command': {
-                'type': 'string',
-                'description': 'The bash command to execute.',
-            },
-            'timeout': {
-                'type': 'integer',
-                'description': 'Timeout in seconds. Default 120, max 600.',
-            },
-        },
-        'required': ['command'],
-    },
-    'function': bash,
-}

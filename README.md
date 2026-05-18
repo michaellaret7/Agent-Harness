@@ -165,7 +165,7 @@ Then register it on the agent:
 ```python
 from tools.base import echo
 agent = Agent()
-agent.add_tool(**echo.tool)
+agent.add_tool(echo.tool)
 ```
 
 `add_tool` is idempotent by name — re-registering is a silent no-op, not an error. The schema goes to the model on the next request, and `ToolHandler` dispatches to your `function` when the model calls it.

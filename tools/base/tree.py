@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Annotated
 
+from agent.decorator import Param, agent_tool
 from tools.helpers.paths import resolve_path
 
 # Heavy or noisy directories — skip outright so the tree stays readable.
@@ -16,7 +18,15 @@ MAX_LINES = 200
 MAX_DEPTH = 5
 
 
-def tree(path: str = '.') -> str:
+@agent_tool(name='Tree')
+def tree(
+    path: Annotated[str, Param(description='Absolute or relative folder path. Defaults to "." (current directory).')] = '.',
+) -> str:
+    """
+    Return a tree view of files and directories under a folder, like the
+    output of the `tree` command. Hidden and heavy directories (.venv,
+    __pycache__, .git, models, node_modules, etc.) are skipped.
+    """
     target = resolve_path(path)
     if not target.is_dir():
         return f'error: not a directory: {path!r}'
@@ -50,24 +60,3 @@ def _walk(dir_path: Path, prefix: str, lines: list[str], depth: int) -> None:
         if entry.is_dir():
             extension = '    ' if is_last else '│   '
             _walk(entry, prefix + extension, lines, depth + 1)
-
-
-tool = {
-    'name': 'Tree',
-    'description': (
-        'Return a tree view of files and directories under a folder, like the '
-        'output of the `tree` command. Hidden and heavy directories (.venv, '
-        '__pycache__, .git, models, node_modules, etc.) are skipped.'
-    ),
-    'parameters': {
-        'type': 'object',
-        'properties': {
-            'path': {
-                'type': 'string',
-                'description': 'Absolute or relative folder path. Defaults to "." (current directory).',
-            },
-        },
-        'required': [],
-    },
-    'function': tree,
-}

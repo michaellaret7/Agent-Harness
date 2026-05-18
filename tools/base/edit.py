@@ -1,10 +1,23 @@
 """Replace a literal string in a file."""
 from __future__ import annotations
 
+from typing import Annotated
+
+from agent.decorator import Param, agent_tool
 from tools.helpers.paths import resolve_path
 
 
-def edit(file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> str:
+@agent_tool(name='EditFile')
+def edit(
+    file_path: Annotated[str, Param(description='Absolute or relative path to the file.')],
+    old_string: Annotated[str, Param(description='Exact text to replace.')],
+    new_string: Annotated[str, Param(description='Text to replace it with.')],
+    replace_all: Annotated[bool, Param(description='Replace every occurrence instead of requiring uniqueness. Default false.')] = False,
+) -> str:
+    """
+    Replace a literal string in a file. Fails if old_string is not found, or
+    if it occurs more than once and replace_all is false.
+    """
     target = resolve_path(file_path)
     if not target.is_file():
         return f'error: not a file: {file_path!r}'
@@ -26,35 +39,3 @@ def edit(file_path: str, old_string: str, new_string: str, replace_all: bool = F
     target.write_text(new_text, encoding='utf-8')
     replaced = count if replace_all else 1
     return f'replaced {replaced} occurrence(s) in {target}'
-
-
-tool = {
-    'name': 'EditFile',
-    'description': (
-        'Replace a literal string in a file. Fails if old_string is not found, '
-        'or if it occurs more than once and replace_all is false.'
-    ),
-    'parameters': {
-        'type': 'object',
-        'properties': {
-            'file_path': {
-                'type': 'string',
-                'description': 'Absolute or relative path to the file.',
-            },
-            'old_string': {
-                'type': 'string',
-                'description': 'Exact text to replace.',
-            },
-            'new_string': {
-                'type': 'string',
-                'description': 'Text to replace it with.',
-            },
-            'replace_all': {
-                'type': 'boolean',
-                'description': 'Replace every occurrence instead of requiring uniqueness. Default false.',
-            },
-        },
-        'required': ['file_path', 'old_string', 'new_string'],
-    },
-    'function': edit,
-}

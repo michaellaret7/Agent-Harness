@@ -54,7 +54,7 @@ The loop bails at `max_iters=10` to prevent runaway tool-call cycles.
 
 ### Tool schema
 
-A tool module exports a `tool` dict with exactly four keys: `name`, `description`, `parameters` (JSON Schema), `function` (callable). Register via `agent.add_tool(**module.tool)`. `add_tool` is idempotent by name — re-registering is a silent no-op, not an error.
+A tool module exports a `tool` dict with exactly four keys: `name`, `description`, `parameters` (JSON Schema), `function` (callable). Register via `agent.add_tool(module.tool)`. Functions decorated with `@agent_tool` (see `tools/decorator.py`) carry the dict on their `.tool` attribute; pass the function itself: `agent.add_tool(my_fn)`. `add_tool` is idempotent by name — re-registering is a silent no-op, not an error.
 
 ### Bash tool platform handling
 

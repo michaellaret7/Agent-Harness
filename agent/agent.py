@@ -14,8 +14,15 @@ from agent.messages import system_msg, user_msg
 from agent.sinks import Sink
 from agent.skills import Skill, format_skill_listing, load_skills
 from agent.tool_handler import ToolHandler
-from tools.base import bash, edit, glob, grep, read, search, tree, write
-from tools.base.skill import make_skill_tool
+from tools.base.bash import bash
+from tools.base.edit import edit
+from tools.base.glob import glob
+from tools.base.grep import grep
+from tools.base.read import read
+from tools.base.search import search
+from tools.base.skill import skill_loader
+from tools.base.tree import tree
+from tools.base.write import write
 
 load_dotenv()
 
@@ -43,26 +50,30 @@ class Agent:
         self.skills: list[Skill] = load_skills()
 
         # ---- Register base tools ---- #
-        self.add_tool(**bash.tool)
-        self.add_tool(**read.tool)
-        self.add_tool(**write.tool)
-        self.add_tool(**edit.tool)
-        self.add_tool(**glob.tool)
-        self.add_tool(**grep.tool)
-        self.add_tool(**tree.tool)
-        self.add_tool(**search.tool)
-        self.add_tool(**make_skill_tool(self.skills))
+        self.add_tool(bash)
+        self.add_tool(read)
+        self.add_tool(write)
+        self.add_tool(edit)
+        self.add_tool(glob)
+        self.add_tool(grep)
+        self.add_tool(tree)
+        self.add_tool(search)
+        self.add_tool(skill_loader(self.skills))
 
         self.build_initial_context()
 
-    def add_tool(
-        self,
-        name: str,
-        description: str,
-        parameters: dict[str, Any],
-        function: Callable,
-    ) -> None:
-        """Register a tool. No-op if already registered."""
+    def add_tool(self, tool: dict[str, Any] | Callable) -> None:
+        """Register a tool.
+
+        Accepts either a tool dict (`{name, description, parameters, function}`)
+        or a function decorated with `@agent_tool` (carries `.tool` attr).
+        No-op if a tool with the same name is already registered.
+        """
+        if callable(tool) and hasattr(tool, 'tool'):
+            tool = tool.tool
+
+        name = tool['name']
+        
         if name in self.tool_functions:
             return
 
@@ -70,12 +81,12 @@ class Agent:
             'type': 'function',
             'function': {
                 'name': name,
-                'description': description,
-                'parameters': parameters,
+                'description': tool['description'],
+                'parameters': tool['parameters'],
             },
         })
 
-        self.tool_functions[name] = function
+        self.tool_functions[name] = tool['function']
 
     def build_initial_context(self) -> None:
         self.system_prompt += f'\nCurrent date: {datetime.now().strftime("%A, %B %d, %Y")}'

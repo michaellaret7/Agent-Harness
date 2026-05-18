@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Annotated
 
+from agent.decorator import Param, agent_tool
 from tools.helpers.paths import resolve_path
 
 MAX_RESULTS = 200
@@ -13,12 +15,19 @@ SKIP_DIRS = {
 }
 
 
+@agent_tool(name='Glob')
 def glob(
-    pattern: str,
-    path: str = '.',
-    files_only: bool = True,
-    limit: int = MAX_RESULTS,
+    pattern: Annotated[str, Param(description='Glob pattern, e.g. "**/*.py" or "src/*.ts".')],
+    path: Annotated[str, Param(description='Directory to search in. Default is the current working directory.')] = '.',
+    files_only: Annotated[bool, Param(description='If true (default), only return files. Set false to include directories.')] = True,
+    limit: Annotated[int, Param(description='Max results to return (1-200). Default 200.')] = MAX_RESULTS,
 ) -> str:
+    """
+    Find files matching a glob pattern (e.g. "**/*.py" or "src/*.ts"). Results
+    are returned as paths relative to the search directory, sorted newest-first
+    by modification time, capped at 200. Heavy dirs (.venv, .git, node_modules,
+    etc.) are skipped.
+    """
     if not pattern or not pattern.strip():
         return "error: pattern must be a non-empty string"
 
@@ -75,37 +84,3 @@ def glob(
     if total > limit:
         lines.append(f'... [showing {limit} newest of {total} matches]')
     return '\n'.join(lines)
-
-
-tool = {
-    'name': 'Glob',
-    'description': (
-        'Find files matching a glob pattern (e.g. "**/*.py" or "src/*.ts"). '
-        'Results are returned as paths relative to the search directory, '
-        'sorted newest-first by modification time, capped at 200. Heavy dirs '
-        '(.venv, .git, node_modules, etc.) are skipped.'
-    ),
-    'parameters': {
-        'type': 'object',
-        'properties': {
-            'pattern': {
-                'type': 'string',
-                'description': 'Glob pattern, e.g. "**/*.py" or "src/*.ts".',
-            },
-            'path': {
-                'type': 'string',
-                'description': 'Directory to search in. Default is the current working directory.',
-            },
-            'files_only': {
-                'type': 'boolean',
-                'description': 'If true (default), only return files. Set false to include directories.',
-            },
-            'limit': {
-                'type': 'integer',
-                'description': 'Max results to return (1-200). Default 200.',
-            },
-        },
-        'required': ['pattern'],
-    },
-    'function': glob,
-}

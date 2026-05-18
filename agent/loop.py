@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 from openai import OpenAI
 
-from agent.messages import assistant_msg, tool_msg
+from agent.messages import assistant_msg, cached_text, tool_msg
 from agent.sinks import Sink, StdoutSink
 from agent.usage import Usage
 
@@ -69,6 +69,36 @@ def _settle_interrupted_tool_calls(agent: 'Agent', tool_calls: list[dict], sink:
         sink.on_tool_end(tc['id'], '[interrupted]')
 
         agent.messages.append(tool_msg(tc['id'], '[interrupted]'))
+
+
+def _refresh_rolling_cache_breakpoint(messages: list[dict]) -> None:
+    """Move the rolling cache_control marker to the last assistant/tool message.
+
+    Strips any prior marker first so we stay at exactly 2 breakpoints
+    (system anchor + rolling tail), well under Anthropic's limit of 4.
+    The system message's marker is owned by `build_initial_context` and
+    never touched here — the strip loop filters by role.
+
+    Idempotent: safe to call before every LLM request.
+    """
+    for m in messages:
+        if m['role'] not in ('assistant', 'tool'):
+            continue
+
+        content = m.get('content')
+
+        if isinstance(content, list) and content and 'text' in content[0]:
+            m['content'] = content[0]['text']
+
+    for m in reversed(messages):
+        if m['role'] not in ('assistant', 'tool'):
+            continue
+
+        content = m.get('content')
+
+        if isinstance(content, str) and content:
+            m['content'] = cached_text(content)
+            return
 
 
 #     ================================
@@ -162,6 +192,8 @@ def call_llm(
     cancel_event: threading.Event,
 ) -> tuple[str, list[dict], bool, Usage | None]:
     """Call the LLM with streaming. Returns (content, tool_calls, was_cancelled, usage)."""
+
+    _refresh_rolling_cache_breakpoint(messages)
 
     response = client.chat.completions.create(
         model=model,

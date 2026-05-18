@@ -6,28 +6,36 @@ extended excerpts, formatted as plain text for direct LLM consumption.
 from __future__ import annotations
 
 import os
+from typing import Annotated, Literal
 
 import httpx
 
+from agent.decorator import Param, agent_tool
+
 ENDPOINT = 'https://api.parallel.ai/v1beta/search'  # Reason: /v1/search rejects processor/max_results/max_chars_per_result; /v1beta accepts them.
-VALID_PROCESSORS = {'base', 'pro'}
 DEFAULT_TIMEOUT = 90  # Reason: 'pro' processor can take 15-60s.
 MAX_OUTPUT_CHARS = 16000
 
 
+@agent_tool(name='WebSearch')
 def search(
-    objective: str,
-    search_queries: list[str],
-    processor: str = 'base',
-    max_results: int = 5,
-    max_chars_per_result: int = 1500,
+    objective: Annotated[str, Param(description='Natural-language description of what information you are seeking.')],
+    search_queries: Annotated[list[str], Param(description='Keyword queries to dispatch in parallel.')],
+    processor: Annotated[Literal['base', 'pro'], Param(description='Search tier. "base" is fast/cheap (2-5s); "pro" is higher quality (15-60s). Default "base".')] = 'base',
+    max_results: Annotated[int, Param(description='Maximum results to return. Default 5.')] = 5,
+    max_chars_per_result: Annotated[int, Param(description='Max characters per excerpt block. Min 100; values over 30000 are not guaranteed. Default 1500.')] = 1500,
 ) -> str:
+    """
+    Web search via the Parallel Search API. Returns ranked URLs with extended
+    page excerpts optimized for LLM consumption. Use processor="base" (default,
+    2-5s) for routine queries; processor="pro" (15-60s) for higher-quality
+    retrieval prioritizing freshness and relevance. Provide a clear
+    natural-language `objective` describing what you are looking for, plus 1-N
+    keyword `search_queries` to dispatch.
+    """
     api_key = os.environ.get('PARALLEL_API_KEY')
     if not api_key:
         return 'error: PARALLEL_API_KEY not set'
-
-    if processor not in VALID_PROCESSORS:
-        return f'error: processor must be one of {sorted(VALID_PROCESSORS)}, got {processor!r}'
 
     payload = {
         'objective': objective,
@@ -83,45 +91,3 @@ def _format_results(results: list[dict]) -> str:
         output = output[:MAX_OUTPUT_CHARS] + f'\n\n... [truncated; {len(output) - MAX_OUTPUT_CHARS} more chars]'
 
     return output
-
-
-tool = {
-    'name': 'WebSearch',
-    'description': (
-        'Web search via the Parallel Search API. Returns ranked URLs with '
-        'extended page excerpts optimized for LLM consumption. Use processor='
-        '"base" (default, 2-5s) for routine queries; processor="pro" (15-60s) '
-        'for higher-quality retrieval prioritizing freshness and relevance. '
-        'Provide a clear natural-language `objective` describing what you are '
-        'looking for, plus 1-N keyword `search_queries` to dispatch.'
-    ),
-    'parameters': {
-        'type': 'object',
-        'properties': {
-            'objective': {
-                'type': 'string',
-                'description': 'Natural-language description of what information you are seeking.',
-            },
-            'search_queries': {
-                'type': 'array',
-                'items': {'type': 'string'},
-                'description': 'Keyword queries to dispatch in parallel.',
-            },
-            'processor': {
-                'type': 'string',
-                'enum': ['base', 'pro'],
-                'description': 'Search tier. "base" is fast/cheap (2-5s); "pro" is higher quality (15-60s). Default "base".',
-            },
-            'max_results': {
-                'type': 'integer',
-                'description': 'Maximum results to return. Default 5.',
-            },
-            'max_chars_per_result': {
-                'type': 'integer',
-                'description': 'Max characters per excerpt block. Min 100; values over 30000 are not guaranteed. Default 1500.',
-            },
-        },
-        'required': ['objective', 'search_queries'],
-    },
-    'function': search,
-}

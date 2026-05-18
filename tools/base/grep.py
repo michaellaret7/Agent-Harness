@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Annotated
 
+from agent.decorator import Param, agent_tool
 from tools.helpers.paths import resolve_path
 
 MAX_MATCHES = 200
@@ -14,7 +16,19 @@ SKIP_DIRS = {
 }
 
 
-def grep(pattern: str, path: str = '.', glob: str = '*', ignore_case: bool = False) -> str:
+@agent_tool(name='Grep')
+def grep(
+    pattern: Annotated[str, Param(description='Regex pattern to search for.')],
+    path: Annotated[str, Param(description='File or directory to search in. Default is the current working directory.')] = '.',
+    glob: Annotated[str, Param(description='Glob filter for filenames when path is a directory, e.g. "*.py". Default "*".')] = '*',
+    ignore_case: Annotated[bool, Param(description='Case-insensitive search. Default false.')] = False,
+) -> str:
+    """
+    Search file contents with a regex pattern. Returns matching lines as
+    "path:lineno:line", up to 200 matches. When path is a directory, the glob
+    filter limits which files are scanned (default "*"). Heavy dirs (.venv,
+    .git, node_modules, etc.) are skipped.
+    """
     base = resolve_path(path)
     if not base.exists():
         return f'error: path not found: {path!r}'
@@ -47,37 +61,3 @@ def _iter_files(base: Path, glob_pattern: str):
     for p in base.rglob(glob_pattern):
         if p.is_file() and not any(part in SKIP_DIRS for part in p.parts):
             yield p
-
-
-tool = {
-    'name': 'Grep',
-    'description': (
-        'Search file contents with a regex pattern. Returns matching lines as '
-        '"path:lineno:line", up to 200 matches. When path is a directory, the '
-        'glob filter limits which files are scanned (default "*"). Heavy dirs '
-        '(.venv, .git, node_modules, etc.) are skipped.'
-    ),
-    'parameters': {
-        'type': 'object',
-        'properties': {
-            'pattern': {
-                'type': 'string',
-                'description': 'Regex pattern to search for.',
-            },
-            'path': {
-                'type': 'string',
-                'description': 'File or directory to search in. Default is the current working directory.',
-            },
-            'glob': {
-                'type': 'string',
-                'description': 'Glob filter for filenames when path is a directory, e.g. "*.py". Default "*".',
-            },
-            'ignore_case': {
-                'type': 'boolean',
-                'description': 'Case-insensitive search. Default false.',
-            },
-        },
-        'required': ['pattern'],
-    },
-    'function': grep,
-}

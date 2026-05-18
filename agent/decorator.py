@@ -1,0 +1,391 @@
+"""Decorator that auto-generates a tool dict from a function signature.
+
+Attaches a `.tool` attribute to the decorated function containing the dict
+expected by `Agent.add_tool`. The schema is built from type hints, defaults,
+and the function docstring; per-parameter overrides are supplied via
+`typing.Annotated[T, Param(...)]`. `Agent.add_tool` accepts the decorated
+function directly — it reads `.tool` off it.
+
+Trimmed port of the ProphitAI Atlas decorator — dropped `Schema()` injection
+(no current consumer) and the `additionalProperties: False` line to match
+the existing hand-written schemas. Runtime validation returns an `error: ...`
+string (the Coding Agent tool-error convention) rather than a structured
+response.
+
+Example:
+
+    from typing import Annotated
+    from agent.decorator import agent_tool, Param
+
+    @agent_tool(name='Bash')
+    def bash(
+        command: Annotated[str, Param(description='The bash command.')],
+        timeout: int = 120,
+    ) -> str:
+        '''Execute a bash command and return combined stdout/stderr.'''
+        ...
+
+    agent.add_tool(bash)
+
+Parameter names beginning with `_` are excluded from the generated schema —
+useful for hidden values injected at execution time (user_id, session, etc.).
+"""
+from __future__ import annotations
+
+import functools
+import inspect
+import re
+from dataclasses import dataclass
+from typing import Any, Callable, Literal, Union, get_args, get_origin, get_type_hints
+
+#     ================================
+# --> Helper dataclasses
+#     ================================
+
+
+@dataclass(frozen=True)
+class Param:
+    """Per-parameter metadata supplied via `Annotated[T, Param(...)]`."""
+
+    description: str | None = None
+    min_val: float | None = None
+    max_val: float | None = None
+    enum: list[str] | None = None
+
+
+#     ================================
+# --> Helper funcs
+#     ================================
+
+
+_TYPE_MAP: dict[type, str] = {
+    str: 'string',
+    int: 'integer',
+    float: 'number',
+    bool: 'boolean',
+    dict: 'object',
+    list: 'array',
+}
+
+
+_PARAM_SECTION_RE = re.compile(
+    r'^(Args|Arguments|Parameters|Params)\s*:?\s*$',
+    re.IGNORECASE,
+)
+
+
+_END_SECTION_RE = re.compile(
+    r'^(Returns?|Raises?|Yields?|Examples?|Notes?|See Also)\s*:?\s*$',
+    re.IGNORECASE,
+)
+
+
+def _parse_docstring(docstring: str) -> tuple[str, dict[str, str]]:
+    """Return (description, {param_name: description}) from a docstring.
+
+    Supports Google-style (`Args:\\n    name: text`) and dash-list style
+    (`Parameters:\\n- name: text`). Only the Args/Parameters block is
+    consumed; Returns/Raises/Examples remain in the description so the
+    LLM can see them.
+    """
+    lines = docstring.splitlines()
+    desc_lines: list[str] = []
+    param_descs: dict[str, str] = {}
+
+    i = 0
+
+    while i < len(lines):
+        stripped = lines[i].strip()
+
+        if _PARAM_SECTION_RE.match(stripped):
+            i += 1
+            current: str | None = None
+            parts: list[str] = []
+
+            while i < len(lines):
+                line = lines[i]
+                line_stripped = line.strip()
+
+                if _PARAM_SECTION_RE.match(line_stripped) or _END_SECTION_RE.match(line_stripped):
+                    break
+
+                match = re.match(r'^\s*-?\s*(\w+)\s*:\s*(.*)$', line)
+
+                if match:
+                    if current is not None:
+                        param_descs[current] = ' '.join(parts).strip()
+                    current = match.group(1)
+                    parts = [match.group(2)] if match.group(2) else []
+
+                elif current is not None and line_stripped:
+                    parts.append(line_stripped)
+
+                i += 1
+
+            if current is not None:
+                param_descs[current] = ' '.join(parts).strip()
+
+            continue
+
+        desc_lines.append(lines[i])
+        i += 1
+
+    return '\n'.join(desc_lines).strip(), param_descs
+
+
+def _unwrap_annotated(tp: Any) -> tuple[Any, Param | None]:
+    """If `tp` is `Annotated[T, Param(...)]` return (T, Param); else (tp, None).
+
+    Uses the `__metadata__` / `__origin__` attributes rather than
+    `typing.get_origin` so the check is stable across the small CPython
+    version drift that touched `get_origin(Annotated[...])` behavior.
+    """
+    metadata = getattr(tp, '__metadata__', None)
+
+    if metadata is None:
+        return tp, None
+
+    base = getattr(tp, '__origin__', tp)
+    param_meta = next((m for m in metadata if isinstance(m, Param)), None)
+
+    return base, param_meta
+
+
+def _resolve_type(tp: Any) -> tuple[str, dict[str, Any]]:
+    """Resolve a Python type to (json_type, extra_schema_fields).
+
+    Handles: primitives, Optional[T], list[T], Literal['a','b']. Falls back
+    to ("string", {}) for anything unrecognized.
+    """
+    origin = get_origin(tp)
+    args = get_args(tp)
+
+    if origin is Literal:
+        return 'string', {'enum': list(args)}
+
+    if origin is Union:
+        non_none = [a for a in args if a is not type(None)]
+
+        if len(non_none) == 1:
+            return _resolve_type(non_none[0])
+
+    if origin is list:
+        if args:
+            inner_type, _ = _resolve_type(args[0])
+            return 'array', {'items': {'type': inner_type}}
+
+        return 'array', {}
+
+    json_type = _TYPE_MAP.get(tp)
+
+    if json_type:
+        return json_type, {}
+
+    return 'string', {}
+
+
+def _build_param_schema(
+    name: str,
+    tp: Any,
+    default: Any,
+    kind: inspect._ParameterKind,
+    docstring_desc: str | None,
+) -> dict[str, Any] | None:
+    """Build the JSON-Schema fragment for one parameter. Returns None if hidden."""
+    if name.startswith('_'):
+        return None
+
+    if kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+        return None
+
+    base_type, param_meta = _unwrap_annotated(tp)
+
+    json_type, extra = _resolve_type(base_type)
+
+    prop: dict[str, Any] = {'type': json_type}
+    prop.update(extra)
+
+    if param_meta is not None and param_meta.description:
+        prop['description'] = param_meta.description
+
+    elif docstring_desc:
+        prop['description'] = docstring_desc
+
+    if param_meta is not None:
+        if param_meta.min_val is not None:
+            prop['minimum'] = param_meta.min_val
+
+        if param_meta.max_val is not None:
+            prop['maximum'] = param_meta.max_val
+
+        if param_meta.enum is not None:
+            prop['enum'] = param_meta.enum
+
+    if default is not inspect.Parameter.empty:
+        prop['default'] = default
+
+    return prop
+
+
+def _build_tool_dict(func: Callable, name: str | None) -> dict[str, Any]:
+    """Introspect `func` and produce the dict expected by `Agent.add_tool`."""
+    tool_name = name or func.__name__
+    description, docstring_params = _parse_docstring(inspect.getdoc(func) or '')
+
+    hints = get_type_hints(func, include_extras=True)
+    sig = inspect.signature(func)
+
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+
+    for param_name, param in sig.parameters.items():
+        tp = hints.get(param_name, str)
+
+        prop = _build_param_schema(
+            param_name,
+            tp,
+            param.default,
+            param.kind,
+            docstring_params.get(param_name),
+        )
+
+        if prop is None:
+            continue
+
+        properties[param_name] = prop
+
+        if param.default is inspect.Parameter.empty:
+            required.append(param_name)
+
+    parameters: dict[str, Any] = {'type': 'object', 'properties': properties}
+
+    if required:
+        parameters['required'] = required
+
+    return {
+        'name': tool_name,
+        'description': description,
+        'parameters': parameters,
+        'function': func,
+    }
+
+
+#     ================================
+# --> Runtime validation
+#     ================================
+
+
+def _collect_validators(func: Callable) -> dict[str, tuple[Param | None, list | None]]:
+    """Return {param_name: (Param meta, Literal values)} for params with runtime checks."""
+    hints = get_type_hints(func, include_extras=True)
+    sig = inspect.signature(func)
+
+    validators: dict[str, tuple[Param | None, list | None]] = {}
+
+    for param_name, param in sig.parameters.items():
+        if param_name.startswith('_'):
+            continue
+
+        if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            continue
+
+        tp = hints.get(param_name)
+
+        if tp is None:
+            continue
+
+        base_type, param_meta = _unwrap_annotated(tp)
+
+        literal_values: list | None = None
+
+        if get_origin(base_type) is Literal:
+            literal_values = list(get_args(base_type))
+
+        has_constraints = param_meta is not None and (
+            param_meta.min_val is not None
+            or param_meta.max_val is not None
+            or param_meta.enum is not None
+        )
+
+        if has_constraints or literal_values:
+            validators[param_name] = (param_meta, literal_values)
+
+    return validators
+
+
+def _check_value(
+    name: str,
+    value: Any,
+    meta: Param | None,
+    literal_values: list | None,
+) -> str | None:
+    """Validate one value against its constraints. Returns an error message or None."""
+    if value is None:
+        return None
+
+    if literal_values is not None and value not in literal_values:
+        return f"'{name}' must be one of {literal_values}, got '{value}'"
+
+    if meta is not None:
+        if meta.min_val is not None and value < meta.min_val:
+            return f"'{name}' must be >= {meta.min_val}, got {value}"
+
+        if meta.max_val is not None and value > meta.max_val:
+            return f"'{name}' must be <= {meta.max_val}, got {value}"
+
+        if meta.enum is not None and value not in meta.enum:
+            return f"'{name}' must be one of {meta.enum}, got '{value}'"
+
+    return None
+
+
+#     ================================
+# --> Decorator
+#     ================================
+
+
+def agent_tool(func: Callable | None = None, *, name: str | None = None) -> Any:
+    """Attach a `.tool` dict to the decorated function.
+
+    Supports both bare `@agent_tool` and parameterised `@agent_tool(name='X')`.
+    Must be the outermost decorator when stacked — relies on `__annotations__`
+    and `__doc__`, which `functools.wraps` preserves.
+
+    The wrapper validates arguments at call time and returns an `error: ...`
+    string on bad input (matches the Coding Agent tool-error convention).
+    """
+
+    def _wrap(fn: Callable) -> Callable:
+        tool_dict = _build_tool_dict(fn, name)
+        validators = _collect_validators(fn)
+        cached_sig = inspect.signature(fn)
+
+        @functools.wraps(fn)
+        def _wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                bound = cached_sig.bind(*args, **kwargs)
+                bound.apply_defaults()
+
+            except TypeError as e:
+                return f'error: {e}'
+
+            for pname, (meta, literal_values) in validators.items():
+                if pname not in bound.arguments:
+                    continue
+
+                err = _check_value(pname, bound.arguments[pname], meta, literal_values)
+
+                if err:
+                    return f'error: {err}'
+
+            return fn(*args, **kwargs)
+
+        tool_dict['function'] = _wrapper
+        _wrapper.tool = tool_dict  # type: ignore[attr-defined] This is where the .tool dict gets attached to the function
+
+        return _wrapper
+
+    if func is not None:
+        return _wrap(func)
+
+    return _wrap

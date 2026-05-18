@@ -1,13 +1,25 @@
 """Read a file from the local filesystem with line numbers."""
 from __future__ import annotations
 
+from typing import Annotated
+
+from agent.decorator import Param, agent_tool
 from tools.helpers.paths import resolve_path
 
 DEFAULT_LIMIT = 2000
 MAX_LINE_CHARS = 2000
 
 
-def read(file_path: str, offset: int = 0, limit: int = DEFAULT_LIMIT) -> str:
+@agent_tool(name='ReadFile')
+def read(
+    file_path: Annotated[str, Param(description='Absolute or relative path to the file.')],
+    offset: Annotated[int, Param(description='0-based line number to start reading from. Default 0.')] = 0,
+    limit: Annotated[int, Param(description='Number of lines to read. Default 2000.')] = DEFAULT_LIMIT,
+) -> str:
+    """
+    Read a file from the local filesystem. Output uses cat -n format with
+    line numbers starting at 1. Default reads up to 2000 lines from the start.
+    """
     target = resolve_path(file_path)
     if not target.is_file():
         return f'error: not a file: {file_path!r}'
@@ -26,31 +38,3 @@ def read(file_path: str, offset: int = 0, limit: int = DEFAULT_LIMIT) -> str:
             line = line[:MAX_LINE_CHARS] + '...'
         formatted.append(f'{i:>6}\t{line}')
     return '\n'.join(formatted)
-
-
-tool = {
-    'name': 'ReadFile',
-    'description': (
-        'Read a file from the local filesystem. Output uses cat -n format with '
-        'line numbers starting at 1. Default reads up to 2000 lines from the start.'
-    ),
-    'parameters': {
-        'type': 'object',
-        'properties': {
-            'file_path': {
-                'type': 'string',
-                'description': 'Absolute or relative path to the file.',
-            },
-            'offset': {
-                'type': 'integer',
-                'description': '0-based line number to start reading from. Default 0.',
-            },
-            'limit': {
-                'type': 'integer',
-                'description': 'Number of lines to read. Default 2000.',
-            },
-        },
-        'required': ['file_path'],
-    },
-    'function': read,
-}
