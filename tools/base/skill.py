@@ -1,8 +1,8 @@
 """Skill tool: Level-2 loader for SKILL.md bundles on disk.
 
-The tool itself is dumb on purpose. It reads one SKILL.md body and prepends the
-bundle's base directory so the model can pull references and run scripts on
-demand using ReadFile / Grep / Bash — those existing tools are Level 3.
+Reads one SKILL.md body on demand and prepends the bundle's base directory so
+the model can pull references and run scripts via ReadFile / Grep / Bash —
+those existing tools are Level 3.
 
 The skill registry is captured at `Agent.__init__` time (it depends on disk
 state), so the registered function is `partial(load_skill, _skills_map=...)`.
@@ -15,7 +15,7 @@ from functools import partial
 from typing import Annotated
 
 from agent.decorator import Param, agent_tool
-from agent.skills import Skill
+from agent.skills import SKILL_FILE, Skill, parse_frontmatter
 
 
 @agent_tool(name='Skill')
@@ -39,9 +39,19 @@ def load_skill(
         available = ', '.join(sorted(by_name)) or '(none)'
         return f'error: unknown skill {skill!r}. Available: {available}'
 
+    skill_md = match.root / SKILL_FILE
+
+    try:
+        text = skill_md.read_text(encoding='utf-8')
+
+    except (OSError, UnicodeDecodeError) as e:
+        return f'error: cannot read {skill_md}: {e}'
+
+    _, body = parse_frontmatter(text)
+
     return (
         f'Base directory for this skill: {match.root}\n\n'
-        f'{match.body.rstrip()}\n'
+        f'{body.rstrip()}\n'
     )
 
 

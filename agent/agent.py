@@ -19,6 +19,7 @@ from tools.base.edit import edit
 from tools.base.extract import extract
 from tools.base.glob import glob
 from tools.base.grep import grep
+from tools.base.load_tool import tool_loader
 from tools.base.read import read
 from tools.base.search import search
 from tools.base.skill import skill_loader
@@ -43,6 +44,7 @@ class Agent:
         # Tool registry
         self.tools: list[dict[str, Any]] = []
         self.tool_functions: dict[str, Callable] = {}
+        self.deferred_tools: dict[str, dict[str, Any]] = {}
 
         self.tool_handler = ToolHandler(self)
 
@@ -62,6 +64,7 @@ class Agent:
         self.add_tool(search)
         self.add_tool(extract)
         self.add_tool(skill_loader(self.skills))
+        self.add_tool(tool_loader(self.deferred_tools))
 
         if tools:
             for tool in tools:
@@ -72,31 +75,42 @@ class Agent:
     def add_tool(self, tool: dict[str, Any] | Callable) -> None:
         """Register a tool.
 
-        Accepts either a tool dict (`{name, description, parameters, function}`)
+        Accepts either a tool dict (`{name, description, parameters, function, deferred?}`)
         or a function decorated with `@agent_tool` (carries `.tool` attr).
         No-op if a tool with the same name is already registered.
+
+        If `deferred` is True, the entry stored in `self.tools` carries a
+        truncated description (first sentence + ` [deferred]` marker) and an
+        empty parameter schema. The full canonical dict is stashed in
+        `self.deferred_tools` so `load_tool` can return it on demand.
         """
         if callable(tool) and hasattr(tool, 'tool'):
-            # print(tool.deferred)
-            # if tool.deferred:
-            #     print('deferred')
-            # else:
-            #     print('not deferred')
-            # This is where the tool deferred logic is implemented
+            tool = tool.tool  # type: ignore[attr-defined]
 
-            tool = tool.tool
+        if not isinstance(tool, dict):
+            raise TypeError(
+                f'add_tool: expected dict or @agent_tool function, got {type(tool).__name__}'
+            )
 
         name = tool['name']
-        
+
         if name in self.tool_functions:
             return
+
+        description = tool['description']
+        parameters = tool['parameters']
+
+        if tool.get('deferred', False):
+            description = f'{description.split(".", 1)[0]}. [deferred]'
+            parameters = {'type': 'object', 'properties': {}}
+            self.deferred_tools[name] = tool
 
         self.tools.append({
             'type': 'function',
             'function': {
                 'name': name,
-                'description': tool['description'],
-                'parameters': tool['parameters'],
+                'description': description,
+                'parameters': parameters,
             },
         })
 

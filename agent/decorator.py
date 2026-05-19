@@ -227,7 +227,7 @@ def _build_param_schema(
     return prop
 
 
-def _build_tool_dict(func: Callable, name: str | None) -> dict[str, Any]:
+def _build_tool_dict(func: Callable, name: str | None, deferred: bool = False) -> dict[str, Any]:
     """Introspect `func` and produce the dict expected by `Agent.add_tool`."""
     tool_name = name or func.__name__
     description, docstring_params = _parse_docstring(inspect.getdoc(func) or '')
@@ -267,6 +267,7 @@ def _build_tool_dict(func: Callable, name: str | None) -> dict[str, Any]:
         'description': description,
         'parameters': parameters,
         'function': func,
+        'deferred': deferred,
     }
 
 
@@ -350,7 +351,7 @@ def agent_tool(
     name: str | None = None,
     deferred: bool = False,
 ) -> Any:
-    """Attach a `.tool` dict and `.deferred` flag to the decorated function.
+    """Attach a `.tool` dict to the decorated function.
 
     Supports both bare `@agent_tool` and parameterised `@agent_tool(name='X')`.
     Must be the outermost decorator when stacked — relies on `__annotations__`
@@ -361,13 +362,14 @@ def agent_tool(
 
     Args:
         name: Override the tool name (defaults to the function name).
-        deferred: Marks the tool as deferred — exposed on the wrapper as
-            `.deferred`. Consumers can read this flag to decide whether to
-            withhold the tool's schema until it's explicitly requested.
+        deferred: Marks the tool as deferred — written into the tool dict
+            under the `deferred` key. `Agent.add_tool` reads this flag to
+            decide whether to withhold the tool's full schema until it's
+            explicitly requested via `load_tool`.
     """
 
     def _wrap(fn: Callable) -> Callable:
-        tool_dict = _build_tool_dict(fn, name)
+        tool_dict = _build_tool_dict(fn, name, deferred)
         validators = _collect_validators(fn)
         cached_sig = inspect.signature(fn)
 
@@ -393,7 +395,6 @@ def agent_tool(
 
         tool_dict['function'] = _wrapper
         _wrapper.tool = tool_dict  # type: ignore[attr-defined] This is where the .tool dict gets attached to the function
-        _wrapper.deferred = deferred  # type: ignore[attr-defined]
 
         return _wrapper
 

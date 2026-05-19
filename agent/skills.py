@@ -1,9 +1,9 @@
 """Disk-scanned skill loader.
 
-Implements Level 1 (frontmatter listing for the system prompt) and Level 2
-lookup (full SKILL.md body) of the progressive-disclosure model. Level 3 —
-references/, scripts/, assets/ — is left to the model's existing ReadFile /
-Grep / Bash tools acting on the skill's base directory.
+Implements Level 1 (frontmatter listing for the system prompt) of the
+progressive-disclosure model. Level 2 (the SKILL.md body) is loaded lazily
+on demand by the `Skill` tool; Level 3 (references/, scripts/, assets/) is
+left to ReadFile / Grep / Bash acting on the skill's base directory.
 """
 from __future__ import annotations
 
@@ -19,11 +19,10 @@ MAX_DESC_CHARS = 250
 class Skill:
     name: str
     description: str
-    body: str
     root: Path
 
 
-def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
+def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
     """Split a markdown file with leading `---` YAML frontmatter.
 
     Extracts top-level scalar string keys only — nested blocks (e.g. `metadata:`)
@@ -63,7 +62,10 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
 
 
 def load_skills(root: Path = SKILLS_DIR) -> list[Skill]:
-    """Scan `<root>/*/SKILL.md` and return one Skill per valid bundle."""
+    """Scan `<root>/*/SKILL.md` and return one Skill per valid bundle.
+
+    Only parses frontmatter — the body is read on demand by the `Skill` tool.
+    """
     if not root.is_dir():
         return []
 
@@ -84,7 +86,7 @@ def load_skills(root: Path = SKILLS_DIR) -> list[Skill]:
         except (OSError, UnicodeDecodeError):
             continue
 
-        fields, body = _parse_frontmatter(text)
+        fields, _ = parse_frontmatter(text)
 
         name = fields.get('name') or skill_dir.name
         description = fields.get('description', '').strip()
@@ -92,7 +94,6 @@ def load_skills(root: Path = SKILLS_DIR) -> list[Skill]:
         skills.append(Skill(
             name=name,
             description=description,
-            body=body,
             root=skill_dir.resolve(),
         ))
 
