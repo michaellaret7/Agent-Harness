@@ -77,6 +77,13 @@ class Agent:
         No-op if a tool with the same name is already registered.
         """
         if callable(tool) and hasattr(tool, 'tool'):
+            # print(tool.deferred)
+            # if tool.deferred:
+            #     print('deferred')
+            # else:
+            #     print('not deferred')
+            # This is where the tool deferred logic is implemented
+
             tool = tool.tool
 
         name = tool['name']

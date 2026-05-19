@@ -344,8 +344,13 @@ def _check_value(
 #     ================================
 
 
-def agent_tool(func: Callable | None = None, *, name: str | None = None) -> Any:
-    """Attach a `.tool` dict to the decorated function.
+def agent_tool(
+    func: Callable | None = None,
+    *,
+    name: str | None = None,
+    deferred: bool = False,
+) -> Any:
+    """Attach a `.tool` dict and `.deferred` flag to the decorated function.
 
     Supports both bare `@agent_tool` and parameterised `@agent_tool(name='X')`.
     Must be the outermost decorator when stacked — relies on `__annotations__`
@@ -353,6 +358,12 @@ def agent_tool(func: Callable | None = None, *, name: str | None = None) -> Any:
 
     The wrapper validates arguments at call time and returns an `error: ...`
     string on bad input (matches the Coding Agent tool-error convention).
+
+    Args:
+        name: Override the tool name (defaults to the function name).
+        deferred: Marks the tool as deferred — exposed on the wrapper as
+            `.deferred`. Consumers can read this flag to decide whether to
+            withhold the tool's schema until it's explicitly requested.
     """
 
     def _wrap(fn: Callable) -> Callable:
@@ -382,6 +393,7 @@ def agent_tool(func: Callable | None = None, *, name: str | None = None) -> Any:
 
         tool_dict['function'] = _wrapper
         _wrapper.tool = tool_dict  # type: ignore[attr-defined] This is where the .tool dict gets attached to the function
+        _wrapper.deferred = deferred  # type: ignore[attr-defined]
 
         return _wrapper
 
