@@ -45,6 +45,7 @@ class Agent:
         self.tools: list[dict[str, Any]] = []
         self.tool_functions: dict[str, Callable] = {}
         self.deferred_tools: dict[str, dict[str, Any]] = {}
+        self.loaded_deferred: set[str] = set()
 
         self.tool_handler = ToolHandler(self)
 
@@ -64,7 +65,7 @@ class Agent:
         self.add_tool(search)
         self.add_tool(extract)
         self.add_tool(skill_loader(self.skills))
-        self.add_tool(tool_loader(self.deferred_tools))
+        self.add_tool(tool_loader(self.deferred_tools, self.loaded_deferred))
 
         if tools:
             for tool in tools:

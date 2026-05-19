@@ -10,7 +10,7 @@ DEFAULT_LIMIT = 2000
 MAX_LINE_CHARS = 2000
 
 
-@agent_tool(name='ReadFile')
+@agent_tool(name='ReadFile', deferred=True)
 def read(
     file_path: Annotated[str, Param(description='Absolute or relative path to the file.')],
     offset: Annotated[int, Param(description='0-based line number to start reading from. Default 0.')] = 0,

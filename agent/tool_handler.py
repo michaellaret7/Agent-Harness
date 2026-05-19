@@ -119,6 +119,13 @@ class ToolHandler:
 
     def _invoke(self, name: str, kwargs: dict) -> str:
         """Look up the registered function and run it with exception wrapping."""
+        if name in self.agent.deferred_tools and name not in self.agent.loaded_deferred:
+            return (
+                f'error: {name!r} is deferred. Call LoadTool(names=[{name!r}]) '
+                f'first to retrieve the full schema, then call {name} with the '
+                f'correct arguments.'
+            )
+
         fn = self.agent.tool_functions.get(name)
 
         if fn is None:

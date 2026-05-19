@@ -25,6 +25,7 @@ from agent.decorator import Param, agent_tool
 def load_tool(
     names: Annotated[list[str], Param(description='Tool names to load full schemas for.')],
     _deferred_tools: dict[str, dict[str, Any]] | None = None,
+    _loaded_deferred: set[str] | None = None,
 ) -> str:
     """
     Load the full schema(s) for one or more deferred tools. Use this whenever
@@ -36,6 +37,7 @@ def load_tool(
     conversation.
     """
     registry = _deferred_tools or {}
+    loaded = _loaded_deferred if _loaded_deferred is not None else set()
 
     if not names:
         return 'error: provide at least one tool name'
@@ -56,19 +58,29 @@ def load_tool(
             'parameters': match['parameters'],
         }
 
+        loaded.add(name)
         blocks.append(f'Schema for {name!r}:\n{json.dumps(schema, indent=2)}')
 
     return '\n\n'.join(blocks)
 
 
-def tool_loader(deferred_tools: dict[str, dict[str, Any]]) -> dict:
+def tool_loader(
+    deferred_tools: dict[str, dict[str, Any]],
+    loaded_deferred: set[str],
+) -> dict:
     """Build a LoadTool tool dict bound to the given deferred-tool registry.
 
     The schema, description, and arg-validation wrapper come from the
     `@agent_tool` decorator on `load_tool`; this only swaps in a runtime
-    `function` that has the registry pre-injected via `partial`.
+    `function` with the registry and the loaded-name set pre-injected via
+    `partial`. Both are passed by reference, so `LoadTool` reads from and
+    writes to the live `Agent`-owned containers.
     """
     tool_dict = dict(load_tool.tool)
-    tool_dict['function'] = partial(load_tool.tool['function'], _deferred_tools=deferred_tools)
+    tool_dict['function'] = partial(
+        load_tool.tool['function'],
+        _deferred_tools=deferred_tools,
+        _loaded_deferred=loaded_deferred,
+    )
 
     return tool_dict
