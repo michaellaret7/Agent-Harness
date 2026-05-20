@@ -15,7 +15,7 @@ SKIP_DIRS = {
 }
 
 
-@agent_tool(name='Glob')
+@agent_tool(name='Glob', safe_parallel=True)
 def glob(
     pattern: Annotated[str, Param(description='Glob pattern, e.g. "**/*.py" or "src/*.ts".')],
     path: Annotated[str, Param(description='Directory to search in. Default is the current working directory.')] = '.',

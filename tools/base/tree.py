@@ -18,7 +18,7 @@ MAX_LINES = 200
 MAX_DEPTH = 5
 
 
-@agent_tool(name='Tree')
+@agent_tool(name='Tree', safe_parallel=True)
 def tree(
     path: Annotated[str, Param(description='Absolute or relative folder path. Defaults to "." (current directory).')] = '.',
 ) -> str:

@@ -62,13 +62,27 @@ def bash(
         )
 
     timeout = min(max(1, timeout), MAX_TIMEOUT)
+
+    # Detach the subprocess from the parent's console / stdin. Without this,
+    # bash inherits the TUI's stdin handle and (on Windows) attaches to the
+    # same console. prompt_toolkit issues terminal queries whose responses
+    # arrive via stdin; bash silently consumes those bytes, leaving the
+    # terminal in a half-configured mode after exit — observable as a TUI
+    # freeze (no scroll, no clicks, no keys) that persists past the bash
+    # call. DEVNULL on stdin everywhere + CREATE_NO_WINDOW on Windows fixes
+    # both: bash has no console handles to touch and no stdin to intercept.
+    run_kwargs: dict = {
+        'capture_output': True,
+        'text': True,
+        'timeout': timeout,
+        'stdin': subprocess.DEVNULL,
+    }
+
+    if sys.platform == 'win32':
+        run_kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+
     try:
-        result = subprocess.run(
-            [_BASH, '-c', command],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+        result = subprocess.run([_BASH, '-c', command], **run_kwargs)
     except subprocess.TimeoutExpired:
         return f'error: command timed out after {timeout}s'
 

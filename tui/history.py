@@ -49,6 +49,18 @@ class History:
             max_workers=1,
             thread_name_prefix='history-render',
         )
+        # Cross-thread Rich-render serializer. Pre-parallel-tools, the agent
+        # had exactly one worker thread driving sink events, so cell.render()
+        # calls were implicitly serialized. Parallel tool dispatch broke that:
+        # N worker threads now hit `append_tool_start` / `update_tool_result`
+        # at the same time, each running Rich on the calling thread. Concurrent
+        # Rich renders fight for the GIL and starve the asyncio loop — the
+        # observable symptom is a UI freeze during parallel tool batches. This
+        # lock collapses every cell render in this module back to one-at-a-time
+        # so the main-thread event loop always has a free GIL window between
+        # render bursts. Held only across the render call itself, never across
+        # `self._lock`, so reader snapshots are never blocked.
+        self._render_serializer = threading.Lock()
 
     def submit_render(self, fn: Callable[[], None]) -> Future:
         """Schedule a render callable on the single background worker.
@@ -58,6 +70,20 @@ class History:
         with foreground writes from this History.
         """
         return self._render_pool.submit(fn)
+
+    def _render(self, cell: Cell, width: int | None = None) -> None:
+        """Render a cell under the global render serializer.
+
+        Every Rich render in this module funnels through here so that the
+        N worker threads spawned by parallel tool dispatch can never run
+        Rich concurrently — see `_render_serializer` in `__init__` for why.
+        `width` defaults to `self.width` but accepts an explicit value for
+        callbacks that capture width at submission time.
+        """
+        target_width = self.width if width is None else width
+
+        with self._render_serializer:
+            cell.render(target_width)
 
     def snapshot(self) -> list[Cell]:
         """Lock-protected read of the cell list (shallow copy)."""
@@ -84,7 +110,7 @@ class History:
         tools: tuple[str, ...] = (),
     ) -> None:
         cell = HeaderCell(provider=provider, model=model, cwd=cwd, tools=tools)
-        cell.render(self.width)
+        self._render(cell)
 
         with self._lock:
             self._cells.append(cell)
@@ -93,7 +119,7 @@ class History:
 
     def append_user(self, text: str) -> None:
         cell = UserCell(text=text)
-        cell.render(self.width)
+        self._render(cell)
 
         with self._lock:
             self._cells.append(cell)
@@ -134,7 +160,7 @@ class History:
             now = time.monotonic()
 
             if now - cell._last_render_t >= STREAM_RENDER_INTERVAL_S:
-                cell.render(self.width)
+                self._render(cell)
                 cell._last_render_t = now
                 bump = True
             else:
@@ -152,7 +178,7 @@ class History:
             now = time.monotonic()
 
             if now - cell._last_render_t >= STREAM_RENDER_INTERVAL_S:
-                cell.render(self.width)
+                self._render(cell)
                 cell._last_render_t = now
                 bump = True
             else:
@@ -199,7 +225,7 @@ class History:
             target = last
 
         with target.render_lock:
-            target.render(self.width)
+            self._render(target)
 
         self._bump_version()
 
@@ -208,7 +234,7 @@ class History:
         def _markdown_render() -> None:
             with target.render_lock:
                 target.markdown_ready = True
-                target.render(width)
+                self._render(target, width)
 
             self._bump_version()
 
@@ -229,7 +255,7 @@ class History:
         with target.render_lock:
             target.done = True
             target.interrupted = True
-            target.render(self.width)
+            self._render(target)
 
         self._bump_version()
 
@@ -240,7 +266,7 @@ class History:
             tool_call_id=tool_call_id,
             started_at=time.monotonic(),
         )
-        cell.render(self.width)
+        self._render(cell)
 
         with self._lock:
             self._cells.append(cell)
@@ -265,7 +291,7 @@ class History:
             # calls into a wall of red blocks, multiplying Rich render work
             # on the worker and FormattedText rebuilds on the UI thread.
             # Users can click ⮞ to expand any specific cell.
-            cell.render(self.width)
+            self._render(cell)
 
         self._bump_version()
 
@@ -280,7 +306,7 @@ class History:
             cell.status = 'error'
             cell.ended_at = time.monotonic()
             cell.expanded = True
-            cell.render(self.width)
+            self._render(cell)
 
         self._bump_version()
 
@@ -293,7 +319,7 @@ class History:
 
         with cell.render_lock:
             cell.expanded = not cell.expanded
-            cell.render(self.width)
+            self._render(cell)
 
         self._bump_version()
 
@@ -308,7 +334,7 @@ class History:
             cell.diff_path = path
             cell.diff_before = before
             cell.diff_after = after
-            cell.render(self.width)
+            self._render(cell)
 
         self._bump_version()
 
@@ -321,7 +347,7 @@ class History:
 
         with cell.render_lock:
             cell.diff_expanded = not cell.diff_expanded
-            cell.render(self.width)
+            self._render(cell)
 
         self._bump_version()
 
@@ -340,13 +366,13 @@ class History:
 
         with target.render_lock:
             target.reasoning_expanded = not target.reasoning_expanded
-            target.render(self.width)
+            self._render(target)
 
         self._bump_version()
 
     def append_error(self, message: str) -> None:
         cell = ErrorCell(message=message)
-        cell.render(self.width)
+        self._render(cell)
 
         with self._lock:
             self._cells.append(cell)
@@ -366,6 +392,6 @@ class History:
 
         for cell in cells:
             with cell.render_lock:
-                cell.render(self.width)
+                self._render(cell)
 
         self._bump_version()

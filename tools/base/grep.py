@@ -16,7 +16,7 @@ SKIP_DIRS = {
 }
 
 
-@agent_tool(name='Grep')
+@agent_tool(name='Grep', safe_parallel=True)
 def grep(
     pattern: Annotated[str, Param(description='Regex pattern to search for.')],
     path: Annotated[str, Param(description='File or directory to search in. Default is the current working directory.')] = '.',

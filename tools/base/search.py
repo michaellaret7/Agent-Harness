@@ -21,7 +21,7 @@ DEFAULT_TIMEOUT = 90  # Reason: 'advanced' mode can take 15-60s end-to-end.
 MAX_OUTPUT_CHARS = 16000
 
 
-@agent_tool(name='WebSearch')
+@agent_tool(name='WebSearch', safe_parallel=True)
 def search(
     objective: Annotated[str, Param(description='Natural-language description of what information you are seeking. Provides context that focuses the ranking.')],
     search_queries: Annotated[list[str], Param(description='1-5 concise keyword queries (3-6 words each), diverse across angles. 2-3 is the sweet spot.')],

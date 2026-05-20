@@ -12,6 +12,12 @@ Pinned to Python 3.12 (`<3.13`) via `pyproject.toml` and `.python-version`. uv w
 
 There is no test suite, linter, or build step configured.
 
+## Response Type 
+- Please be clear, concise, and to the point in your responses and do your best to avoid unecessary verbosity
+
+## Overall Goal of Code 
+- To write clean, clear, well architected code that is easy for humans to understand 
+
 ## Architecture
 
 ### Top-level package layout

@@ -29,7 +29,7 @@ MAX_OUTPUT_CHARS = 24000  # Reason: extracts are deeper than search excerpts; al
 FULL_CONTENT_CHAR_CAP = 20000
 
 
-@agent_tool(name='WebExtract')
+@agent_tool(name='WebExtract', safe_parallel=True)
 def extract(
     urls: Annotated[list[str], Param(description='1-20 public URLs to extract. JS-heavy pages and PDFs are supported.')],
     objective: Annotated[str | None, Param(description='Natural-language description of what you are looking for on these pages. When set, the API returns excerpts focused on this objective (ignored if full_content=True).')] = None,

@@ -227,7 +227,12 @@ def _build_param_schema(
     return prop
 
 
-def _build_tool_dict(func: Callable, name: str | None, deferred: bool = False) -> dict[str, Any]:
+def _build_tool_dict(
+    func: Callable,
+    name: str | None,
+    deferred: bool = False,
+    safe_parallel: bool = False,
+) -> dict[str, Any]:
     """Introspect `func` and produce the dict expected by `Agent.add_tool`."""
     tool_name = name or func.__name__
     description, docstring_params = _parse_docstring(inspect.getdoc(func) or '')
@@ -268,6 +273,7 @@ def _build_tool_dict(func: Callable, name: str | None, deferred: bool = False) -
         'parameters': parameters,
         'function': func,
         'deferred': deferred,
+        'safe_parallel': safe_parallel,
     }
 
 
@@ -350,6 +356,7 @@ def agent_tool(
     *,
     name: str | None = None,
     deferred: bool = False,
+    safe_parallel: bool = False,
 ) -> Any:
     """Attach a `.tool` dict to the decorated function.
 
@@ -366,10 +373,16 @@ def agent_tool(
             under the `deferred` key. `Agent.add_tool` reads this flag to
             decide whether to withhold the tool's full schema until it's
             explicitly requested via `load_tool`.
+        safe_parallel: Marks the tool as safe to run concurrently with other
+            safe_parallel tools in the same batch. Opt-in only — defaults to
+            False. Set True for pure read-only tools (no shared-state mutation,
+            no subprocess side effects). The `ToolHandler` chunks consecutive
+            safe_parallel calls into a thread pool while preserving the
+            model's emitted order across chunk boundaries.
     """
 
     def _wrap(fn: Callable) -> Callable:
-        tool_dict = _build_tool_dict(fn, name, deferred)
+        tool_dict = _build_tool_dict(fn, name, deferred, safe_parallel)
         validators = _collect_validators(fn)
         cached_sig = inspect.signature(fn)
 

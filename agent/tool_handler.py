@@ -12,11 +12,19 @@ the LLM's tool-result message is unchanged.
 Cancellation: between tool calls, checks `cancel_event`. Tool calls
 in-flight are not killed (Python sync code can't be interrupted), but
 remaining calls in the batch are skipped and synthesized as interrupted.
+
+Parallel dispatch: tools opted into `safe_parallel=True` on `@agent_tool`
+are grouped into consecutive chunks and run concurrently via a
+`ThreadPoolExecutor`. Non-parallel tools (Bash, EditFile, WriteFile, …)
+act as barriers — the chunk before them completes before they start, and
+they complete before the next chunk begins. Tool-result message order
+always matches the model's emitted tool_call order.
 """
 from __future__ import annotations
 
 import json
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -58,28 +66,62 @@ class ToolHandler:
         sink: Sink,
         cancel_event: threading.Event,
     ) -> list[dict[str, Any]]:
-        """Run each tool call and return the corresponding tool-result messages."""
+        """Run a batch of tool calls and return tool-result messages in order.
 
-        messages: list[dict[str, Any]] = []
+        Walks the batch once, grouping consecutive `safe_parallel` calls
+        into chunks dispatched through a thread pool. Non-parallel calls
+        run serially and act as barriers between chunks. Result-message
+        order always matches the model's emitted tool_call order.
 
-        for tc in tool_calls:
-            tool_call_id = tc['id']
-            name = tc['function']['name']
-            args = tc['function']['arguments']
+        Cancellation is checked at chunk boundaries. Once `cancel_event`
+        is set, the in-flight chunk completes (Python sync code cannot be
+        interrupted) and every remaining tool_call short-circuits to
+        `[interrupted]` via `_run_one`, preserving sink events and the
+        tool_call/tool_result pairing in message history.
+        """
+        results: list[str] = []
+        n = len(tool_calls)
+        i = 0
 
-            # Send tool call start event to the sink
-            sink.on_tool_start(tool_call_id, name, args) 
-
+        # Start a while loop while the length of tool calls is greater than the index
+        # This is the main tool loop, looping through each of the submitted tool calls
+        # The index i is used to track the current tool call being processed
+        while i < n:
+            # Check if the cancellation event has been set
+            # If it has, we need to run the remaining tool calls and break out of the loop
             if cancel_event.is_set():
-                result = '[interrupted]'
+                results.extend(self._run_one(tc, sink, cancel_event) for tc in tool_calls[i:])
+                break
+            
+            # Check if the current tool at item i is parallel 
+            # The is parallel check comes from the parallel arg being passed to the agent_tool decorator
+            # If the tool is able to run in parallel, continue, otherwise run the tool sequentially
+            # From line 100 to 107 we are basically just creating a mini list of tool calls that can run in parallel 
+            # Once the list it built we submit them to the threadpool on line 111
+            if self._is_parallel(tool_calls[i]):
+                # Create new mini index of j within the current chunk
+                j = i
+
+                # Begin a while loop saying while mini index is less than number of tool calls and the current tool at item j is parallel
+                # add 1 to j to move to the next tool call
+                while j < n and self._is_parallel(tool_calls[j]):
+                    j += 1
+
+                # Run the parallel tools returned from the while loop and add the results to the results list
+                results.extend(self._run_parallel(tool_calls[i:j], sink, cancel_event))
+
+                # Set the index i to the new mini index j
+                i = j
+
             else:
-                result = self.call_tool(name, args, tool_call_id, sink) # This is where the actual tool func is executed
+                # Run the tool sequentially and add the result to the results list
+                results.append(self._run_one(tool_calls[i], sink, cancel_event))
+                i += 1
+        
+        # Return the results list as tool messages
+        tc_results = [tool_msg(tc['id'], r) for tc, r in zip(tool_calls, results)]
 
-            sink.on_tool_end(tool_call_id, result)
-
-            messages.append(tool_msg(tool_call_id, result))
-
-        return messages
+        return tc_results
 
     def call_tool(
         self,
@@ -117,8 +159,59 @@ class ToolHandler:
 
         return result
 
+    def _run_one(
+        self,
+        tc: dict,
+        sink: Sink,
+        cancel_event: threading.Event,
+    ) -> str:
+        """Execute a single tool call and emit start/end sink events."""
+
+        # Get and set the tool call id, name, and arguments
+        tool_call_id = tc['id']
+        name = tc['function']['name']
+        args = tc['function']['arguments']
+
+        # Emit tool start event to the sink
+        sink.on_tool_start(tool_call_id, name, args)
+
+        if cancel_event.is_set():
+            result = '[interrupted]'
+        else:
+            # Run the tool call and get the result as a string
+            result = self.call_tool(name, args, tool_call_id, sink)
+
+        # Emit tool end event to the sink
+        sink.on_tool_end(tool_call_id, result)
+
+        return result
+
+    def _run_parallel(
+        self,
+        batch: list[dict],
+        sink: Sink,
+        cancel_event: threading.Event,
+    ) -> list[str]:
+        """Run a batch of safe-parallel tool calls concurrently, preserving order."""
+        
+        with ThreadPoolExecutor(max_workers=len(batch)) as pool:
+            futures = [pool.submit(self._run_one, tc, sink, cancel_event) for tc in batch]
+
+            return [fut.result() for fut in futures]
+
+    def _is_parallel(self, tc: dict) -> bool:
+        """Check whether a tool call's underlying tool opted into safe parallelism."""
+
+        # Get the tool function from the agent's tool functions dictionary
+        fn = self.agent.tool_functions.get(tc['function']['name'])
+
+        # Return the safe parallel flag from the tool function dictionary
+        # This will determine if the tool can be run in the ThreadPoolExecutor or not 
+        return getattr(fn, 'tool', {}).get('safe_parallel', False)
+
     def _invoke(self, name: str, kwargs: dict) -> str:
         """Look up the registered function and run it with exception wrapping."""
+
         if name in self.agent.deferred_tools and name not in self.agent.loaded_deferred:
             return (
                 f'error: {name!r} is deferred. Call LoadTool(names=[{name!r}]) '
@@ -126,13 +219,45 @@ class ToolHandler:
                 f'correct arguments.'
             )
 
+        # Get the tool function from the agent's tool functions dictionary
         fn = self.agent.tool_functions.get(name)
 
+        # If the tool name is not found in the tool function dictionary, return an error
         if fn is None:
             return f'error: unknown tool {name!r}'
 
         try:
+            # Run the actual tool function with the key word arguments 
+            # Return the result as a string
             return str(fn(**kwargs))
 
         except Exception as e:
             return f'error: {type(e).__name__}: {e}'
+
+
+if __name__ == '__main__':
+    from agent.decorator import agent_tool
+    from agent.tests.tool_handler.fixtures import FakeAgent, tool_call
+
+    @agent_tool(name='par', safe_parallel=True)
+    def _par() -> str:
+        """Parallel-safe tool."""
+        return 'ok'
+
+    @agent_tool(name='ser', safe_parallel=False)
+    def _ser() -> str:
+        """Serial-only tool."""
+        return 'ok'
+
+    handler = ToolHandler(FakeAgent(tool_functions={'par': _par, 'ser': _ser}))  # type: ignore[arg-type]
+
+    cases = [
+        ('par', True),
+        ('ser', False),
+        ('unknown', False),
+    ]
+
+    for name, expected in cases:
+        got = handler._is_parallel(tool_call('x', name))
+        ok = 'PASS' if got == expected else 'FAIL'
+        print(f'{ok}  _is_parallel({name!r}) -> {got}  (expected {expected})')
