@@ -76,7 +76,7 @@ class ToolHandler:
         Cancellation is checked at chunk boundaries. Once `cancel_event`
         is set, the in-flight chunk completes (Python sync code cannot be
         interrupted) and every remaining tool_call short-circuits to
-        `[interrupted]` via `_run_one`, preserving sink events and the
+        `[interrupted]` via `_run_tool`, preserving sink events and the
         tool_call/tool_result pairing in message history.
         """
         results: list[str] = []
@@ -90,7 +90,7 @@ class ToolHandler:
             # Check if the cancellation event has been set
             # If it has, we need to run the remaining tool calls and break out of the loop
             if cancel_event.is_set():
-                results.extend(self._run_one(tc, sink, cancel_event) for tc in tool_calls[i:])
+                results.extend(self._run_tool(tc, sink, cancel_event) for tc in tool_calls[i:])
                 break
             
             # Check if the current tool at item i is parallel 
@@ -108,14 +108,14 @@ class ToolHandler:
                     j += 1
 
                 # Run the parallel tools returned from the while loop and add the results to the results list
-                results.extend(self._run_parallel(tool_calls[i:j], sink, cancel_event))
+                results.extend(self._run_tools_parallel(tool_calls[i:j], sink, cancel_event))
 
                 # Set the index i to the new mini index j
                 i = j
 
             else:
                 # Run the tool sequentially and add the result to the results list
-                results.append(self._run_one(tool_calls[i], sink, cancel_event))
+                results.append(self._run_tool(tool_calls[i], sink, cancel_event))
                 i += 1
         
         # Return the results list as tool messages
@@ -123,70 +123,65 @@ class ToolHandler:
 
         return tc_results
 
-    def call_tool(
-        self,
-        name: str,
-        arguments_json: str,
-        tool_call_id: str,
-        sink: Sink,
-    ) -> str:
-        """Run one tool call end-to-end and emit a file-diff event if applicable."""
-        try:
-            kwargs = json.loads(arguments_json) if arguments_json else {}
-
-        except (ValueError, TypeError) as e:
-            return f'error: bad arguments JSON: {e}'
-
-        target: Path | None = None
-
-        if name in ('EditFile', 'WriteFile'):
-            raw = kwargs.get('file_path')
-
-            if isinstance(raw, str) and raw:
-                target = resolve_path(raw)
-
-        before = _snapshot(target) if target else ''
-
-        result = self._invoke(name, kwargs)
-
-        if target is None or result.startswith('error:'):
-            return result
-
-        after = _snapshot(target)
-
-        if after != before:
-            sink.on_file_diff(tool_call_id, str(target), before, after)
-
-        return result
-
-    def _run_one(
+    def _run_tool(
         self,
         tc: dict,
         sink: Sink,
         cancel_event: threading.Event,
     ) -> str:
-        """Execute a single tool call and emit start/end sink events."""
+        """Run one tool call end-to-end: emit events, parse args, snapshot file, dispatch."""
 
-        # Get and set the tool call id, name, and arguments
+        # Unpack the tool call dict into id, name, and raw JSON args
+        # To clarify, this is what the agent passes to the tool handler 
         tool_call_id = tc['id']
         name = tc['function']['name']
-        args = tc['function']['arguments']
+        args_json = tc['function']['arguments']
 
         # Emit tool start event to the sink
-        sink.on_tool_start(tool_call_id, name, args)
+        sink.on_tool_start(tool_call_id, name, args_json)
 
+        # Short-circuit to '[interrupted]' if cancellation was requested before this tool runs
         if cancel_event.is_set():
             result = '[interrupted]'
+
         else:
-            # Run the tool call and get the result as a string
-            result = self.call_tool(name, args, tool_call_id, sink)
+            try:
+                # Parse the JSON arguments string into a kwargs dict
+                kwargs = json.loads(args_json) if args_json else {}
+
+            except (ValueError, TypeError) as e:
+                result = f'error: bad arguments JSON: {e}'
+                sink.on_tool_end(tool_call_id, result)
+                return result
+
+            # For EditFile/WriteFile, resolve the target so we can snapshot it before/after the call
+            target: Path | None = None
+
+            if name in ('EditFile', 'WriteFile'):
+                raw = kwargs.get('file_path')
+
+                if isinstance(raw, str) and raw:
+                    target = resolve_path(raw)
+
+            before = _snapshot(target) if target else ''
+
+            # Dispatch to the registered tool function
+            # This is where the actual tool function is called and the result is returned
+            result = self._invoke(name, kwargs)
+
+            # If the file was touched and the call succeeded, emit a diff event to the sinkwhen it changed
+            if target is not None and not result.startswith('error:'):
+                after = _snapshot(target)
+
+                if after != before:
+                    sink.on_file_diff(tool_call_id, str(target), before, after)
 
         # Emit tool end event to the sink
         sink.on_tool_end(tool_call_id, result)
 
         return result
 
-    def _run_parallel(
+    def _run_tools_parallel(
         self,
         batch: list[dict],
         sink: Sink,
@@ -195,7 +190,7 @@ class ToolHandler:
         """Run a batch of safe-parallel tool calls concurrently, preserving order."""
         
         with ThreadPoolExecutor(max_workers=len(batch)) as pool:
-            futures = [pool.submit(self._run_one, tc, sink, cancel_event) for tc in batch]
+            futures = [pool.submit(self._run_tool, tc, sink, cancel_event) for tc in batch]
 
             return [fut.result() for fut in futures]
 
@@ -227,37 +222,9 @@ class ToolHandler:
             return f'error: unknown tool {name!r}'
 
         try:
-            # Run the actual tool function with the key word arguments 
+            # Run the actual tool function with the keyword arguments 
             # Return the result as a string
             return str(fn(**kwargs))
 
         except Exception as e:
             return f'error: {type(e).__name__}: {e}'
-
-
-if __name__ == '__main__':
-    from agent.decorator import agent_tool
-    from agent.tests.tool_handler.fixtures import FakeAgent, tool_call
-
-    @agent_tool(name='par', safe_parallel=True)
-    def _par() -> str:
-        """Parallel-safe tool."""
-        return 'ok'
-
-    @agent_tool(name='ser', safe_parallel=False)
-    def _ser() -> str:
-        """Serial-only tool."""
-        return 'ok'
-
-    handler = ToolHandler(FakeAgent(tool_functions={'par': _par, 'ser': _ser}))  # type: ignore[arg-type]
-
-    cases = [
-        ('par', True),
-        ('ser', False),
-        ('unknown', False),
-    ]
-
-    for name, expected in cases:
-        got = handler._is_parallel(tool_call('x', name))
-        ok = 'PASS' if got == expected else 'FAIL'
-        print(f'{ok}  _is_parallel({name!r}) -> {got}  (expected {expected})')
