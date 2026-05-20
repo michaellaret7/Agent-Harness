@@ -1,5 +1,5 @@
 <div align="center">
-# local-agent
+# local-agent (multi-edit test)
 
 **A streaming, tool-calling agent with a Rich + prompt_toolkit TUI, talking to any OpenAI-compatible endpoint.**
 
@@ -12,7 +12,7 @@
 
 ---
 
-## What this is
+## What this is (TESTING)
 
 A minimal agent loop wrapped in a full-screen terminal UI. It streams tokens from a chat-completions endpoint, parses tool calls, executes them, and feeds the results back — until the model stops asking for tools and returns a final answer.
 
@@ -30,7 +30,7 @@ The client supports two backends:
 - **Click-to-copy mode** — `Ctrl+T` releases mouse capture so the terminal's native click-drag selection works.
 - **Built-in tools** — bash, read/write/edit (updated), glob, grep, tree, and search.
 
-## Requirements
+## Requirements (multi-edit edition)
 
 - Python 3.12 (pinned; uv refuses to sync on 3.13)
 - [`uv`](https://github.com/astral-sh/uv) for dependency management
@@ -177,4 +177,4 @@ MIT — add a `LICENSE` file if you fork this.
 ## Acknowledgements
 
 - [wttr.in](https://wttr.in) for the weather endpoint
-- EditFile tool test edit — round 3 ✏️
+- EditFile tool test edit — round 4 ✏️
