@@ -176,6 +176,11 @@ class ToolHandler:
                 if after != before:
                     sink.on_file_diff(tool_call_id, str(target), before, after)
 
+            # If the plan was updated, push the new state to the sink so UI
+            # surfaces can re-render. Mirrors the file-diff pattern above.
+            if name == 'Plan' and not result.startswith('error:'):
+                sink.on_plan_update(self.agent.plan)
+
         # Emit tool end event to the sink
         sink.on_tool_end(tool_call_id, result)
 

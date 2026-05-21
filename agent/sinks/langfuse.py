@@ -349,6 +349,11 @@ class LangfuseSink:
         except Exception as e:
             log.warning('langfuse: failed to attach diff metadata: %s', e)
 
+    def on_plan_update(self, plan: list[dict]) -> None:
+        # No-op: the Plan tool's input/output are already captured on the
+        # tool span via on_tool_start / on_tool_end.
+        pass
+
     #     ================================
     # --> Error / interruption flags
     #     ================================

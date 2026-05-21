@@ -94,6 +94,11 @@ class TUISink:
         self.history.append_file_diff(tool_call_id, path, before, after)
         self._invalidate()
 
+    def on_plan_update(self, plan: list[dict]) -> None:
+        # Rendering deferred — sink hook in place so the tool emits events
+        # we can wire up when PlanCell lands.
+        pass
+
     def on_error(self, message: str) -> None:
         self.history.append_error(message)
         self._invalidate()

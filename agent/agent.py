@@ -20,6 +20,7 @@ from tools.base.extract import extract
 from tools.base.glob import glob
 from tools.base.grep import grep
 from tools.base.load_tool import tool_loader
+from tools.base.plan import bind_plan
 from tools.base.read import read
 from tools.base.search import search
 from tools.base.skill import skill_loader
@@ -53,6 +54,8 @@ class Agent:
         self.memory = (Path(__file__).parent / 'context' / 'memory.md').read_text(encoding='utf-8').strip()
 
         self.skills: list[Skill] = load_skills()
+        
+        self.plan: list[dict] = []
 
         # ---- Register base tools ---- #
         self.add_tool(bash)
@@ -66,6 +69,7 @@ class Agent:
         self.add_tool(extract)
         self.add_tool(skill_loader(self.skills))
         self.add_tool(tool_loader(self.deferred_tools, self.loaded_deferred))
+        self.add_tool(bind_plan(self.plan))
 
         if tools:
             for tool in tools:
