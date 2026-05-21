@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 from agent.messages import tool_msg
 from agent.sinks import Sink
-from tools.helpers.paths import resolve_path
+from agent.base_tools.helpers.paths import resolve_path
 
 if TYPE_CHECKING:
     from agent.agent import Agent

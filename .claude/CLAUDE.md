@@ -6,7 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Dependencies live in the `agent` group, not the default group. Use `uv sync --group agent` to install — a plain `uv sync` will leave `openai`, `httpx`, and `pydantic` missing.
 
-Entry point: `uv run python -m agent`. This launches the TUI (`tui/app.py`). The legacy `python -m agent.agent` / `python agent/agent.py` paths are gone — there is no headless CLI mode. To use the agent programmatically, import `Agent` and call `agent.run(prompt, sink=..., cancel_event=...)`. If `sink` is None, output goes to stdout via `StdoutSink` (used for tests/scripts).
+Entry points:
+- `uv run python -m coding` — the coding-domain agent (bash, read/write/edit, glob/grep/tree + base web tools).
+- `uv run python -m agent` — the bare base agent with no domain tools. Used as a dev sanity check that the streaming loop and TUI work end-to-end without any coding tools attached.
+
+Both launch the TUI (`tui/app.py`). To use the agent programmatically, import `Agent` and call `agent.run(prompt, sink=..., cancel_event=...)`. If `sink` is None, output goes to stdout via `StdoutSink`.
 
 Pinned to Python 3.12 (`<3.13`) via `pyproject.toml` and `.python-version`. uv will refuse to sync on a 3.13 interpreter.
 
@@ -22,7 +26,13 @@ There is no test suite, linter, or build step configured.
 
 ### Top-level package layout
 
-`tools/` and `tui/` both live at the **project root**, not under `agent/`. `agent/agent.py` imports them as `from tools.base import ...` and `from tui.sink import Sink`. When adding new packages, follow this convention — keep them top-level so they're importable from anywhere in the repo.
+Three top-level packages live at the project root:
+
+- `agent/` — the base `Agent` class, streaming loop, ToolHandler, sinks, base skills, and base tools (`agent/base_tools/`: WebSearch, WebExtract, Plan, Skill, LoadTool, ReadFile; `agent/base_tools/helpers/` for path normalization). Domain-agnostic. Will be pulled out into its own repo eventually; treat it as a library, not an application.
+- `tui/` — prompt_toolkit + Rich frontend. Generic — no domain knowledge.
+- `coding/` — the coding **domain**. Owns coding-specific tools (`coding/tools/`), system prompt (`coding/context/prompt.md`), memory (`coding/context/memory.md`), skills (`coding/skills/`), and the user-facing entry point (`coding/__main__.py`).
+
+Domains assemble an Agent by passing constructor args: `prompt`, `tools`, `skills_dir`, `memory_path`. The base ships generic methodology + a `skill_builder` skill; the domain appends a `<role>` block, registers its tools, points at its skills/memory. No subclassing — just composition through `Agent(...)`.
 
 ### TUI
 
@@ -42,7 +52,7 @@ Both providers (`vllm`, `openrouter`) talk through the **OpenAI Python SDK**. `a
 - `vllm` uses a placeholder API key (the hosted endpoint is unauthenticated) and pulls `VLLM_API_URL` / `VLLM_MODEL` from env.
 - `openrouter` requires `OPENROUTER_API_KEY` and a `model` argument (any model string from openrouter.ai/models); `OPENROUTER_API_URL` is optional.
 
-Note: the `Agent` class default is `provider='vllm'`, but `agent/__main__.py` overrides it to `provider='openrouter', model='nvidia/nemotron-3-super-120b-a12b'`. Changing the default behavior of `python -m agent` means editing that file, not the class default.
+Note: the `Agent` class default is `provider='vllm'`, but `coding/__main__.py` (the user entry point) overrides it to `provider='openrouter', model='anthropic/claude-opus-4.7'`. Changing the default behavior of `python -m coding` means editing that file, not the class default.
 
 ### The streaming loop (`agent/loop.py`)
 
@@ -60,17 +70,21 @@ The loop bails at `max_iters=10` to prevent runaway tool-call cycles.
 
 ### Tool schema
 
-A tool module exports a `tool` dict with exactly four keys: `name`, `description`, `parameters` (JSON Schema), `function` (callable). Register via `agent.add_tool(module.tool)`. Functions decorated with `@agent_tool` (see `tools/decorator.py`) carry the dict on their `.tool` attribute; pass the function itself: `agent.add_tool(my_fn)`. `add_tool` is idempotent by name — re-registering is a silent no-op, not an error.
+A tool module exports a `tool` dict with exactly four keys: `name`, `description`, `parameters` (JSON Schema), `function` (callable). Register via `agent.add_tool(module.tool)`. Functions decorated with `@agent_tool` (see `agent/decorator.py`) carry the dict on their `.tool` attribute; pass the function itself: `agent.add_tool(my_fn)`. `add_tool` is idempotent by name — re-registering is a silent no-op, not an error.
 
 ### Bash tool platform handling
 
-`tools/base/bash.py` intentionally avoids `shell=True` and resolves a real bash binary at import time. On Windows it prefers Git Bash paths and skips `System32\bash.exe` (WSL), which sees a different filesystem. `BASH_PATH` env var overrides the lookup. Don't replace this with `shell=True` — it would silently dispatch to `cmd.exe` on Windows, which doesn't understand the POSIX commands the model emits.
+`coding/tools/bash.py` intentionally avoids `shell=True` and resolves a real bash binary at import time. On Windows it prefers Git Bash paths and skips `System32\bash.exe` (WSL), which sees a different filesystem. `BASH_PATH` env var overrides the lookup. Don't replace this with `shell=True` — it would silently dispatch to `cmd.exe` on Windows, which doesn't understand the POSIX commands the model emits.
 
 ## Configuration
 
 `.env` is required. `.env.example` lists both provider blocks (`OPENROUTER_*`, `VLLM_*`). Only the credentials for the provider you actually use need real values.
 
-System prompt and persistent memory are plain markdown at `agent/context/system_prompt.md` and `agent/context/memory.md`. Both are read at `Agent.__init__` and concatenated into the initial system message — there is no runtime reload.
+System prompts live in two places:
+- `agent/context/system_prompt.md` — the always-loaded base methodology (Tools, Skills, Planning + generic constraints). Domain-agnostic.
+- `<domain>/context/prompt.md` — appended to the base by `Agent.__init__` when the caller passes `prompt=...`. Holds the `<role>` and any domain-specific constraints.
+
+Per-domain memory lives at `<domain>/context/memory.md` and is loaded only when the caller passes `memory_path=...`. The base agent has no memory file of its own. Everything is read at `Agent.__init__` — there is no runtime reload.
 
 ## Development Guidelines
 

@@ -50,15 +50,17 @@ cp .env.example .env
 ## Running
 
 ```bash
-uv run python -m agent
+uv run python -m coding
 ```
 
-This launches the TUI. Type a prompt and press `Enter` to submit. Try:
+This launches the TUI with the coding-domain agent (bash, read/write/edit, glob/grep/tree + base web tools). Type a prompt and press `Enter` to submit. Try:
 
 ```
 what's 2 ** 16 plus the number of files in tools/base?
 read agent/loop.py and explain how tool calls are reassembled across stream chunks
 ```
+
+`uv run python -m agent` is also available — it launches the bare base agent with no domain tools attached, useful as a dev sanity check for the streaming loop and TUI.
 
 ### Key bindings
 
@@ -90,26 +92,33 @@ The `Agent` class default is `provider='vllm'`, but the `python -m agent` entry 
 ```
 local-agent/
 ├── agent/
-│   ├── __main__.py         # TUI entry point (uv run python -m agent)
+│   ├── __main__.py         # bare-base dev entry point (uv run python -m agent)
 │   ├── agent.py            # Agent class — message history, tool registry, context wiring
 │   ├── client.py           # OpenAI-compatible client builder (vllm / openrouter)
 │   ├── loop.py             # streaming execution loop, tool-call reassembly
 │   ├── tool_handler.py     # tool dispatch (execution only)
-│   └── context/
-│       ├── system_prompt.md
-│       └── memory.md
-├── tools/                  # top-level — imported as `from tools.base import ...`
-│   └── base/               # bash, read, write, edit, glob, grep, tree, search
-├── tui/                    # top-level — prompt_toolkit + Rich frontend
-│   ├── app.py              # TUIApp — layout, key bindings, worker dispatch
-│   ├── cells.py            # cell taxonomy (User/Assistant/Tool/Error) + Rich render
-│   ├── history.py          # lock-protected list of cells
-│   ├── panels.py           # OutputPanel, InputPanel, StatusBar
-│   └── sink.py             # Sink Protocol + TUISink / StdoutSink implementations
+│   ├── base_tools/         # base tools — WebSearch, WebExtract, Plan, Skill, LoadTool, ReadFile
+│   │   └── helpers/        # path normalization
+│   ├── context/
+│   │   └── system_prompt.md   # always-loaded methodology (base)
+│   └── skills/             # base skills (skill_builder)
+├── tui/                    # prompt_toolkit + Rich frontend (generic)
+│   ├── app.py
+│   ├── cells/
+│   ├── history.py
+│   ├── panels/
+│   └── sink.py
+├── coding/                 # the coding DOMAIN
+│   ├── __main__.py         # user entry point (uv run python -m coding)
+│   ├── tools/              # bash, write, edit, glob, grep, tree
+│   ├── context/
+│   │   ├── prompt.md       # <role> + coding-specific constraints (appended to base)
+│   │   └── memory.md       # cross-session memory (coding-domain)
+│   └── skills/             # coding-domain skills (codebase-recon)
 └── pyproject.toml
 ```
 
-`tools/` and `tui/` live at the **project root**, not under `agent/`. They're top-level packages and importable from anywhere in the repo.
+The base (`agent/`, `tools/`, `tui/`) is domain-agnostic — eventually it'll be pulled into its own repo. Domains assemble an Agent by passing constructor args (`prompt`, `tools`, `skills_dir`, `memory_path`); no subclassing needed.
 
 ## How the loop works
 
@@ -129,9 +138,9 @@ To drive the agent from a script instead of the TUI, import `Agent` directly and
 
 ```python
 from agent.agent import Agent
-from tui.sink import StdoutSink
+from agent.sinks import StdoutSink
 
-agent = Agent(provider='openrouter', model='nvidia/nemotron-3-super-120b-a12b')
+agent = Agent(provider='openrouter', model='anthropic/claude-opus-4.7')
 agent.run('summarize agent/loop.py', sink=StdoutSink())
 ```
 
@@ -139,10 +148,10 @@ If `sink` is `None`, output goes to stdout via `StdoutSink`. An optional `cancel
 
 ## Adding a tool
 
-A tool is just a dict with four keys: `name`, `description`, `parameters` (JSON Schema), `function` (callable). Drop a file in `tools/base/` (or anywhere else — the path is up to you):
+A tool is just a dict with four keys: `name`, `description`, `parameters` (JSON Schema), `function` (callable). Put base tools in `tools/base/`; put domain tools in `<domain>/tools/`:
 
 ```python
-# tools/base/echo.py
+# coding/tools/echo.py
 def echo(text: str) -> str:
     return text
 
@@ -160,12 +169,14 @@ tool = {
 }
 ```
 
-Then register it on the agent:
+Then pass it to the Agent at construction (preferred) or register it after:
 
 ```python
-from tools.base import echo
-agent = Agent()
-agent.add_tool(echo.tool)
+from agent.agent import Agent
+from coding.tools import echo
+
+agent = Agent(tools=[echo.tool])
+# or: agent.add_tool(echo.tool)
 ```
 
 `add_tool` is idempotent by name — re-registering is a silent no-op, not an error. The schema goes to the model on the next request, and `ToolHandler` dispatches to your `function` when the model calls it.

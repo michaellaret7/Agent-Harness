@@ -10,7 +10,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-SKILLS_DIR = Path(__file__).resolve().parent.parent / 'skills'
 SKILL_FILE = 'SKILL.md'
 MAX_DESC_CHARS = 250
 
@@ -61,7 +60,7 @@ def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
     return fields, body
 
 
-def load_skills(root: Path = SKILLS_DIR) -> list[Skill]:
+def load_skills(root: Path) -> list[Skill]:
     """Scan `<root>/*/SKILL.md` and return one Skill per valid bundle.
 
     Only parses frontmatter — the body is read on demand by the `Skill` tool.

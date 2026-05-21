@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from agent.decorator import Param, agent_tool
-from tools.helpers.paths import resolve_path
+from agent.base_tools.helpers.paths import resolve_path
 
 DEFAULT_LIMIT = 2000
 MAX_LINE_CHARS = 2000

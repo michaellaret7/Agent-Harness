@@ -1,4 +1,10 @@
-"""Entry point for `python -m agent`. Always launches the TUI."""
+"""Dev entry point for `python -m agent`. Launches the TUI with a tool-less Agent.
+
+This is a sanity check for the base agent — verifies the streaming loop, the
+TUI, and the base-tool registration (search/extract/skill/load_tool/plan) work
+end-to-end without any domain tools attached. For the coding agent, use
+`python -m coding`.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -14,10 +20,6 @@ from tui.app import TUIApp
 
 
 def main() -> None:
-    # agent = Agent(provider='openrouter', model='qwen/qwen3.6-27b')
-    # agent = Agent(provider='openrouter', model='deepseek/deepseek-v4-pro')
-    # agent = Agent(provider='openrouter', model='anthropic/claude-4.6-sonnet')
-    # agent = Agent(provider='openrouter', model='google/gemini-3.5-flash')
     agent = Agent(provider='openrouter', model='anthropic/claude-opus-4.7')
     app = TUIApp(agent)
 

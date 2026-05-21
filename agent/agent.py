@@ -14,32 +14,29 @@ from agent.messages import system_msg, user_msg
 from agent.sinks import Sink
 from agent.skills import Skill, format_skill_listing, load_skills
 from agent.tool_handler import ToolHandler
-from tools.base.extract import extract
-from tools.base.load_tool import tool_loader
-from tools.base.plan import bind_plan
-from tools.base.search import search
-from tools.base.skill import skill_loader
-from tools.coding.bash import bash
-from tools.coding.edit import edit
-from tools.coding.glob import glob
-from tools.coding.grep import grep
-from tools.coding.read import read
-from tools.coding.tree import tree
-from tools.coding.write import write
+from agent.base_tools.extract import extract
+from agent.base_tools.load_tool import tool_loader
+from agent.base_tools.plan import bind_plan
+from agent.base_tools.search import search
+from agent.base_tools.skill import skill_loader
 
 load_dotenv()
-
 
 class Agent:
     def __init__(
         self,
         provider: str = 'vllm',
         model: str | None = None,
-        tools: list[dict[str, Any] | Callable] | None = None,
+        tools: list[dict[str, Any] | Callable] = [],
+        prompt: str | None = None,
+        skills_dir: Path | None = None,
+        memory_path: Path | None = None,
     ) -> None:
 
         self.client, self.model = build_client(provider, model)
         self.provider = provider
+
+        # Initialize Message List
         self.messages: list[dict] = []
 
         # Tool registry
@@ -48,23 +45,34 @@ class Agent:
         self.deferred_tools: dict[str, dict[str, Any]] = {}
         self.loaded_deferred: set[str] = set()
 
+        # Initialize Tool Handler
         self.tool_handler = ToolHandler(self)
 
-        self.system_prompt = (Path(__file__).parent / 'context' / 'system_prompt.md').read_text(encoding='utf-8').strip()
-        self.memory = (Path(__file__).parent / 'context' / 'memory.md').read_text(encoding='utf-8').strip()
+        # Initialize Skills
+        self.skills: list[Skill] = load_skills(Path(__file__).parent / 'skills')
 
-        self.skills: list[Skill] = load_skills()
-        
+        # Initialize Plan
         self.plan: list[dict] = []
 
+        self.system_prompt = (Path(__file__).parent / 'context' / 'system_prompt.md').read_text(encoding='utf-8').strip()
+
+        # If prompt is passed to the agent, append it to the system prompt
+        if prompt:
+            self.system_prompt += '\n\n' + prompt.strip()
+
+        # If skills directory is passed to the agent, load the skills
+        if skills_dir:
+            existing = {s.name for s in self.skills}
+            self.skills.extend(s for s in load_skills(skills_dir) if s.name not in existing)
+        
+        # If memory path is passed to the agent, read the memory file
+        self.memory = (
+            memory_path.read_text(encoding='utf-8').strip()
+            if memory_path and memory_path.is_file()
+            else ''
+        )
+
         # ---- Register base tools ---- #
-        self.add_tool(bash)
-        self.add_tool(read)
-        self.add_tool(write)
-        self.add_tool(edit)
-        self.add_tool(glob)
-        self.add_tool(grep)
-        self.add_tool(tree)
         self.add_tool(search)
         self.add_tool(extract)
         self.add_tool(skill_loader(self.skills))
@@ -169,5 +177,3 @@ class Agent:
         finally:
             if active_sink is not None:
                 active_sink.on_turn_end(result)
-
-

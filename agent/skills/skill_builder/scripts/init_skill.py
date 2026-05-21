@@ -37,7 +37,6 @@ def create_skill_md(skill_name: str) -> str:
     content = f'''---
 name: {skill_name}
 description: [REQUIRED] Describe what this skill does and when to use it. Include specific trigger keywords.
-license: Apache-2.0
 metadata:
   author: [your-name]
   version: "1.0"
@@ -294,11 +293,6 @@ def init_skill(
             gitkeep.touch()
         
         print(f"Created directory: {resource_dir}")
-    
-    # Create LICENSE file
-    license_path = skill_dir / "LICENSE"
-    license_path.write_text("Apache-2.0\n\nSee: https://www.apache.org/licenses/LICENSE-2.0\n")
-    print(f"Created: {license_path}")
     
     print(f"\n[OK] Skill initialized at: {skill_dir.absolute()}")
     print("\nNext steps:")

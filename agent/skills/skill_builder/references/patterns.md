@@ -244,6 +244,53 @@ For automated metrics, defer to `scripts/analyze_codebase.py` rather than comput
 
 ---
 
+## In-Repo: Using This Agent's Tools
+
+The six patterns above describe shapes. This one shows what a skill looks like when it composes the tools *this agent* already has — `Read`, `Edit`, `Bash`, `Glob`, `Grep`, `Plan`, `Skill`, `LoadTool`. Use it as the concrete template for skills that live in `coding/skills/` or `agent/skills/`.
+
+### Example: Module Splitter
+
+```yaml
+---
+name: module-splitter
+description: Split an oversized Python module (>500 lines per project rule) into smaller files grouped by responsibility, preserving public API and updating callers. Use when a file exceeds the size cap or the user asks to "split", "break up", or "modularize" a module.
+---
+```
+
+Body outline — note how each step names the tool it expects to use:
+
+```markdown
+## When to trigger
+A single `.py` file >500 lines, or the user mentions splitting / modularizing.
+
+## Procedure
+
+1. **Survey** — `Read` the target file end to end. Identify cohesive groups: pure helpers, IO, types, public API. Use `Grep` to list every external caller of each symbol (`from <module> import <name>`).
+
+2. **Plan** — call the `Plan` tool with the proposed file layout, the import-rewrite list, and the rollback step. Pause for approval before any edits.
+
+3. **Extract** — for each new module:
+   - `Write` the new file (helpers at top under the banner block, per the project's whitespace rules).
+   - `Edit` the original file to remove the moved code and re-export from the new module so the public API stays stable.
+
+4. **Rewrite callers** — for each external caller found in step 1, `Edit` the import line. Run `Grep` once more to confirm no stale references remain.
+
+5. **Verify** — `Bash` `uv run python -c "import <package>"` to confirm the package still imports. If a circular import surfaces, the split was wrong — revert and regroup.
+
+## Constraints
+- Do not introduce a `__init__.py` re-export shim if one already exists; extend it.
+- Never rename a public symbol during the split. Renames are a separate change.
+- Stop and ask if the file has no obvious responsibility seams — splitting by line count alone produces worse code.
+```
+
+What makes this an "in-repo" pattern rather than a generic Workflow:
+- **Tool names are explicit** (`Read`, `Edit`, `Grep`, `Plan`, `Bash`) so the agent doesn't have to guess what's available.
+- **References project rules** the agent already follows (500-line cap, helper banner block, whitespace conventions in `CLAUDE.md`) instead of restating them.
+- **Has a real verification step** that uses this project's actual entry point (`uv run python -c ...`), not a generic "run the tests."
+- **Has a stop condition** — skills should know when *not* to fire, not just when to fire.
+
+---
+
 ## Combining Patterns
 
 When a skill spans multiple patterns:

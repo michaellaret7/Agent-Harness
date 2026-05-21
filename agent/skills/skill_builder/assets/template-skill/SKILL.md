@@ -1,7 +1,6 @@
 ---
 name: template-skill
 description: A minimal template skill to use as a starting point. Copy this directory and customize for your use case.
-license: Apache-2.0
 metadata:
   author: skill-builder
   version: "1.0"
