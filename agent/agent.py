@@ -14,18 +14,18 @@ from agent.messages import system_msg, user_msg
 from agent.sinks import Sink
 from agent.skills import Skill, format_skill_listing, load_skills
 from agent.tool_handler import ToolHandler
-from tools.base.bash import bash
-from tools.base.edit import edit
 from tools.base.extract import extract
-from tools.base.glob import glob
-from tools.base.grep import grep
 from tools.base.load_tool import tool_loader
 from tools.base.plan import bind_plan
-from tools.base.read import read
 from tools.base.search import search
 from tools.base.skill import skill_loader
-from tools.base.tree import tree
-from tools.base.write import write
+from tools.coding.bash import bash
+from tools.coding.edit import edit
+from tools.coding.glob import glob
+from tools.coding.grep import grep
+from tools.coding.read import read
+from tools.coding.tree import tree
+from tools.coding.write import write
 
 load_dotenv()
 
