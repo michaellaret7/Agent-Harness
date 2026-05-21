@@ -22,6 +22,7 @@ always matches the model's emitted tool_call order.
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -195,7 +196,11 @@ class ToolHandler:
         """Run a batch of safe-parallel tool calls concurrently, preserving order."""
         
         with ThreadPoolExecutor(max_workers=len(batch)) as pool:
-            futures = [pool.submit(self._run_tool, tc, sink, cancel_event) for tc in batch]
+            # Per-future contextvars copy so sink callbacks on pool threads see the iteration's OTel context.
+            futures = [
+                pool.submit(contextvars.copy_context().run, self._run_tool, tc, sink, cancel_event)
+                for tc in batch
+            ]
 
             return [fut.result() for fut in futures]
 
