@@ -62,7 +62,7 @@ This is the load-bearing file. Two non-obvious invariants:
 
 2. **Reasoning content is printed but never persisted.** `delta.reasoning_content` (and the non-stream `message.reasoning`) are surfaced live to stdout but deliberately **not** appended to `messages`. This matches the convention for thinking-model APIs and keeps `<think>` blocks out of subsequent prompts. Don't "fix" this by adding it to history.
 
-The loop bails at `max_iters=10` to prevent runaway tool-call cycles.
+The loop bails at `max_iters` (default 100) to prevent runaway tool-call cycles. Override per-agent via `Agent(max_iters=...)`.
 
 ### Agent ↔ ToolHandler split
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -30,10 +31,12 @@ class Agent:
         tools: list[dict[str, Any] | Callable] = [],
         prompt: str | None = None,
         domain_root: Path | None = None,
+        max_iters: int = 100,
     ) -> None:
 
         self.client, self.model = build_client(provider, model)
         self.provider = provider
+        self.max_iters = max_iters
 
         # Initialize Message List
         self.messages: list[dict] = []
@@ -111,6 +114,11 @@ class Agent:
         name = tool['name']
 
         if name in self.tool_functions:
+            print(
+                f"[agent] warning: tool '{name}' already registered; "
+                f"keeping the existing one and ignoring the duplicate",
+                file=sys.stderr,
+            )
             return
 
         description = tool['description']
@@ -171,6 +179,7 @@ class Agent:
             result = execution_loop(
                 self,
                 model=self.model,
+                max_iters=self.max_iters,
                 sink=sink,
                 cancel_event=cancel_event,
             )
