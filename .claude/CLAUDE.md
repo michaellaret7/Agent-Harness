@@ -30,9 +30,9 @@ Three top-level packages live at the project root:
 
 - `agent/` — the base `Agent` class, streaming loop, ToolHandler, sinks, base skills, and base tools (`agent/base_tools/`: WebSearch, WebExtract, Plan, Skill, LoadTool, ReadFile; `agent/base_tools/helpers/` for path normalization). Domain-agnostic. Will be pulled out into its own repo eventually; treat it as a library, not an application.
 - `tui/` — prompt_toolkit + Rich frontend. Generic — no domain knowledge.
-- `coding/` — the coding **domain**. Owns coding-specific tools (`coding/tools/`), system prompt (`coding/context/prompt.md`), memory (`coding/context/memory.md`), skills (`coding/skills/`), and the user-facing entry point (`coding/__main__.py`).
+- `coding/` — the coding **domain**. Owns coding-specific tools (`coding/tools/`), system prompt (`coding/prompt.md`), memory (`coding/memory.md`), skills (`coding/skills/`), and the user-facing entry point (`coding/__main__.py`).
 
-Domains assemble an Agent by passing constructor args: `prompt`, `tools`, `skills_dir`, `memory_path`. The base ships generic methodology + a `skill_builder` skill; the domain appends a `<role>` block, registers its tools, points at its skills/memory. No subclassing — just composition through `Agent(...)`.
+Domains assemble an Agent by passing constructor args: `prompt`, `tools`, `domain_root`. The base ships generic methodology + a `skill_builder` skill; the domain appends a `<role>` block, registers its tools, and points `domain_root=` at its package directory — Agent then loads `<root>/skills/` (auto-creating the dir if missing) and `<root>/memory.md` (optional) by convention. No subclassing — just composition through `Agent(...)`.
 
 ### TUI
 
@@ -82,9 +82,9 @@ A tool module exports a `tool` dict with exactly four keys: `name`, `description
 
 System prompts live in two places:
 - `agent/context/system_prompt.md` — the always-loaded base methodology (Tools, Skills, Planning + generic constraints). Domain-agnostic.
-- `<domain>/context/prompt.md` — appended to the base by `Agent.__init__` when the caller passes `prompt=...`. Holds the `<role>` and any domain-specific constraints.
+- `<domain>/prompt.md` — appended to the base by `Agent.__init__` when the caller passes `prompt=...`. Holds the `<role>` and any domain-specific constraints. The caller reads this and passes the string; the framework doesn't auto-discover it (unlike skills/ and memory.md).
 
-Per-domain memory lives at `<domain>/context/memory.md` and is loaded only when the caller passes `memory_path=...`. The base agent has no memory file of its own. Everything is read at `Agent.__init__` — there is no runtime reload.
+Per-domain memory lives at `<domain>/memory.md` and is loaded automatically when the caller passes `domain_root=...` (missing file → empty memory, not an error). The base agent has no memory file of its own. Everything is read at `Agent.__init__` — there is no runtime reload.
 
 ## Development Guidelines
 

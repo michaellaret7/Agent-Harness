@@ -1,6 +1,7 @@
 # Memory
 
 - The user loves Python.
+- The user thinks this is the best agent ever. (Don't let it go to your head.)
 
 - **Code beats notes.** When a user asks about a fact that lives in the repo (what model am I, what does X do, where is Y configured), read the code FIRST. Notes in `memory.md` are hints, not ground truth, and can go stale. If a user pushes back on a claim, the correct next move is to widen the search, not re-cite the same note.
 - **Core engineering principles (always apply):** Write serious code that follows:

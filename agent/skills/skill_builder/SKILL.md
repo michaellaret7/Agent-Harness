@@ -28,8 +28,8 @@ The frontmatter `description` is the most important field — it determines *whe
 
 This agent has its own minimal skill runtime — separate from Claude Code / Claude.ai. Before authoring, know how it behaves:
 
-- **Location**: skills live in `<domain>/skills/` (e.g. `coding/skills/`, `agent/skills/`). The domain passes `skills_dir=...` to `Agent(...)`.
-- **Loader**: `agent/skills.py` scans `<skills_dir>/*/SKILL.md` once at `Agent.__init__`. There is no hot reload — restart the agent after adding or editing a skill.
+- **Location**: skills live in `<domain>/skills/` (e.g. `coding/skills/`, `agent/skills/`). The domain passes `domain_root=...` to `Agent(...)` and the framework auto-discovers `<domain_root>/skills/` (creating the dir if it doesn't exist yet, so a new skill can be written into a fresh domain).
+- **Loader**: `agent/skills.py` scans `<domain_root>/skills/*/SKILL.md` once at `Agent.__init__`. There is no hot reload — restart the agent after adding or editing a skill.
 - **Progressive disclosure**: Level 1 (frontmatter `name` + `description`) is injected into the system prompt. Level 2 (the SKILL.md body) is fetched on demand via the `Skill` tool. Level 3 (`scripts/`, `references/`, `assets/`) is read with `Read` / `Bash` against the skill's directory.
 - **Frontmatter parsing is loose**: only top-level scalar keys are read. Nested blocks like `metadata:` are silently skipped, and the strict name/description rules in `references/specification.md` are *not* enforced at runtime. Follow them anyway — they're forward-compat with the Anthropic format.
 

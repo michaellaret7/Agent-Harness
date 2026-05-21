@@ -19,18 +19,25 @@ from agent.base_tools.read import read
 from coding.tools.tree import tree
 from coding.tools.write import write
 from tui.app import TUIApp
+from agent.sinks import StdoutSink
 
 
 def main() -> None:
-    here = Path(__file__).parent
 
     agent = Agent(
         provider='openrouter',
-        model='anthropic/claude-opus-4.7',
-        tools=[bash, read, write, edit, glob, grep, tree],
-        prompt=(here / 'context' / 'prompt.md').read_text(encoding='utf-8').strip(),
-        skills_dir=here / 'skills',
-        memory_path=here / 'context' / 'memory.md',
+        model='qwen/qwen3.7-max',
+        tools=[
+            bash,
+            read,
+            write,
+            edit,
+            glob,
+            grep,
+            tree,
+        ],
+        prompt=(Path(__file__).parent / 'prompt.md').read_text(encoding='utf-8').strip(),
+        domain_root=Path(__file__).parent,
     )
 
     app = TUIApp(agent)

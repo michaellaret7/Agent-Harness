@@ -111,14 +111,13 @@ local-agent/
 ├── coding/                 # the coding DOMAIN
 │   ├── __main__.py         # user entry point (uv run python -m coding)
 │   ├── tools/              # bash, write, edit, glob, grep, tree
-│   ├── context/
-│   │   ├── prompt.md       # <role> + coding-specific constraints (appended to base)
-│   │   └── memory.md       # cross-session memory (coding-domain)
-│   └── skills/             # coding-domain skills (codebase-recon)
+│   ├── prompt.md           # <role> + coding-specific constraints (appended to base)
+│   ├── memory.md           # cross-session memory (coding-domain) — auto-loaded via domain_root
+│   └── skills/             # coding-domain skills (codebase-recon) — auto-loaded via domain_root
 └── pyproject.toml
 ```
 
-The base (`agent/`, `tools/`, `tui/`) is domain-agnostic — eventually it'll be pulled into its own repo. Domains assemble an Agent by passing constructor args (`prompt`, `tools`, `skills_dir`, `memory_path`); no subclassing needed.
+The base (`agent/`, `tools/`, `tui/`) is domain-agnostic — eventually it'll be pulled into its own repo. Domains assemble an Agent by passing constructor args (`prompt`, `tools`, `domain_root`); the framework discovers `<domain_root>/skills/` and `<domain_root>/memory.md` by convention. No subclassing needed.
 
 ## How the loop works
 

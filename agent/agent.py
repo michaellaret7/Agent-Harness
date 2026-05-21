@@ -29,8 +29,7 @@ class Agent:
         model: str | None = None,
         tools: list[dict[str, Any] | Callable] = [],
         prompt: str | None = None,
-        skills_dir: Path | None = None,
-        memory_path: Path | None = None,
+        domain_root: Path | None = None,
     ) -> None:
 
         self.client, self.model = build_client(provider, model)
@@ -48,7 +47,7 @@ class Agent:
         # Initialize Tool Handler
         self.tool_handler = ToolHandler(self)
 
-        # Initialize Skills
+        # Initialize Base Skills
         self.skills: list[Skill] = load_skills(Path(__file__).parent / 'skills')
 
         # Initialize Plan
@@ -60,17 +59,21 @@ class Agent:
         if prompt:
             self.system_prompt += '\n\n' + prompt.strip()
 
-        # If skills directory is passed to the agent, load the skills
-        if skills_dir:
+        # If a domain root is provided, load domain skills (auto-creating the
+        # dir so skill_builder can write into it) and read memory.md if present.
+        self.memory = ''
+
+        if domain_root:
+            skills_dir = domain_root / 'skills'
+            skills_dir.mkdir(parents=True, exist_ok=True)
+
             existing = {s.name for s in self.skills}
             self.skills.extend(s for s in load_skills(skills_dir) if s.name not in existing)
-        
-        # If memory path is passed to the agent, read the memory file
-        self.memory = (
-            memory_path.read_text(encoding='utf-8').strip()
-            if memory_path and memory_path.is_file()
-            else ''
-        )
+
+            memory_file = domain_root / 'memory.md'
+
+            if memory_file.is_file():
+                self.memory = memory_file.read_text(encoding='utf-8').strip()
 
         # ---- Register base tools ---- #
         self.add_tool(search)
