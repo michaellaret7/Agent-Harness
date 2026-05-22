@@ -58,9 +58,9 @@ class Agent:
 
         self.system_prompt = (Path(__file__).parent / 'context' / 'system_prompt.md').read_text(encoding='utf-8').strip()
 
-        # If prompt is passed to the agent, append it to the system prompt
+        # If prompt is passed to the agent, append it under a domain header
         if prompt:
-            self.system_prompt += '\n\n' + prompt.strip()
+            self.system_prompt += '\n\n<domain>\n' + prompt.strip() + '\n</domain>'
 
         # If a domain root is provided, load domain skills (auto-creating the
         # dir so skill_builder can write into it) and read memory.md if present.
@@ -141,10 +141,14 @@ class Agent:
         self.tool_functions[name] = tool['function']
 
     def build_initial_context(self) -> None:
-        self.system_prompt += f'\nCurrent date: {datetime.now().strftime("%A, %B %d, %Y")}'
-        self.system_prompt += f'\nWorking directory: {os.getcwd()}'
+        environment = (
+            '<environment>\n'
+            f'- Date: {datetime.now().strftime("%A, %B %d, %Y")}\n'
+            f'- Working directory: {os.getcwd()}\n'
+            '</environment>'
+        )
 
-        parts: list[str] = [self.system_prompt]
+        parts: list[str] = [self.system_prompt, environment]
 
         listing = format_skill_listing(self.skills)
 
@@ -158,18 +162,14 @@ class Agent:
 
         self.messages.append(system_msg(content, cache=True))
 
-
     def run(
         self,
         prompt: str,
         sink: Sink | None = None,
         cancel_event: threading.Event | None = None,
     ) -> str:
-
-        active_sink: Sink | None = sink
-
-        if active_sink is not None:
-            active_sink.on_turn_start(prompt)
+        if sink is not None:
+            sink.on_turn_start(prompt)
 
         self.messages.append(user_msg(prompt))
 
@@ -187,5 +187,5 @@ class Agent:
             return result
 
         finally:
-            if active_sink is not None:
-                active_sink.on_turn_end(result)
+            if sink is not None:
+                sink.on_turn_end(result)
