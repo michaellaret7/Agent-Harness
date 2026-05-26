@@ -63,20 +63,13 @@ class Agent:
             self.system_prompt += '\n\n<domain>\n' + prompt.strip() + '\n</domain>'
 
         # If a domain root is provided, load domain skills (auto-creating the
-        # dir so skill_builder can write into it) and read memory.md if present.
-        self.memory = ''
-
+        # dir so skill_builder can write into it).
         if domain_root:
             skills_dir = domain_root / 'skills'
             skills_dir.mkdir(parents=True, exist_ok=True)
 
             existing = {s.name for s in self.skills}
             self.skills.extend(s for s in load_skills(skills_dir) if s.name not in existing)
-
-            memory_file = domain_root / 'memory.md'
-
-            if memory_file.is_file():
-                self.memory = memory_file.read_text(encoding='utf-8').strip()
 
         # ---- Register base tools ---- #
         self.add_tool(search)
@@ -154,9 +147,6 @@ class Agent:
 
         if listing:
             parts.append(listing)
-
-        if self.memory:
-            parts.append(self.memory)
 
         content = '\n\n'.join(parts)
 
