@@ -10,7 +10,7 @@ Entry points:
 - `uv run python -m coding` — the coding-domain agent (bash, read/write/edit, glob/grep/tree + base web tools).
 - `uv run python -m agent` — the bare base agent with no domain tools. Used as a dev sanity check that the streaming loop and TUI work end-to-end without any coding tools attached.
 
-Both launch the TUI (`tui/app.py`). To use the agent programmatically, import `Agent` and call `agent.run(prompt, sink=..., cancel_event=...)`. If `sink` is None, output goes to stdout via `StdoutSink`.
+Both launch the TUI (`tui/app.py`). To use the agent programmatically, import `Agent` and call `agent.run(task, sink=..., cancel_event=...)`. The task can also be set at init via `Agent(task=...)` and `run()` called with no arg — useful for batch pipelines. If `sink` is None, output goes to stdout via `StdoutSink`.
 
 Pinned to Python 3.12 (`<3.13`) via `pyproject.toml` and `.python-version`. uv will refuse to sync on a 3.13 interpreter.
 
@@ -28,11 +28,11 @@ There is no test suite, linter, or build step configured.
 
 Three top-level packages live at the project root:
 
-- `agent/` — the base `Agent` class, streaming loop, ToolHandler, sinks, base skills, and base tools (`agent/base_tools/`: WebSearch, WebExtract, Plan, Skill, LoadTool, ReadFile; `agent/base_tools/helpers/` for path normalization). Domain-agnostic. Will be pulled out into its own repo eventually; treat it as a library, not an application.
+- `agent/` — the base `Agent` class, streaming loop, ToolHandler, sinks, base skills, and base tools (`agent/base_tools/`: WebSearch, WebExtract, Plan, Skill, LoadTool, ReadFile; `agent/base_tools/helpers/` for path normalization). Domain-agnostic. Treat it as the shared, domain-agnostic package: no domain logic leaks in, and the dependency direction is one-way (domains → `agent`, never the reverse). It **reads** configuration (`os.getenv`) but never **loads** it — applications (the entry points) own bootstrap, including `load_dotenv()`. This is a discipline for clean boundaries, not a roadmap to a separately-versioned published library (the "No backwards-compatibility shims / update every caller" rule below assumes you own every caller, i.e. a monorepo package).
 - `tui/` — prompt_toolkit + Rich frontend. Generic — no domain knowledge.
 - `coding/` — the coding **domain**. Owns coding-specific tools (`coding/tools/`), system prompt (`coding/prompt.md`), memory (`coding/memory.md`), skills (`coding/skills/`), and the user-facing entry point (`coding/__main__.py`).
 
-Domains assemble an Agent by passing constructor args: `prompt`, `tools`, `domain_root`. The base ships generic methodology + a `skill_builder` skill; the domain appends a `<role>` block, registers its tools, and points `domain_root=` at its package directory — Agent then loads `<root>/skills/` (auto-creating the dir if missing) and `<root>/memory.md` (optional) by convention. No subclassing — just composition through `Agent(...)`.
+Domains assemble an Agent by passing constructor args: `system`, `tools`, `domain_root` (and optionally `task` for batch / one-shot use). The base ships generic methodology + a `skill_builder` skill; the domain appends a `<role>` block via `system=`, registers its tools, and points `domain_root=` at its package directory — Agent then loads `<root>/skills/` (auto-creating the dir if missing) and `<root>/memory.md` (optional) by convention. No subclassing — just composition through `Agent(...)`.
 
 ### TUI
 
@@ -151,6 +151,8 @@ def process_items(items: list[str], lookup: dict):
 
 - Module docstring explaining purpose.
 - Complete docstrings on public functions.
+- **Preserve existing comments.** Do NOT delete or "clean up" inline comments that are already in the code — including short step-marker comments like `# Emit tool start event to the sink`. Treat them as intentional. Only remove a comment if it is factually wrong after your change, and then replace it with a correct one rather than deleting it outright. This overrides any default tendency to strip "narration" comments.
+- When editing a function, leave untouched comments exactly as they are unless the line they describe is itself being changed.
 - Helper functions live at the **top** of the file under a banner block:
 
   ```

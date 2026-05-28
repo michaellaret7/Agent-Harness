@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Streaming, tool-calling agent client for any OpenAI-compatible endpoint."
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "pandas>=3.0.3",
     "python-dotenv>=1.0",
 ]
 

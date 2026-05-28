@@ -1,94 +1,120 @@
-"""
-Minimal image embedding + search demo using Voyage AI's hosted multimodal model.
-No local model weights, no GPU, just API calls.
+import asyncio
+import time
+import random
 
-Install:
-    pip install voyageai pillow numpy
+class EventBus:
+    def __init__(self):
+        self.subscribers = {}
 
-Setup:
-    export VOYAGE_API_KEY=your_key_here
-    (get a key at https://www.voyageai.com/)
+    def subscribe(self, event, fn):
+        self.subscribers.setdefault(event, []).append(fn)
+        print(self.subscribers)
 
-Usage:
-    python image_search_hosted.py
-"""
+    def publish_sync(self, event, data):
+        handlers = self.subscribers.get(event, [])
 
-from pathlib import Path
-import numpy as np
-from PIL import Image
-import voyageai
-from dotenv import load_dotenv
+        for fn in handlers:
+            fn(data)
 
-load_dotenv()
+    async def publish_async(self, event, data):
+        handlers = self.subscribers.get(event, [])
+        if not handlers:
+            return
+        await asyncio.gather(*(fn(data) for fn in handlers))
 
-vo = voyageai.Client()  # reads VOYAGE_API_KEY from env
-MODEL = "voyage-multimodal-3"
+# Create the bus
+bus = EventBus()
 
+async def macro_analyst(data):
+    print(f"Agent A received data: {data}")
+    await asyncio.sleep(random.uniform(0.2, 1.0))
+    print(f"Agent A is processing data: {data}")
+    await asyncio.sleep(random.uniform(0.2, 1.0))
+    print(f"Agent A is done processing data: {data}")
+    await asyncio.sleep(random.uniform(0.2, 1.0))
 
-def embed_image(image_path: str) -> np.ndarray:
-    """Embed an image via Voyage's hosted endpoint."""
-    img = Image.open(image_path).convert("RGB")
-    # Voyage takes a list of "inputs", each input is a list of content items
-    # (text strings and/or PIL images interleaved).
-    result = vo.multimodal_embed(
-        inputs=[[img]],
-        model=MODEL,
-        input_type="document",  # use "document" for indexed items
+async def equity_analyst(data):
+    print(f"Agent B received data: {data}")
+    await asyncio.sleep(random.uniform(0.2, 1.0))
+    print(f"Agent B is processing data: {data}")
+    await asyncio.sleep(random.uniform(0.2, 1.0))
+    print(f"Agent B is done processing data: {data}")
+    await asyncio.sleep(random.uniform(0.2, 1.0))
+
+async def fixed_income_analyst(data):
+    print(f"Agent C received data: {data}")
+    await asyncio.sleep(random.uniform(0.2, 1.0))
+    print(f"Agent C is done processing data: {data}")
+    await asyncio.sleep(random.uniform(0.2, 1.0))
+    print(f"Agent C is done processing data: {data}")
+    await asyncio.sleep(random.uniform(0.2, 1.0))
+
+bus.subscribe("macro_data_update", macro_analyst)
+bus.subscribe("equity_data_update", equity_analyst)
+bus.subscribe("fixed_income_data_update", fixed_income_analyst)
+
+async def main():
+    await asyncio.gather(
+        bus.publish_async("macro_data_update", "New jobs report released"),
+        bus.publish_async("equity_data_update", "New earnings report released"),
+        bus.publish_async("fixed_income_data_update", "New bond issuance report released"),
     )
-    vec = np.array(result.embeddings[0])
-    return vec / np.linalg.norm(vec)  # normalize for cosine sim
+
+asyncio.run(main())
 
 
-def embed_text(text: str) -> np.ndarray:
-    """Embed a text query into the same vector space."""
-    result = vo.multimodal_embed(
-        inputs=[[text]],
-        model=MODEL,
-        input_type="query",  # use "query" for search queries
-    )
-    vec = np.array(result.embeddings[0])
-    return vec / np.linalg.norm(vec)
+from abc import ABC, abstractmethod
+
+import pandas as pd
+
+class Node(ABC):
+    @abstractmethod
+    def run(self, data: pd.DataFrame) -> pd.DataFrame:
+        pass
+
+class Clean(Node):
+    def run(self, data: pd.DataFrame) -> pd.DataFrame:
+        return data.dropna()
+
+class CreateFeatureGroup(Node):
+    def run(self, data: pd.DataFrame) -> pd.DataFrame:
+        data = data.copy()
+
+        data['feature_group'] = data['name']
+
+        return data
+
+class UpperCase(Node):
+    def run(self, data: pd.DataFrame) -> pd.DataFrame:
+        data = data.copy()
+
+        data['feature_group'] = data['name'].str.upper()
+
+        return data
 
 
-def build_index(image_paths: list[str]):
-    """Embed each image in the given list. Returns (paths, matrix of vectors)."""
-    paths = []
-    vectors = []
+class Pipeline:
+    def __init__(self, nodes: list[Node]):
+        self.nodes = nodes
 
-    for path in image_paths:
-        p = Path(path)
-
-        if not p.exists():
-            print(f"skipping {p.name} (not found)")
-            continue
-
-        print(f"embedding {p.name}")
-        paths.append(str(p))
-        vectors.append(embed_image(str(p)))
-
-    return paths, np.stack(vectors)
-
-
-def search(query_vec: np.ndarray, paths: list, index: np.ndarray, k: int = 5):
-    """Cosine similarity via dot product (vectors are pre-normalized)."""
-    scores = index @ query_vec
-    top_idx = np.argsort(-scores)[:k]
-    return [(paths[i], float(scores[i])) for i in top_idx]
+    def run(self, data: pd.DataFrame) -> pd.DataFrame:
+        for node in self.nodes:
+            data = node.run(data)
+        return data
 
 
 if __name__ == "__main__":
-    IMAGES = ["image_1.jpg", "image_2.jpg", "image_3.jpg"]
-    paths, index = build_index(IMAGES)
-    print(f"\nindexed {len(paths)} images, vector dim = {index.shape[1]}\n")
+    df = pd.DataFrame({
+        'name': ['john', 'jane', 'jim', 'jill'],
+        'age': [25, 30, 35, 40],
+        'city': ['New York', 'Los Angeles', 'Chicago', 'Houston']
+    })
 
-    # Text query
-    text_query = "a red car"
-    print(f"text query: {text_query!r}")
-    for path, score in search(embed_text(text_query), paths, index, k=3):
-        print(f"  {score:.3f}  {path}")
-
-    # Image query (use first indexed image just to demo)
-    if paths:
-        print(f"\nimage query: {paths[0]}")
-        for path, score in search(embed_image(paths[0]), paths, index, k=3):
-            print(f"  {score:.3f}  {path}")
+    p = Pipeline(
+        [
+            Clean(), 
+            CreateFeatureGroup(), 
+            UpperCase()
+        ]
+    )
+    print(p.run(df))
