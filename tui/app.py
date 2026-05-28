@@ -2,8 +2,8 @@
 
 Architecture:
 - prompt_toolkit Application runs on the asyncio event loop.
-- On Enter, the user's prompt is dispatched to a worker thread via
-  `asyncio.to_thread(agent.run, prompt, sink, cancel_event)`.
+- On Enter, the user's task is dispatched to a worker thread via
+  `asyncio.to_thread(agent.run, task, sink, cancel_event)`.
 - The Sink mutates History from the worker; UI repaints via
   `loop.call_soon_threadsafe(app.invalidate)`.
 - Esc sets `cancel_event` and closes the in-flight stream.
@@ -16,8 +16,7 @@ import os
 import threading
 import time
 import traceback
-import uuid
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.filters import Condition
@@ -25,7 +24,7 @@ from prompt_toolkit.layout import Layout
 from prompt_toolkit.layout.containers import HSplit
 from prompt_toolkit.styles import Style
 
-from agent.sinks import MultiSink, Sink
+from agent.sinks import Sink
 from tui import sprites
 from tui.history import History
 from tui.keybindings import build_key_bindings
@@ -87,38 +86,11 @@ class TUIApp:
         self.application: Application = self._build_application()
 
         # `tui_sink` is the concrete TUISink used for accumulator reads
-        # in `_get_status`; `sink` is what the agent loop sees (may be a
-        # MultiSink wrapping it alongside Langfuse).
+        # in `_get_status`. Ambient observability sinks (Langfuse, etc.)
+        # are composed in by `Agent.run` via `wrap_with_ambient`, so the
+        # TUI does not need to construct them here.
         self.tui_sink: TUISink = TUISink(history=self.history, app=self.application)
-        self.sink: Sink = self._build_sink()
-
-    def _build_sink(self) -> Sink:
-        sinks: list[Sink] = [self.tui_sink]
-
-        # Presence of LANGFUSE_PUBLIC_KEY is the on switch. Lazy-import the
-        # sink so the langfuse package is only required when tracing is on.
-        if os.getenv('LANGFUSE_PUBLIC_KEY'):
-            from agent.sinks.langfuse import LangfuseSink
-
-            # One TUI launch = one Langfuse session. Every turn during this
-            # process lifetime gets tagged with the same session_id and
-            # appears bundled under one "Session" in the Langfuse UI.
-            session_id = uuid.uuid4().hex
-
-            sinks.append(LangfuseSink(
-                session_id=session_id,
-                metadata={
-                    'provider': self.agent.provider,
-                    'model': self.agent.model,
-                },
-            ))
-
-        if len(sinks) == 1:
-            return sinks[0]
-
-        # MultiSink uses __getattr__ to fan events out — Pyright can't see
-        # that as Protocol-conforming, so cast.
-        return cast(Sink, MultiSink(sinks))
+        self.sink: Sink = self.tui_sink
 
     # ----------------------------------------
     # Layout
@@ -161,18 +133,18 @@ class TUIApp:
     def _is_running(self) -> bool:
         return self.worker_task is not None and not self.worker_task.done()
 
-    def _submit(self, prompt: str) -> None:
+    def _submit(self, task: str) -> None:
         self.cancel_event.clear()
-        self.sink.on_user_message(prompt)
+        self.sink.on_user_message(task)
 
         self.active_sprite = sprites.pick()
         self.sprite_started_at = time.monotonic()
 
-        self.worker_task = self.application.create_background_task(self._run_turn(prompt))
+        self.worker_task = self.application.create_background_task(self._run_turn(task))
 
-    async def _run_turn(self, prompt: str) -> None:
+    async def _run_turn(self, task: str) -> None:
         try:
-            await asyncio.to_thread(self.agent.run, prompt, self.sink, self.cancel_event)
+            await asyncio.to_thread(self.agent.run, task, self.sink, self.cancel_event)
 
         except Exception as e:
             tb = ''.join(traceback.format_exception(type(e), e, e.__traceback__)[-10:])

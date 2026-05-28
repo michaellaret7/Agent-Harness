@@ -274,7 +274,7 @@ class History:
 
         self._bump_version()
 
-    def update_tool_result(self, tool_call_id: str, result: str) -> None:
+    def update_tool_result(self, tool_call_id: str, result: str, status: str) -> None:
         cell = self._tool_index.get(tool_call_id)
 
         if cell is None:
@@ -282,7 +282,7 @@ class History:
 
         with cell.render_lock:
             cell.result = result
-            cell.status = 'error' if result.startswith('error:') else 'ok'
+            cell.status = 'error' if status != 'ok' else 'ok'
             cell.ended_at = time.monotonic()
 
             # Reason: do NOT auto-expand errors. The status tail already shows

@@ -4,13 +4,14 @@ The agent loop calls these methods from a worker thread. TUISink writes
 into the shared History (lock-protected) and signals the prompt_toolkit
 app to repaint. `Application.invalidate()` is documented thread-safe.
 
-The Sink Protocol and the headless StdoutSink live in `agent/sink.py`
-— this file is for TUI-specific implementation only.
+The Sink Protocol and the headless StdoutSink live in `agent/sinks/` —
+this file is for TUI-specific implementation only.
 """
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from agent.sinks.protocol import BaseSink, ToolOutcome
 from agent.usage import Usage
 
 if TYPE_CHECKING:
@@ -19,7 +20,7 @@ if TYPE_CHECKING:
     from tui.history import History
 
 
-class TUISink:
+class TUISink(BaseSink):
     def __init__(self, history: 'History', app: 'Application') -> None:
         self.history = history
         self.app = app
@@ -42,23 +43,8 @@ class TUISink:
     def _invalidate(self) -> None:
         self.app.invalidate()
 
-    def on_turn_start(self, prompt: str) -> None:
+    def on_turn_start(self, task: str) -> None:
         self.last_turn_usage = Usage.zero()
-
-    def on_turn_end(self, result: str) -> None:
-        pass
-
-    def on_loop_start(self, model: str, max_iters: int, tool_names: list[str]) -> None:
-        pass
-
-    def on_loop_end(self, stop_reason: str, iterations: int) -> None:
-        pass
-
-    def on_iteration_start(self, number: int, message_count: int) -> None:
-        pass
-
-    def on_iteration_end(self, number: int, action: str, content: str, tools_called: list[str]) -> None:
-        pass
 
     def on_usage(self, usage: Usage) -> None:
         self.last_call_usage = usage
@@ -86,18 +72,13 @@ class TUISink:
         self.history.append_tool_start(tool_call_id, name, args_json)
         self._invalidate()
 
-    def on_tool_end(self, tool_call_id: str, result: str) -> None:
-        self.history.update_tool_result(tool_call_id, result)
+    def on_tool_end(self, tool_call_id: str, outcome: ToolOutcome) -> None:
+        self.history.update_tool_result(tool_call_id, outcome.payload, outcome.status)
         self._invalidate()
 
     def on_file_diff(self, tool_call_id: str, path: str, before: str, after: str) -> None:
         self.history.append_file_diff(tool_call_id, path, before, after)
         self._invalidate()
-
-    def on_plan_update(self, plan: list[dict]) -> None:
-        # Rendering deferred — sink hook in place so the tool emits events
-        # we can wire up when PlanCell lands.
-        pass
 
     def on_error(self, message: str) -> None:
         self.history.append_error(message)
