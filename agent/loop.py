@@ -19,6 +19,7 @@ from openai import OpenAI
 
 from agent.messages import assistant_msg, cached_text, tool_msg
 from agent.sinks import Sink, StdoutSink
+from agent.sinks.protocol import ToolOutcome
 from agent.usage import Usage
 
 if TYPE_CHECKING:
@@ -66,7 +67,14 @@ def _has_partial_tool_call(tool_calls: list[dict]) -> bool:
 def _settle_interrupted_tool_calls(agent: 'Agent', tool_calls: list[dict], sink: Sink) -> None:
     """Append synthetic tool-result messages so tool_call/tool_result pairs stay matched."""
     for tc in tool_calls:
-        sink.on_tool_end(tc['id'], '[interrupted]')
+        sink.on_tool_end(
+            tc['id'],
+            ToolOutcome(
+                payload='[interrupted]', 
+                status='interrupted',
+                duration=0.0
+            ),
+        )
 
         agent.messages.append(tool_msg(tc['id'], '[interrupted]'))
 

@@ -17,8 +17,8 @@ VLLM_PLACEHOLDER_KEY = 'placeholder'  # hosted vLLM endpoint does not require au
 def _maybe_enable_langfuse_instrumentation() -> None:
     """Trigger the langfuse.openai import side effect when keys are present.
 
-    Must run after `.env` has been loaded — caller is `build_client`, which
-    is itself only invoked from `Agent.__init__` after `load_dotenv()` ran.
+    Reads the already-populated environment — the application entry point
+    is responsible for `load_dotenv()` before constructing an Agent.
     Idempotent: re-importing the module is a no-op.
     """
     if os.getenv('LANGFUSE_PUBLIC_KEY'):
@@ -30,9 +30,14 @@ HOSTED_PROVIDER_ENV: dict[str, tuple[str, str]] = {
 }
 
 def build_client(provider: str = 'vllm', model: str | None = None) -> tuple[OpenAI, str]:
-    """Return (client, model). provider is 'openrouter' or 'vllm'."""
+    """Return (client, model). provider is 'openrouter' or 'vllm'.
 
+    Reads credentials from the process environment. The application entry
+    point must have loaded `.env` (via `load_dotenv()`) before calling this
+    — `agent/` reads config, it does not load it.
+    """
     provider = provider.lower()
+    
     _maybe_enable_langfuse_instrumentation()
 
     if provider == 'vllm':

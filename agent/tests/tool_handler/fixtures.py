@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from agent.decorator import agent_tool
+from agent.sinks.protocol import ToolOutcome
 from agent.tool_handler import ToolHandler
 
 #     ================================
@@ -77,8 +78,8 @@ class RecordingSink:
     def on_tool_start(self, tool_call_id: str, name: str, args_json: str) -> None:
         self._record('on_tool_start', tool_call_id, name, args_json)
 
-    def on_tool_end(self, tool_call_id: str, result: str) -> None:
-        self._record('on_tool_end', tool_call_id, result)
+    def on_tool_end(self, tool_call_id: str, outcome: ToolOutcome) -> None:
+        self._record('on_tool_end', tool_call_id, outcome.payload)
 
     def on_file_diff(self, tool_call_id: str, path: str, before: str, after: str) -> None:
         self._record('on_file_diff', tool_call_id, path, len(before), len(after))

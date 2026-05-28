@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from agent.sinks.protocol import ToolOutcome
+
 
 def _format_arg_value(value: Any, max_len: int = 80) -> str:
     """Render one tool-arg value as a compact single-line string."""
@@ -56,7 +58,7 @@ def format_args_inline(args_json: str) -> str:
     return ', '.join(f'{k}={_format_arg_value(v)}' for k, v in parsed.items())
 
 
-def format_tool_summary(result: str, duration: float) -> str:
+def format_tool_summary(outcome: ToolOutcome) -> str:
     """One-line tool-end summary.
 
     Asymmetric by design: successful runs show only duration + size (the
@@ -66,12 +68,14 @@ def format_tool_summary(result: str, duration: float) -> str:
     Tokens are estimated as `chars / 4` — the standard rough heuristic for
     OpenAI/Anthropic BPE tokenizers on English text.
     """
-    stripped = (result or '').strip()
+    if outcome.status != 'ok':
+        message = (outcome.payload or '').strip()
 
-    if stripped.startswith('error:') or stripped == '[interrupted]':
-        message = stripped if len(stripped) <= 200 else stripped[:200] + '...'
-        return f'{duration:.1f}s · {message}'
+        if len(message) > 200:
+            message = message[:200] + '...'
 
-    tokens = max(1, len(result) // 4)
+        return f'{outcome.duration:.1f}s · {message}'
 
-    return f'{duration:.1f}s · ~{tokens} tokens'
+    tokens = max(1, len(outcome.payload) // 4)
+
+    return f'{outcome.duration:.1f}s · ~{tokens} tokens'

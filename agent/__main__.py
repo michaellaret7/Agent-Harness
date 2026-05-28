@@ -18,12 +18,18 @@ import sys
 # repo root doesn't need this; the fix is harmless in that case.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from dotenv import load_dotenv
+
 from agent.agent import Agent
 from agent.sinks.log import LogSink
 from tui.app import TUIApp
 
 
 def main() -> None:
+    # Application owns config bootstrap: load .env before constructing the
+    # Agent so `agent/` (which only reads the environment) sees credentials.
+    load_dotenv()
+
     # Define the agent that will be used
     # Config tools, model, and provider
     # agent = Agent(provider='openrouter', model='anthropic/claude-opus-4.7')

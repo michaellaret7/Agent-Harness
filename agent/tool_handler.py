@@ -25,12 +25,13 @@ from __future__ import annotations
 import contextvars
 import json
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agent.messages import tool_msg
-from agent.sinks import Sink
+from agent.sinks.protocol import Sink, ToolOutcome, ToolStatus
 from agent.base_tools.helpers.paths import resolve_path
 
 if TYPE_CHECKING:
@@ -61,6 +62,8 @@ class ToolHandler:
     def __init__(self, agent: 'Agent') -> None:
         self.agent = agent
 
+    # This is the main execution algorithm for the tool handler which is called by the loop.py file
+    # This takes a list of tool calls and executes them in a batch or sequentially based on a field from the tool dictionary
     def execute(
         self,
         tool_calls: list[dict],
@@ -141,49 +144,24 @@ class ToolHandler:
         # Emit tool start event to the sink
         sink.on_tool_start(tool_call_id, name, args_json)
 
-        # Short-circuit to '[interrupted]' if cancellation was requested before this tool runs
-        if cancel_event.is_set():
-            result = '[interrupted]'
+        t0 = time.perf_counter()
 
-        else:
-            try:
-                # Parse the JSON arguments string into a kwargs dict
-                kwargs = json.loads(args_json) if args_json else {}
+        # Run the actual tool function. This is the main line of the whole tool handler basically.
+        # This returns the result of the tool call and the status of the tool call (so whether it threw and error or not)
+        result, status = self._dispatch(tc, sink, cancel_event)
 
-            except (ValueError, TypeError) as e:
-                result = f'error: bad arguments JSON: {e}'
-                sink.on_tool_end(tool_call_id, result)
-                return result
+        duration = time.perf_counter() - t0
 
-            # For EditFile/WriteFile, resolve the target so we can snapshot it before/after the call
-            target: Path | None = None
-
-            if name in ('EditFile', 'WriteFile'):
-                raw = kwargs.get('file_path')
-
-                if isinstance(raw, str) and raw:
-                    target = resolve_path(raw)
-
-            before = _snapshot(target) if target else ''
-
-            # Dispatch to the registered tool function
-            # This is where the actual tool function is called and the result is returned
-            result = self._invoke(name, kwargs)
-
-            # If the file was touched and the call succeeded, emit a diff event to the sinkwhen it changed
-            if target is not None and not result.startswith('error:'):
-                after = _snapshot(target)
-
-                if after != before:
-                    sink.on_file_diff(tool_call_id, str(target), before, after)
-
-            # If the plan was updated, push the new state to the sink so UI
-            # surfaces can re-render. Mirrors the file-diff pattern above.
-            if name == 'Plan' and not result.startswith('error:'):
-                sink.on_plan_update(self.agent.plan)
-
-        # Emit tool end event to the sink
-        sink.on_tool_end(tool_call_id, result)
+        # Emit tool result end event to the sink
+        # Return the result in the form of the ToolOutcome class
+        sink.on_tool_end(
+            tool_call_id,
+            ToolOutcome(
+                payload=result, 
+                status=status, 
+                duration=duration
+            ),
+        )
 
         return result
 
@@ -203,9 +181,69 @@ class ToolHandler:
             ]
 
             return [fut.result() for fut in futures]
+    
+    
+    def _dispatch(
+        self,
+        tc: dict,
+        sink: Sink,
+        cancel_event: threading.Event,
+    ) -> tuple[str, ToolStatus]:
+        """Run the tool body and classify the outcome.
+
+        Returns `(payload, status)` so the caller can stamp duration around
+        the whole dispatch and build one `ToolOutcome` for the sink. Side
+        effects (file-diff emit, plan-update emit) fire here because they
+        depend on the same status determination.
+        """
+
+        # Unpack the tool call dictionary passed to the tool handler by the agent and assign them to variables
+        tool_call_id = tc['id']
+        name = tc['function']['name']
+        args_json = tc['function']['arguments']
+
+        if cancel_event.is_set():
+            return '[interrupted]', 'interrupted'
+
+        try:
+            # Load the arguments from the tool call dictionary into a smaller dict called kwargs
+            kwargs = json.loads(args_json) if args_json else {}
+        except (ValueError, TypeError) as e:
+            # Raise an error if the arguments are bad 
+            return f'error: bad arguments JSON: {e}', 'error'
+
+        # TODO: This is an issue here. This tool handling snippet is specific to tools from coding agent 
+        # These need to be gotten rid of and handled at the tool level
+        target: Path | None = None
+
+        if name in ('EditFile', 'WriteFile'):
+            raw = kwargs.get('file_path')
+
+            if isinstance(raw, str) and raw:
+                target = resolve_path(raw)
+
+        before = _snapshot(target) if target else ''
+
+        # Run the actual tool funtion and return the result 
+        result = self._invoke(name, kwargs)
+
+        # Check the success status of the tool and see if it threw an error or not 
+        # If there was an error update the tool status else return ok 
+        status: ToolStatus = 'error' if result.startswith('error:') else 'ok'
+
+        if target is not None and status == 'ok':
+            after = _snapshot(target)
+
+            if after != before:
+                sink.on_file_diff(tool_call_id, str(target), before, after)
+
+        if name == 'Plan' and status == 'ok':
+            sink.on_plan_update(self.agent.plan)
+
+        return result, status
 
     def _is_parallel(self, tc: dict) -> bool:
-        """Check whether a tool call's underlying tool opted into safe parallelism."""
+        """A small helper function to check whether a tool call's underlying tool opted into safe parallelism."""
 
         # Get the tool function from the agent's tool functions dictionary
         fn = self.agent.tool_functions.get(tc['function']['name'])
@@ -217,6 +255,7 @@ class ToolHandler:
     def _invoke(self, name: str, kwargs: dict) -> str:
         """Look up the registered function and run it with exception wrapping."""
 
+        # Check to make sure the deferred tools get loaded before being called if they are deferred
         if name in self.agent.deferred_tools and name not in self.agent.loaded_deferred:
             return (
                 f'error: {name!r} is deferred. Call LoadTool(names=[{name!r}]) '

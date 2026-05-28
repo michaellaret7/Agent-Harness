@@ -30,12 +30,11 @@ The Sink calls happen on the agent worker thread. Each turn owns its own
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from langfuse import Langfuse, propagate_attributes
 
-if TYPE_CHECKING:
-    from agent.usage import Usage
+from agent.sinks.protocol import BaseSink, ToolOutcome
 
 log = logging.getLogger(__name__)
 
@@ -72,7 +71,7 @@ def _iteration_output(action: str, content: str, tools_called: list[str]) -> dic
 #     ================================
 
 
-class LangfuseSink:
+class LangfuseSink(BaseSink):
     def __init__(
         self,
         session_id: str | None = None,
@@ -314,18 +313,22 @@ class LangfuseSink:
         except Exception as e:
             log.warning('langfuse: failed to start tool span %s: %s', name, e)
 
-    def on_tool_end(self, tool_call_id: str, result: str) -> None:
+    def on_tool_end(self, tool_call_id: str, outcome: ToolOutcome) -> None:
         span = self._tool_spans.pop(tool_call_id, None)
 
         if span is None:
             return
 
         try:
-            update: dict[str, Any] = {'output': result}
+            update: dict[str, Any] = {'output': outcome.payload}
 
-            if result.startswith('error:') or result == '[interrupted]':
-                update['level'] = 'ERROR' if result.startswith('error:') else 'WARNING'
-                update['status_message'] = result
+            if outcome.status == 'error':
+                update['level'] = 'ERROR'
+                update['status_message'] = outcome.payload
+
+            elif outcome.status == 'interrupted':
+                update['level'] = 'WARNING'
+                update['status_message'] = outcome.payload
 
             span.update(**update)
             span.end()
@@ -349,11 +352,6 @@ class LangfuseSink:
         except Exception as e:
             log.warning('langfuse: failed to attach diff metadata: %s', e)
 
-    def on_plan_update(self, plan: list[dict]) -> None:
-        # No-op: the Plan tool's input/output are already captured on the
-        # tool span via on_tool_start / on_tool_end.
-        pass
-
     #     ================================
     # --> Error / interruption flags
     #     ================================
@@ -364,23 +362,8 @@ class LangfuseSink:
     def on_interrupted(self) -> None:
         self._interrupted = True
 
-    #     ================================
-    # --> No-ops (LLM deltas are already captured by langfuse.openai)
-    #     ================================
-
-    def on_user_message(self, text: str) -> None:
-        pass
-
-    def on_reasoning_delta(self, text: str) -> None:
-        pass
-
-    def on_content_delta(self, text: str) -> None:
-        pass
-
-    def on_assistant_end(self) -> None:
-        pass
-
-    def on_usage(self, usage: Usage) -> None:
-        # Already captured by the langfuse.openai monkey-patch on the
-        # auto-generation span — do not double-send.
-        pass
+    # `on_plan_update`, `on_user_message`, `on_reasoning_delta`,
+    # `on_content_delta`, `on_assistant_end`, `on_usage` are inherited as
+    # no-ops from BaseSink. The Plan tool's input/output is already on
+    # the tool span; LLM deltas and usage are captured by the
+    # langfuse.openai monkey-patch on the auto-generation span.

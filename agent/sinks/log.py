@@ -24,6 +24,7 @@ import sys
 import time
 
 from agent.sinks.helpers import format_args_inline, format_tool_summary
+from agent.sinks.protocol import BaseSink, ToolOutcome
 from agent.usage import Usage
 
 
@@ -73,7 +74,7 @@ def configure_logging(level: int | str = 'INFO') -> None:
 #     ================================
 
 
-class LogSink:
+class LogSink(BaseSink):
     """Sink that routes agent events through `logging.getLogger('agent.<name>')`.
 
     The `name` argument identifies this agent in the log stream. Pick a
@@ -98,7 +99,6 @@ class LogSink:
         self._turn_usage: Usage = Usage.zero()
         self._iterations: int = 0
         self._tool_count: int = 0
-        self._tool_start_times: dict[str, float] = {}
         self._tool_names: dict[str, str] = {}
 
     #     ================================
@@ -110,7 +110,6 @@ class LogSink:
         self._turn_usage = Usage.zero()
         self._iterations = 0
         self._tool_count = 0
-        self._tool_start_times.clear()
         self._tool_names.clear()
 
         self.log.info('turn.start')
@@ -158,12 +157,14 @@ class LogSink:
 
         self.log.info('loop.end stop_reason=%s iters=%d', stop_reason, iterations)
 
+    def on_iteration_start(self, number: int, message_count: int) -> None:
+        self.log.info('iter.start n=%d msgs=%d', number, message_count)
+
     #     ================================
     # --> Tool spans
     #     ================================
 
     def on_tool_start(self, tool_call_id: str, name: str, args_json: str) -> None:
-        self._tool_start_times[tool_call_id] = time.perf_counter()
         self._tool_names[tool_call_id] = name
         self._tool_count += 1
 
@@ -171,12 +172,10 @@ class LogSink:
 
         self.log.info('tool.start %s(%s)', name, args)
 
-    def on_tool_end(self, tool_call_id: str, result: str) -> None:
-        start = self._tool_start_times.pop(tool_call_id, None)
-        duration = time.perf_counter() - start if start is not None else 0.0
+    def on_tool_end(self, tool_call_id: str, outcome: ToolOutcome) -> None:
         name = self._tool_names.pop(tool_call_id, '?')
 
-        summary = format_tool_summary(result, duration)
+        summary = format_tool_summary(outcome)
 
         self.log.info('tool.end %s %s', name, summary)
 
@@ -189,34 +188,6 @@ class LogSink:
 
     def on_interrupted(self) -> None:
         self.log.warning('interrupted')
-
-    #     ================================
-    # --> Silent events
-    #     ================================
-
-    def on_iteration_start(self, number: int, message_count: int) -> None:
-        self.log.info('iter.start n=%d msgs=%d', number, message_count)
-
-    def on_iteration_end(self, number: int, action: str, content: str, tools_called: list[str]) -> None:
-        pass
-
-    def on_user_message(self, text: str) -> None:
-        pass
-
-    def on_reasoning_delta(self, text: str) -> None:
-        pass
-
-    def on_content_delta(self, text: str) -> None:
-        pass
-
-    def on_assistant_end(self) -> None:
-        pass
-
-    def on_file_diff(self, tool_call_id: str, path: str, before: str, after: str) -> None:
-        pass
-
-    def on_plan_update(self, plan: list[dict]) -> None:
-        pass
 
     def on_usage(self, usage: Usage) -> None:
         self._turn_usage = self._turn_usage + usage

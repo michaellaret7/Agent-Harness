@@ -8,10 +8,9 @@ blocks into paired clusters for readability.
 from __future__ import annotations
 
 import difflib
-import time
 
 from agent.sinks.helpers import format_args_inline, format_tool_summary
-from agent.usage import Usage
+from agent.sinks.protocol import BaseSink, ToolOutcome
 
 
 #     ================================
@@ -33,7 +32,7 @@ _RESET = '\033[0m'
 #     ================================
 
 
-class StdoutSink:
+class StdoutSink(BaseSink):
     """Headless fallback. Used when no TUI is running (tests, pipes)."""
 
     def __init__(self) -> None:
@@ -44,9 +43,6 @@ class StdoutSink:
         # Tracks tool-block phase so starts and ends render as paired
         # groups: a cluster of starts, blank line, then a cluster of ends.
         self._tool_phase: str | None = None  # None | 'starts' | 'ends'
-
-        # Per-call start timestamps so on_tool_end can report wall-clock duration.
-        self._tool_start_times: dict[str, float] = {}
 
     def _enter_stream(self, new_state: str, label: str) -> None:
         """Print a section header, closing any prior block first.
@@ -68,24 +64,6 @@ class StdoutSink:
         print(f'{_CYAN}{label}{_RESET}')
         self._stream_state = new_state
 
-    def on_turn_start(self, task: str) -> None:
-        pass
-
-    def on_turn_end(self, result: str) -> None:
-        pass
-
-    def on_loop_start(self, model: str, max_iters: int, tool_names: list[str]) -> None:
-        pass
-
-    def on_loop_end(self, stop_reason: str, iterations: int) -> None:
-        pass
-
-    def on_iteration_start(self, number: int, message_count: int) -> None:
-        pass
-
-    def on_iteration_end(self, number: int, action: str, content: str, tools_called: list[str]) -> None:
-        pass
-
     def on_user_message(self, text: str) -> None:
         print(f'\n{_BOLD}> {text}{_RESET}\n')
 
@@ -104,8 +82,6 @@ class StdoutSink:
         self._stream_state = 'idle'
 
     def on_tool_start(self, tool_call_id: str, name: str, args_json: str) -> None:
-        self._tool_start_times[tool_call_id] = time.perf_counter()
-
         # If a previous ends-cluster was just emitted, separate the new
         # chunk visually before starting the next round of starts.
         if self._tool_phase == 'ends':
@@ -115,15 +91,12 @@ class StdoutSink:
         print(f'  {_YELLOW}[tool]{_RESET} {name}({args})')
         self._tool_phase = 'starts'
 
-    def on_tool_end(self, tool_call_id: str, result: str) -> None:
-        start = self._tool_start_times.pop(tool_call_id, None)
-        duration = time.perf_counter() - start if start is not None else 0.0
-
+    def on_tool_end(self, tool_call_id: str, outcome: ToolOutcome) -> None:
         # First end after a starts-cluster: blank line separates the two blocks.
         if self._tool_phase == 'starts':
             print()
 
-        summary = format_tool_summary(result, duration)
+        summary = format_tool_summary(outcome)
         print(f'  {_YELLOW}->{_RESET} {summary}')
         self._tool_phase = 'ends'
 
@@ -149,9 +122,6 @@ class StdoutSink:
         completed = sum(1 for i in plan if i.get('status') == 'completed')
         total = len(plan)
         print(f'  {_CYAN}[plan]{_RESET} {completed}/{total} completed')
-
-    def on_usage(self, usage: Usage) -> None:
-        pass
 
     def on_error(self, message: str) -> None:
         print(f'{_RED}[error] {message}{_RESET}')
