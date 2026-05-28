@@ -36,7 +36,7 @@ def main() -> None:
             grep,
             tree,
         ],
-        prompt=(Path(__file__).parent / 'prompt.md').read_text(encoding='utf-8').strip(),
+        system=(Path(__file__).parent / 'prompt.md').read_text(encoding='utf-8').strip(),
         domain_root=Path(__file__).parent,
     )
 
