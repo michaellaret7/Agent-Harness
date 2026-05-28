@@ -10,6 +10,8 @@ from pathlib import Path
 # when this module is run via `python -m coding` from the repo root.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from dotenv import load_dotenv
+
 from agent.agent import Agent
 from coding.tools.bash import bash
 from coding.tools.edit import edit
@@ -23,6 +25,9 @@ from agent.sinks import StdoutSink
 
 
 def main() -> None:
+    # Application owns config bootstrap: load .env before constructing the
+    # Agent so `agent/` (which only reads the environment) sees credentials.
+    load_dotenv()
 
     agent = Agent(
         provider='openrouter',
