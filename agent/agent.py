@@ -7,12 +7,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from dotenv import load_dotenv
-
 from agent.client import build_client
 from agent.loop import execution_loop
 from agent.messages import system_msg, user_msg
-from agent.sinks import Sink
+from agent.sinks import Sink, StdoutSink, wrap_with_ambient
 from agent.skills import Skill, format_skill_listing, load_skills
 from agent.tool_handler import ToolHandler
 from agent.base_tools.extract import extract
@@ -21,7 +19,6 @@ from agent.base_tools.plan import bind_plan
 from agent.base_tools.search import search
 from agent.base_tools.skill import skill_loader
 
-load_dotenv()
 
 class Agent:
     def __init__(
@@ -29,7 +26,8 @@ class Agent:
         provider: str = 'vllm',
         model: str | None = None,
         tools: list[dict[str, Any] | Callable] = [],
-        prompt: str | None = None,
+        system: str | None = None,
+        task: str | None = None,
         domain_root: Path | None = None,
         max_iters: int = 100,
     ) -> None:
@@ -37,6 +35,7 @@ class Agent:
         self.client, self.model = build_client(provider, model)
         self.provider = provider
         self.max_iters = max_iters
+        self.task = task
 
         # Initialize Message List
         self.messages: list[dict] = []
@@ -58,9 +57,9 @@ class Agent:
 
         self.system_prompt = (Path(__file__).parent / 'context' / 'system_prompt.md').read_text(encoding='utf-8').strip()
 
-        # If prompt is passed to the agent, append it under a domain header
-        if prompt:
-            self.system_prompt += '\n\n<domain>\n' + prompt.strip() + '\n</domain>'
+        # If a domain system prompt is passed, append it under a domain header
+        if system:
+            self.system_prompt += '\n\n<domain>\n' + system.strip() + '\n</domain>'
 
         # If a domain root is provided, load domain skills (auto-creating the
         # dir so skill_builder can write into it).
@@ -154,14 +153,27 @@ class Agent:
 
     def run(
         self,
-        prompt: str,
+        task: str | None = None,
         sink: Sink | None = None,
         cancel_event: threading.Event | None = None,
     ) -> str:
-        if sink is not None:
-            sink.on_turn_start(prompt)
+        task = task if task is not None else self.task
 
-        self.messages.append(user_msg(prompt))
+        if task is None:
+            raise ValueError(
+                'Agent.run() needs a task — pass one to run() or set Agent(task=...) at init.'
+            )
+
+        # StdoutSink is the documented fallback so a bare
+        # `Agent(...).run(task)` produces visible streaming output.
+        # TUIApp / pipelines pass their own sink to override. Then wrap
+        # with all always-on sinks (Langfuse, metrics, …) so
+        # observability follows every run regardless of presentation.
+        sink = wrap_with_ambient(self, sink if sink is not None else StdoutSink())
+
+        sink.on_turn_start(task)
+
+        self.messages.append(user_msg(task))
 
         result = ''
 
@@ -177,5 +189,4 @@ class Agent:
             return result
 
         finally:
-            if sink is not None:
-                sink.on_turn_end(result)
+            sink.on_turn_end(result)

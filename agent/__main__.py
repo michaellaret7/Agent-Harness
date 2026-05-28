@@ -11,19 +11,36 @@ import asyncio
 import os
 import sys
 
-# Ensure project root is on sys.path so `tui.*` and `tools.*` resolve when
-# this module is run via `python -m agent` from the repo root.
+# Path fix runs BEFORE any `agent.*` import — required when this file is
+# launched by full path (e.g. from VS Code's Run button), since Python
+# sets sys.path[0] to `agent/` and `import agent` would otherwise resolve
+# to `agent/agent.py` rather than the package. `python -m agent` from the
+# repo root doesn't need this; the fix is harmless in that case.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agent.agent import Agent
+from agent.sinks.log import LogSink
 from tui.app import TUIApp
 
 
 def main() -> None:
-    agent = Agent(provider='openrouter', model='anthropic/claude-opus-4.7')
-    app = TUIApp(agent)
+    # Define the agent that will be used
+    # Config tools, model, and provider
+    # agent = Agent(provider='openrouter', model='anthropic/claude-opus-4.7')
+    agent = Agent(
+        provider='openrouter', 
+        model='qwen/qwen3.7-max'
+    )
 
-    asyncio.run(app.run_async())
+    while True:
+        x = input("Enter a task: ")
+        agent.run(x)
+
+    # Define the TUI app that will be the UI for the agent
+    # app = TUIApp(agent)
+
+    # Run the app asynchronously
+    # asyncio.run(app.run_async())
 
 
 if __name__ == '__main__':
