@@ -97,7 +97,7 @@ class LangfuseSink:
     # --> Turn boundaries
     #     ================================
 
-    def on_turn_start(self, prompt: str) -> None:
+    def on_turn_start(self, task: str) -> None:
         self._tool_spans.clear()
         self._errors.clear()
         self._interrupted = False
@@ -122,7 +122,7 @@ class LangfuseSink:
             cm = self._client.start_as_current_observation(
                 as_type='agent',
                 name='agent-turn',
-                input=prompt,
+                input=task,
                 metadata=self._base_metadata or None,
             )
             self._turn_span = cm.__enter__()

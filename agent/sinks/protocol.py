@@ -2,8 +2,8 @@
 
 The agent loop calls these methods from a worker thread. Implementations
 live wherever they make sense:
-- `StdoutSink` (here) is the headless fallback for tests/scripts that
-  import `Agent` without a TUI.
+- `StdoutSink` (in `agent/sinks/stdout.py`) is the headless fallback for
+  tests/scripts that import `Agent` without a TUI.
 - `MultiSink` (here) fans events out to several downstream sinks.
 - `TUISink` lives in `tui/sink.py` and mutates the prompt_toolkit History.
 - `LangfuseSink` lives in `agent/sinks/langfuse.py` and mirrors events to
@@ -21,7 +21,6 @@ typically no-op these.
 """
 from __future__ import annotations
 
-import difflib
 import logging
 from typing import Protocol
 
@@ -30,8 +29,13 @@ from agent.usage import Usage
 log = logging.getLogger(__name__)
 
 
+#     ================================
+# --> Sink Protocol
+#     ================================
+
+
 class Sink(Protocol):
-    def on_turn_start(self, prompt: str) -> None: ...
+    def on_turn_start(self, task: str) -> None: ...
     def on_turn_end(self, result: str) -> None: ...
     def on_loop_start(self, model: str, max_iters: int, tool_names: list[str]) -> None: ...
     def on_loop_end(self, stop_reason: str, iterations: int) -> None: ...
@@ -50,74 +54,9 @@ class Sink(Protocol):
     def on_interrupted(self) -> None: ...
 
 
-class StdoutSink:
-    """Headless fallback. Used when no TUI is running (tests, pipes)."""
-
-    def on_turn_start(self, prompt: str) -> None:
-        pass
-
-    def on_turn_end(self, result: str) -> None:
-        pass
-
-    def on_loop_start(self, model: str, max_iters: int, tool_names: list[str]) -> None:
-        pass
-
-    def on_loop_end(self, stop_reason: str, iterations: int) -> None:
-        pass
-
-    def on_iteration_start(self, number: int, message_count: int) -> None:
-        pass
-
-    def on_iteration_end(self, number: int, action: str, content: str, tools_called: list[str]) -> None:
-        pass
-
-    def on_user_message(self, text: str) -> None:
-        print(f'> {text}')
-
-    def on_reasoning_delta(self, text: str) -> None:
-        print(f'\033[90m{text}\033[0m', end='', flush=True)
-
-    def on_content_delta(self, text: str) -> None:
-        print(text, end='', flush=True)
-
-    def on_assistant_end(self) -> None:
-        print()
-
-    def on_tool_start(self, tool_call_id: str, name: str, args_json: str) -> None:
-        print(f'  [tool] {name}({args_json})')
-
-    def on_tool_end(self, tool_call_id: str, result: str) -> None:
-        print(f'  [tool] -> {result}')
-
-    def on_file_diff(self, tool_call_id: str, path: str, before: str, after: str) -> None:
-        lines = difflib.unified_diff(
-            before.splitlines(keepends=True),
-            after.splitlines(keepends=True),
-            fromfile=path,
-            tofile=path,
-        )
-
-        for line in lines:
-            if line.startswith('+') and not line.startswith('+++'):
-                print(f'\033[32m{line}\033[0m', end='')
-            elif line.startswith('-') and not line.startswith('---'):
-                print(f'\033[31m{line}\033[0m', end='')
-            else:
-                print(line, end='')
-
-    def on_plan_update(self, plan: list[dict]) -> None:
-        completed = sum(1 for i in plan if i.get('status') == 'completed')
-        total = len(plan)
-        print(f'  [plan] {completed}/{total} completed')
-
-    def on_usage(self, usage: Usage) -> None:
-        pass
-
-    def on_error(self, message: str) -> None:
-        print(f'\033[31m[error] {message}\033[0m')
-
-    def on_interrupted(self) -> None:
-        print('\n[interrupted]')
+#     ================================
+# --> MultiSink
+#     ================================
 
 
 class MultiSink:
