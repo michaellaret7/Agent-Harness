@@ -31,10 +31,9 @@ def main() -> None:
 
     agent = Agent(
         provider='openrouter',
-        model='qwen/qwen3.7-max',
+        model='anthropic/claude-opus-4.8',
         tools=[
             bash,
-            read,
             write,
             edit,
             glob,

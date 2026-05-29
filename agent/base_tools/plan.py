@@ -15,7 +15,8 @@ is hidden from the generated JSON Schema and never seen by the LLM.
 """
 from __future__ import annotations
 
-from typing import Annotated
+import json
+from typing import Annotated, Any, Literal, TypedDict
 
 from agent.decorator import Param, agent_tool
 
@@ -26,6 +27,13 @@ GLYPHS = {
     'in_progress': '[-]',
     'completed': '[x]',
 }
+
+
+class PlanItem(TypedDict):
+    """One plan step. Drives the nested item schema the LLM sees."""
+
+    text: Annotated[str, Param(description='Short description of the step.')]
+    status: Literal['pending', 'in_progress', 'completed']
 
 
 #     ================================
@@ -43,7 +51,41 @@ def _render(plan: list[dict]) -> str:
     return f'Plan ({len(plan)} items):\n' + '\n'.join(lines)
 
 
-def _validate(items: list[dict]) -> str | None:
+def _coerce(items: Any) -> tuple[list, str | None]:
+    """Undo model double-encoding before validation.
+
+    Some models stringify the whole `items` array, or each element, as JSON
+    inside the tool-call arguments. The handler's single `json.loads` of the
+    outer envelope leaves those inner strings intact. Parse them here so a
+    correctly-intended plan isn't rejected as `item N is not an object`.
+    Returns (coerced_list, None) on success, or ([], error_message) on failure.
+    """
+    if isinstance(items, str):
+        try:
+            items = json.loads(items)
+
+        except (ValueError, TypeError) as e:
+            return [], f'items was a string but not valid JSON: {e}'
+
+    if not isinstance(items, list):
+        return [], f'items must be a list (got {type(items).__name__})'
+
+    coerced: list = []
+
+    for idx, item in enumerate(items):
+        if isinstance(item, str):
+            try:
+                item = json.loads(item)
+
+            except (ValueError, TypeError) as e:
+                return [], f'item {idx} was a string but not valid JSON: {e}'
+
+        coerced.append(item)
+
+    return coerced, None
+
+
+def _validate(items: list) -> str | None:
     """Check item shape + at-most-one-in_progress. Return an error string or None."""
     for idx, item in enumerate(items):
         if not isinstance(item, dict):
@@ -80,7 +122,7 @@ def _validate(items: list[dict]) -> str | None:
 @agent_tool(name='Plan', deferred=True)
 def plan(
     items: Annotated[
-        list[dict],
+        list[PlanItem],
         Param(description=(
             'Full plan as a list of items. Each item is an object with '
             '"text" (string) and "status" ("pending" | "in_progress" | '
@@ -106,12 +148,17 @@ def plan(
     if _plan is None:
         return 'error: Plan tool not bound to an agent state'
 
-    err = _validate(items)
+    coerced, err = _coerce(items)
+
+    if err is not None:
+        return f'error: {err}'
+
+    err = _validate(coerced)
 
     if err is not None:
         return f'error: {err}'
 
     _plan.clear()
-    _plan.extend({'text': item['text'], 'status': item['status']} for item in items)
+    _plan.extend({'text': item['text'], 'status': item['status']} for item in coerced)
 
     return _render(_plan)

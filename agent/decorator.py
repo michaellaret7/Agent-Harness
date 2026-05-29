@@ -37,7 +37,7 @@ import inspect
 import re
 from dataclasses import dataclass
 from functools import partial
-from typing import Any, Callable, Literal, Union, get_args, get_origin, get_type_hints
+from typing import Any, Callable, Literal, Union, get_args, get_origin, get_type_hints, is_typeddict
 
 #     ================================
 # --> Helper dataclasses
@@ -152,10 +152,44 @@ def _unwrap_annotated(tp: Any) -> tuple[Any, Param | None]:
     return base, param_meta
 
 
+def _object_schema(td: Any) -> dict[str, Any]:
+    """Build {properties, required} for a TypedDict, recursing into field types.
+
+    Each field's type is resolved through `_resolve_type`, so Literals become
+    enums and nested TypedDicts/lists nest correctly. `Annotated[T, Param(...)]`
+    field descriptions are carried through.
+    """
+    hints = get_type_hints(td, include_extras=True)
+    required_keys = getattr(td, '__required_keys__', frozenset(hints))
+
+    properties: dict[str, Any] = {}
+
+    for field_name, field_tp in hints.items():
+        base_type, param_meta = _unwrap_annotated(field_tp)
+
+        json_type, extra = _resolve_type(base_type)
+
+        prop: dict[str, Any] = {'type': json_type}
+        prop.update(extra)
+
+        if param_meta is not None and param_meta.description:
+            prop['description'] = param_meta.description
+
+        properties[field_name] = prop
+
+    schema: dict[str, Any] = {'properties': properties}
+
+    if required_keys:
+        schema['required'] = list(required_keys)
+
+    return schema
+
+
 def _resolve_type(tp: Any) -> tuple[str, dict[str, Any]]:
     """Resolve a Python type to (json_type, extra_schema_fields).
 
-    Handles: primitives, Optional[T], list[T], Literal['a','b']. Falls back
+    Handles: primitives, Optional[T], list[T], Literal['a','b'], and
+    TypedDict objects (emitting nested `properties`/`required`). Falls back
     to ("string", {}) for anything unrecognized.
     """
     origin = get_origin(tp)
@@ -170,10 +204,13 @@ def _resolve_type(tp: Any) -> tuple[str, dict[str, Any]]:
         if len(non_none) == 1:
             return _resolve_type(non_none[0])
 
+    if is_typeddict(tp):
+        return 'object', _object_schema(tp)
+
     if origin is list:
         if args:
-            inner_type, _ = _resolve_type(args[0])
-            return 'array', {'items': {'type': inner_type}}
+            inner_type, inner_extra = _resolve_type(args[0])
+            return 'array', {'items': {'type': inner_type, **inner_extra}}
 
         return 'array', {}
 
