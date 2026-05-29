@@ -32,8 +32,11 @@ class Agent:
         max_iters: int = 100,
     ) -> None:
 
-        self.client, self.model = build_client(provider, model)
+        # Construction is inert: the client is built lazily on first run() so module-level `agent = Agent(...)` stays import-safe (no `.env` needed to construct).
         self.provider = provider
+        self.client = None
+        self.model = model
+        
         self.max_iters = max_iters
         self.task = task
 
@@ -157,6 +160,16 @@ class Agent:
         sink: Sink | None = None,
         cancel_event: threading.Event | None = None,
     ) -> str:
+
+        # Build the provider client on first run (deferred from __init__ so
+        # construction stays side-effect-free). Guarded so it's built once and
+        # reused across turns; build_client also resolves any provider default
+        # model (e.g. VLLM_MODEL) into self.model.
+        if self.client is None:
+            self.client, self.model = build_client(self.provider, self.model)
+
+        assert self.model is not None  # resolved by build_client above
+
         task = task if task is not None else self.task
 
         if task is None:
