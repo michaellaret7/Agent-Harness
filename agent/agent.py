@@ -8,16 +8,18 @@ from pathlib import Path
 from typing import Any, Callable
 
 from agent.client import build_client
+from agent.decorator import bind_tool
 from agent.loop import execution_loop
 from agent.messages import system_msg, user_msg
 from agent.sinks import Sink, StdoutSink, wrap_with_ambient
 from agent.skills import Skill, format_skill_listing, load_skills
 from agent.tool_handler import ToolHandler
 from agent.base_tools.extract import extract
-from agent.base_tools.load_tool import tool_loader
-from agent.base_tools.plan import bind_plan
+from agent.base_tools.load_tool import load_tool
+from agent.base_tools.plan import plan
 from agent.base_tools.search import search
-from agent.base_tools.skill import skill_loader
+from agent.base_tools.skill import load_skill
+from agent.base_tools.read import read
 
 
 class Agent:
@@ -53,9 +55,6 @@ class Agent:
         # Initialize Tool Handler
         self.tool_handler = ToolHandler(self)
 
-        # Initialize Base Skills
-        self.skills: list[Skill] = load_skills(Path(__file__).parent / 'skills')
-
         # Initialize Plan
         self.plan: list[dict] = []
 
@@ -65,21 +64,23 @@ class Agent:
         if system:
             self.system_prompt += '\n\n<domain>\n' + system.strip() + '\n</domain>'
 
-        # If a domain root is provided, load domain skills (auto-creating the
-        # dir so skill_builder can write into it).
-        if domain_root:
-            skills_dir = domain_root / 'skills'
-            skills_dir.mkdir(parents=True, exist_ok=True)
+        # Load skills from the base package plus the domain's skills dir (auto-created); base skills win on name collision.
+        skill_roots = [Path(__file__).parent / 'skills']
 
-            existing = {s.name for s in self.skills}
-            self.skills.extend(s for s in load_skills(skills_dir) if s.name not in existing)
+        if domain_root:
+            domain_skills = domain_root / 'skills'
+            domain_skills.mkdir(parents=True, exist_ok=True)
+            skill_roots.append(domain_skills)
+
+        self.skills: list[Skill] = load_skills(skill_roots)
 
         # ---- Register base tools ---- #
         self.add_tool(search)
         self.add_tool(extract)
-        self.add_tool(skill_loader(self.skills))
-        self.add_tool(tool_loader(self.deferred_tools, self.loaded_deferred))
-        self.add_tool(bind_plan(self.plan))
+        self.add_tool(read)
+        self.add_tool(bind_tool(load_skill, _skills_map={s.name: s for s in self.skills}))
+        self.add_tool(bind_tool(load_tool, _deferred_tools=self.deferred_tools, _loaded_deferred=self.loaded_deferred))
+        self.add_tool(bind_tool(plan, _plan=self.plan))
 
         if tools:
             for tool in tools:

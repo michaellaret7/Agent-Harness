@@ -9,14 +9,13 @@ state as the tool-result string.
 Validation is hard-fail: invalid `status` values or more than one
 `in_progress` item return `error: ...` and leave the plan unchanged.
 
-`self.plan` is bound via `functools.partial` at registration time
-(see `agent.py`), so the underscore-prefixed `_plan` parameter is hidden
-from the generated JSON Schema and never seen by the LLM.
+`self.plan` is injected into the hidden `_plan` parameter via `bind_tool`
+at registration time (see `agent.py`), so that underscore-prefixed parameter
+is hidden from the generated JSON Schema and never seen by the LLM.
 """
 from __future__ import annotations
 
-from functools import partial
-from typing import Annotated, Any
+from typing import Annotated
 
 from agent.decorator import Param, agent_tool
 
@@ -116,24 +115,3 @@ def plan(
     _plan.extend({'text': item['text'], 'status': item['status']} for item in items)
 
     return _render(_plan)
-
-
-def bind_plan(plan_state: list[dict]) -> dict[str, Any]:
-    """Build a Plan tool dict bound to the given plan list.
-
-    The schema and arg-validation wrapper come from the `@agent_tool`
-    decorator on `plan`; this swaps in a runtime `function` with `_plan`
-    pre-injected via `partial`. The list is passed by reference, so the
-    tool mutates the live `Agent`-owned container.
-
-    Named `bind_plan` rather than `plan_loader` because, unlike
-    `tool_loader` and `skill_loader` (which build tools whose underlying
-    function is `load_tool` / `load_skill`), the Plan tool's function
-    doesn't *load* anything — it mutates the bound state. The suffix
-    `_loader` in those other factories tracks the function name, not the
-    factory pattern.
-    """
-    tool_dict = dict(plan.tool)
-    tool_dict['function'] = partial(plan.tool['function'], _plan=plan_state)
-
-    return tool_dict

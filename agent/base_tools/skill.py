@@ -5,13 +5,12 @@ the model can pull references and run scripts via ReadFile / Grep / Bash —
 those existing tools are Level 3.
 
 The skill registry is captured at `Agent.__init__` time (it depends on disk
-state), so the registered function is `partial(load_skill, _skills_map=...)`.
-The `_skills_map` parameter is hidden from the generated JSON Schema by the
-decorator's underscore-prefix convention, so the LLM never sees it.
+state) and injected into the hidden `_skills_map` parameter via `bind_tool`
+(see `agent.py`). That underscore-prefixed param is hidden from the generated
+JSON Schema by the decorator's convention, so the LLM never sees it.
 """
 from __future__ import annotations
 
-from functools import partial
 from typing import Annotated
 
 from agent.decorator import Param, agent_tool
@@ -53,18 +52,3 @@ def load_skill(
         f'Base directory for this skill: {match.root}\n\n'
         f'{body.rstrip()}\n'
     )
-
-
-def skill_loader(skills: list[Skill]) -> dict:
-    """Build a Skill tool dict bound to the given skill registry.
-
-    The schema, description, and arg-validation wrapper come from the
-    `@agent_tool` decorator on `load_skill`; this only swaps in a runtime
-    `function` that has the skill registry pre-injected via `partial`.
-    """
-    by_name = {s.name: s for s in skills}
-
-    tool_dict = dict(load_skill.tool)
-    tool_dict['function'] = partial(load_skill.tool['function'], _skills_map=by_name)
-
-    return tool_dict

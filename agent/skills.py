@@ -60,41 +60,51 @@ def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
     return fields, body
 
 
-def load_skills(root: Path) -> list[Skill]:
-    """Scan `<root>/*/SKILL.md` and return one Skill per valid bundle.
+def load_skills(roots: list[Path]) -> list[Skill]:
+    """Scan each `<root>/*/SKILL.md` and return one Skill per valid bundle.
 
-    Only parses frontmatter — the body is read on demand by the `Skill` tool.
+    Roots are scanned in order; on a name collision the first root wins.
+    Missing roots are skipped. Only parses frontmatter — the body is read
+    on demand by the `Skill` tool.
     """
-    if not root.is_dir():
-        return []
-
     skills: list[Skill] = []
+    seen: set[str] = set()
 
-    for skill_dir in sorted(root.iterdir()):
-        if not skill_dir.is_dir():
+    for root in roots:
+        if not root.is_dir():
             continue
 
-        skill_md = skill_dir / SKILL_FILE
+        for skill_dir in sorted(root.iterdir()):
+            if not skill_dir.is_dir():
+                continue
 
-        if not skill_md.is_file():
-            continue
+            skill_md = skill_dir / SKILL_FILE
 
-        try:
-            text = skill_md.read_text(encoding='utf-8')
+            if not skill_md.is_file():
+                continue
 
-        except (OSError, UnicodeDecodeError):
-            continue
+            try:
+                text = skill_md.read_text(encoding='utf-8')
 
-        fields, _ = parse_frontmatter(text)
+            except (OSError, UnicodeDecodeError):
+                continue
 
-        name = fields.get('name') or skill_dir.name
-        description = fields.get('description', '').strip()
+            fields, _ = parse_frontmatter(text)
 
-        skills.append(Skill(
-            name=name,
-            description=description,
-            root=skill_dir.resolve(),
-        ))
+            name = fields.get('name') or skill_dir.name
+
+            if name in seen:
+                continue
+
+            seen.add(name)
+
+            description = fields.get('description', '').strip()
+
+            skills.append(Skill(
+                name=name,
+                description=description,
+                root=skill_dir.resolve(),
+            ))
 
     return skills
 

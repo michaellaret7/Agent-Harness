@@ -7,15 +7,14 @@ returned text gives the full description and parameter schema so the
 model can produce correct arguments on the next turn.
 
 The deferred-tool registry is captured at `Agent.__init__` time (it depends
-on which tools have been registered), so the runtime `function` is
-`partial(load_tool, _deferred_tools=<agent.deferred_tools>)`. The
-`_deferred_tools` parameter is hidden from the generated JSON Schema by the
-decorator's underscore-prefix convention, so the LLM never sees it.
+on which tools have been registered) and injected into the hidden
+`_deferred_tools` / `_loaded_deferred` params via `bind_tool` (see `agent.py`).
+Those underscore-prefixed params are hidden from the generated JSON Schema by
+the decorator's convention, so the LLM never sees them.
 """
 from __future__ import annotations
 
 import json
-from functools import partial
 from typing import Annotated, Any
 
 from agent.decorator import Param, agent_tool
@@ -62,25 +61,3 @@ def load_tool(
         blocks.append(f'Schema for {name!r}:\n{json.dumps(schema, indent=2)}')
 
     return '\n\n'.join(blocks)
-
-
-def tool_loader(
-    deferred_tools: dict[str, dict[str, Any]],
-    loaded_deferred: set[str],
-) -> dict:
-    """Build a LoadTool tool dict bound to the given deferred-tool registry.
-
-    The schema, description, and arg-validation wrapper come from the
-    `@agent_tool` decorator on `load_tool`; this only swaps in a runtime
-    `function` with the registry and the loaded-name set pre-injected via
-    `partial`. Both are passed by reference, so `LoadTool` reads from and
-    writes to the live `Agent`-owned containers.
-    """
-    tool_dict = dict(load_tool.tool)
-    tool_dict['function'] = partial(
-        load_tool.tool['function'],
-        _deferred_tools=deferred_tools,
-        _loaded_deferred=loaded_deferred,
-    )
-
-    return tool_dict

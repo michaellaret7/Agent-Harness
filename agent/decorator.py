@@ -36,6 +36,7 @@ import functools
 import inspect
 import re
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, Callable, Literal, Union, get_args, get_origin, get_type_hints
 
 #     ================================
@@ -415,3 +416,22 @@ def agent_tool(
         return _wrap(func)
 
     return _wrap
+
+
+#     ================================
+# --> Tool binding
+#     ================================
+
+
+def bind_tool(fn: Callable, **injected: Any) -> dict[str, Any]:
+    """Return fn's `.tool` dict with `injected` kwargs pre-bound via partial.
+
+    Injects Agent-owned runtime state (registries, the mutable plan list) into
+    a tool whose @agent_tool function declares matching underscore-prefixed
+    params. Those params are hidden from the JSON schema, so the LLM never sees
+    them. Only `function` is swapped; name/description/parameters are untouched.
+    """
+    tool_dict = dict(fn.tool)  # type: ignore[attr-defined]
+    tool_dict['function'] = partial(tool_dict['function'], **injected)
+
+    return tool_dict
