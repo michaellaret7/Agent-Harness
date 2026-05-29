@@ -32,7 +32,7 @@ Three top-level packages live at the project root:
 - `tui/` — prompt_toolkit + Rich frontend. Generic — no domain knowledge.
 - `coding/` — the coding **domain**. Owns coding-specific tools (`coding/tools/`), system prompt (`coding/prompt.md`), memory (`coding/memory.md`), skills (`coding/skills/`), and the user-facing entry point (`coding/__main__.py`).
 
-Domains assemble an Agent by passing constructor args: `system`, `tools`, `domain_root` (and optionally `task` for batch / one-shot use). The base ships generic methodology + a `skill_builder` skill; the domain appends a `<role>` block via `system=`, registers its tools, and points `domain_root=` at its package directory — Agent then loads `<root>/skills/` (auto-creating the dir if missing) and `<root>/memory.md` (optional) by convention. No subclassing — just composition through `Agent(...)`.
+Domains assemble an Agent by passing constructor args: `system`, `tools`, `domain_root` (and optionally `task` for batch / one-shot use). The base ships generic methodology only — no skills (it has no write/edit/bash tools, so a skill like `skill_builder` belongs in a domain that can execute it, e.g. `coding/skills/`). The domain appends a `<role>` block via `system=`, registers its tools, and points `domain_root=` at its package directory — Agent then loads `<root>/skills/` (auto-creating the dir if missing) and `<root>/memory.md` (optional) by convention. No subclassing — just composition through `Agent(...)`.
 
 ### TUI
 

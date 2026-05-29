@@ -172,6 +172,32 @@ def branch_divergence(repo_root: Path) -> list[str]:
     return lines
 
 
+def recent_commits(repo_root: Path, count: int = 5) -> list[str]:
+    """List the last `count` commits as 'hash — subject' lines.
+
+    The subject is the author's own summary of what each commit accomplished —
+    the cheapest honest signal of recent intent, with no inference required.
+    """
+    raw = run_git(["log", f"-{count}", "--no-merges", "--format=%h%x09%s"], repo_root)
+
+    if not raw:
+        return []
+
+    lines: list[str] = []
+
+    for entry in raw.splitlines():
+        parts = entry.split("\t", 1)
+
+        if len(parts) != 2:
+            continue
+
+        short_hash, subject = parts
+
+        lines.append(f"- `{short_hash}` — {subject}")
+
+    return lines
+
+
 def read_pyvenv_version(repo_root: Path) -> str | None:
     """Pull the interpreter minor version (e.g. '3.12') recorded in .venv/pyvenv.cfg."""
     cfg = repo_root / ".venv" / "pyvenv.cfg"
@@ -263,6 +289,13 @@ def render(repo_root: Path) -> str:
     if divergence:
         out.append("")
         out.extend(divergence)
+
+    commits = recent_commits(repo_root)
+
+    if commits:
+        out.append("")
+        out.append("## Recent commits")
+        out.extend(commits)
 
     out.append("")
     out.append("## Environment health")
