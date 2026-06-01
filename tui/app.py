@@ -87,7 +87,7 @@ class TUIApp:
 
         # `tui_sink` is the concrete TUISink used for accumulator reads
         # in `_get_status`. Ambient observability sinks (Langfuse, etc.)
-        # are composed in by `Agent.run` via `wrap_with_ambient`, so the
+        # are composed in by `Agent.run` via `compose_sinks`, so the
         # TUI does not need to construct them here.
         self.tui_sink: TUISink = TUISink(history=self.history, app=self.application)
         self.sink: Sink = self.tui_sink

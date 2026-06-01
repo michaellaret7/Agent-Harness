@@ -12,7 +12,7 @@ caller's presentation sink (StdoutSink, TUISink, LogSink, …). The
 factory receives the running `Agent` so it can read attributes like
 `provider` / `model` when constructing its sink.
 
-LangfuseSink is auto-registered the first time `wrap_with_ambient` or
+LangfuseSink is auto-registered the first time `compose_sinks` or
 `register_always_on` is called, when LANGFUSE_PUBLIC_KEY is present in
 the environment — set the env var and tracing follows every agent. Unset
 it and the framework is silent. The application entry point owns
@@ -48,7 +48,7 @@ _bootstrapped = False
 def _ensure_bootstrapped() -> None:
     """Run one-time Langfuse auto-registration.
 
-    Called on the first use of `wrap_with_ambient` or `register_always_on`,
+    Called on the first use of `compose_sinks` or `register_always_on`,
     not at import time, so type-only consumers of this module pay nothing.
     Idempotent: subsequent calls are no-ops.
 
@@ -88,7 +88,7 @@ def register_always_on(factory: Callable[['Agent'], Sink]) -> None:
     _always_on.append(factory)
 
 
-def wrap_with_ambient(agent: 'Agent', sink: Sink) -> Sink:
+def compose_sinks(agent: 'Agent', sink: Sink) -> Sink:
     _ensure_bootstrapped()
 
     parts: list[Sink] = [sink] + [f(agent) for f in _always_on]
@@ -107,6 +107,6 @@ __all__ = [
     'StdoutSink',
     'ToolOutcome',
     'configure_logging',
+    'compose_sinks',
     'register_always_on',
-    'wrap_with_ambient',
 ]

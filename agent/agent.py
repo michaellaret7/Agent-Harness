@@ -5,13 +5,15 @@ import sys
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable, cast
 
 from agent.client import build_client
 from agent.decorator import bind_tool
+from agent.hooks import Hook, HookEvent
 from agent.loop import execution_loop
 from agent.messages import system_msg, user_msg
-from agent.sinks import Sink, StdoutSink, wrap_with_ambient
+from agent.sinks import MultiSink, Sink, StdoutSink, compose_sinks
+from agent.sinks.hooks import HookSink
 from agent.skills import Skill, format_skill_listing, load_skills
 from agent.tool_handler import ToolHandler
 from agent.base_tools.extract import extract
@@ -51,6 +53,9 @@ class Agent:
         self.tool_functions: dict[str, Callable] = {}
         self.deferred_tools: dict[str, dict[str, Any]] = {}
         self.loaded_deferred: set[str] = set()
+
+        # Hook registry: event -> [(tool_filter, callback)]. Driven by HookSink.
+        self.hooks: dict[str, list[tuple[frozenset[str] | None, Hook]]] = {}
 
         # Initialize Tool Handler
         self.tool_handler = ToolHandler(self)
@@ -137,6 +142,41 @@ class Agent:
 
         self.tool_functions[name] = tool['function']
 
+    def add_hook(
+        self,
+        event: HookEvent,
+        fn: Hook,
+        *,
+        tool: str | Iterable[str] | None = None,
+    ) -> None:
+        """Register a hook fired on a lifecycle event.
+
+        The hook receives a single `HookContext` and its return value is
+        ignored — it never blocks or vetoes the run (side effects only). It
+        runs synchronously on the worker thread, so a hook that must not
+        stall the loop should spawn its own thread and return immediately.
+
+        `tool` filters `tool_start` / `tool_end` to one or more tool names —
+        pass a single name or an iterable of names. It is meaningless on
+        non-tool events (nothing will match).
+        """
+
+        names = frozenset([tool]) if isinstance(tool, str) else frozenset(tool) if tool is not None else None
+
+        # Fail fast on a typo'd filter: every tool is registered in __init__
+        # before any add_hook call, so an unknown name here is a caller bug,
+        # not a not-yet-registered tool.
+        if names is not None:
+            unknown = names - self.tool_functions.keys()
+
+            if unknown:
+                raise ValueError(
+                    f'add_hook: no registered tool(s) named {sorted(unknown)}. '
+                    f'Available: {sorted(self.tool_functions)}'
+                )
+
+        self.hooks.setdefault(event, []).append((names, fn))
+
     def build_initial_context(self) -> None:
         environment = (
             '<environment>\n'
@@ -177,9 +217,13 @@ class Agent:
                 'Agent.run() needs a task — pass one to run() or set Agent(task=...) at init.'
             )
 
-        # Default to StdoutSink so a bare run() still streams output, then wrap with always-on 
+        # Default to StdoutSink so a bare run() still streams output, then wrap with always-on
         # sinks (Langfuse, metrics, …) so observability follows every run.
-        sink = wrap_with_ambient(self, sink if sink is not None else StdoutSink())
+        sink = compose_sinks(self, sink if sink is not None else StdoutSink())
+
+        # Compose the HookSink only when hooks are registered, so unused agents pay nothing.
+        if self.hooks:
+            sink = cast(Sink, MultiSink([sink, HookSink(self)]))
 
         sink.on_turn_start(task)
 
