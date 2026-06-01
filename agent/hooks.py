@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Callable, Literal
 
 if TYPE_CHECKING:
     from agent.agent import Agent
-    from agent.sinks.protocol import ToolOutcome
+    from agent.sinks.base import ToolOutcome
 
 
 HookEvent = Literal[

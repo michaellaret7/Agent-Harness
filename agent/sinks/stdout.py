@@ -10,7 +10,7 @@ from __future__ import annotations
 import difflib
 
 from agent.sinks.helpers import format_args_inline, format_tool_summary
-from agent.sinks.protocol import BaseSink, ToolOutcome
+from agent.sinks.base import BaseSink, ToolOutcome
 
 
 #     ================================

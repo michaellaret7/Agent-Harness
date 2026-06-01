@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agent.messages import tool_msg
-from agent.sinks.protocol import Sink, ToolOutcome, ToolStatus
+from agent.sinks.base import Sink, ToolOutcome, ToolStatus
 from agent.base_tools.helpers.paths import resolve_path
 
 if TYPE_CHECKING:

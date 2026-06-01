@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from agent.sinks.protocol import ToolOutcome
+from agent.sinks.base import ToolOutcome
 
 
 def _format_arg_value(value: Any, max_len: int = 80) -> str:

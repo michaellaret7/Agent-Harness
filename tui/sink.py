@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from agent.sinks.protocol import BaseSink, ToolOutcome
+from agent.sinks.base import BaseSink, ToolOutcome
 from agent.usage import Usage
 
 if TYPE_CHECKING:

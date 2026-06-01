@@ -19,7 +19,7 @@ from openai import OpenAI
 
 from agent.messages import assistant_msg, cached_text, tool_msg
 from agent.sinks import Sink, StdoutSink
-from agent.sinks.protocol import ToolOutcome
+from agent.sinks.base import ToolOutcome
 from agent.usage import Usage
 
 if TYPE_CHECKING:

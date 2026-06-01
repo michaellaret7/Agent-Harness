@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from agent.decorator import agent_tool
-from agent.sinks.protocol import ToolOutcome
+from agent.sinks.base import ToolOutcome
 from agent.tool_handler import ToolHandler
 
 #     ================================

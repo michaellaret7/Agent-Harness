@@ -113,9 +113,9 @@ agent = Agent(
 )
 
 # Filtered to ReadFile, so the hook runs only when that tool is called.
-# agent.add_hook('tool_end', on_readfile, tool=['ReadFile'])
-# agent.add_hook('loop_start', on_start)
-# agent.add_hook('loop_end', code_reviewer)
-# agent.add_hook('loop_end', memory_adder)
+agent.add_hook('tool_end', on_readfile, tool=['ReadFile'])
+agent.add_hook('loop_start', on_start)
+agent.add_hook('loop_end', code_reviewer)
+agent.add_hook('loop_end', memory_adder)
 
-agent.run()
+agent.run(sink=LogSink('agent'))

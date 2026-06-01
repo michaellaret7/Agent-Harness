@@ -34,7 +34,7 @@ from typing import Any
 
 from langfuse import Langfuse, propagate_attributes
 
-from agent.sinks.protocol import BaseSink, ToolOutcome
+from agent.sinks.base import BaseSink, ToolOutcome
 
 log = logging.getLogger(__name__)
 

@@ -26,7 +26,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from agent.hooks import HookContext
-from agent.sinks.protocol import BaseSink, ToolOutcome
+from agent.sinks.base import BaseSink, ToolOutcome
 
 if TYPE_CHECKING:
     from agent.agent import Agent

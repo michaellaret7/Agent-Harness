@@ -33,7 +33,7 @@ import uuid
 from typing import TYPE_CHECKING, Callable, cast
 
 from agent.sinks.log import LogSink, configure_logging
-from agent.sinks.protocol import BaseSink, MultiSink, Sink, ToolOutcome
+from agent.sinks.base import BaseSink, MultiSink, Sink, ToolOutcome
 from agent.sinks.stdout import StdoutSink
 
 if TYPE_CHECKING:
