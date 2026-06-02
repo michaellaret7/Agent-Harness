@@ -9,6 +9,7 @@ from typing import Any, Callable, Iterable, cast
 
 from agent_harness.client import build_client
 from agent_harness.decorator import bind_tool
+from agent_harness.gates import Gate
 from agent_harness.hooks import Hook, HookEvent
 from agent_harness.loop import execution_loop
 from agent_harness.messages import system_msg, user_msg
@@ -39,8 +40,8 @@ class Agent:
         # Construction is inert: the client is built lazily on first run() so module-level `agent = Agent(...)` 
         # stays import-safe (no `.env` needed to construct).
         self.provider = provider
-        self.client = None
         self.model = model
+        self.client = None
         
         self.max_iters = max_iters
         self.task = task
@@ -56,6 +57,11 @@ class Agent:
 
         # Hook registry: event -> [(tool_filter, callback)]. Driven by HookSink.
         self.hooks: dict[str, list[tuple[frozenset[str] | None, Hook]]] = {}
+
+        # Gate registry: [(tool_filter, gate)]. A flat list, not keyed by event
+        # like hooks — gates fire at one point (before tool dispatch). Consulted
+        # by ToolHandler._dispatch, which consumes each verdict.
+        self.gates: list[tuple[frozenset[str] | None, Gate]] = []
 
         # Initialize Tool Handler
         self.tool_handler = ToolHandler(self)
@@ -176,6 +182,44 @@ class Agent:
                 )
 
         self.hooks.setdefault(event, []).append((names, fn))
+
+    def add_gate(
+        self,
+        fn: Gate,
+        *,
+        tool: str | Iterable[str] | None = None,
+    ) -> None:
+        """Register a gate consulted before a tool call is dispatched.
+
+        The gate receives a single `GateContext` and returns a `GateVerdict`
+        whose verdict is consumed: `allow` runs the call unchanged, `deny`
+        blocks it (the reason becomes the tool result), `rewrite` runs it
+        with substituted arguments. This is the interceptor counterpart to
+        `add_hook` — a hook observes, a gate decides.
+
+        Gates run synchronously in `ToolHandler._dispatch`, in registration
+        order, before the tool function. A `rewrite` is visible to every
+        later gate; a `deny` short-circuits the rest.
+
+        `tool` filters the gate to one or more tool names — pass a single
+        name or an iterable. `None` (the default) applies the gate to every
+        tool call.
+        """
+
+        names = frozenset([tool]) if isinstance(tool, str) else frozenset(tool) if tool is not None else None
+
+        # Fail fast if the tool gate tool is not registered in the agents tool registry
+        if names is not None:
+            unknown = names - self.tool_functions.keys()
+
+            if unknown:
+                raise ValueError(
+                    f'add_gate: no registered tool(s) named {sorted(unknown)}. '
+                    f'Available: {sorted(self.tool_functions)}'
+                )
+
+        # Add the name of the gate and the function object to the agents gates list
+        self.gates.append((names, fn))
 
     def build_initial_context(self) -> None:
         environment = (

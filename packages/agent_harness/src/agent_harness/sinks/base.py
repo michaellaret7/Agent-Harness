@@ -39,7 +39,7 @@ log = logging.getLogger(__name__)
 #     ================================
 
 
-ToolStatus = Literal['ok', 'error', 'interrupted']
+ToolStatus = Literal['ok', 'error', 'interrupted', 'denied']
 
 
 @dataclass(frozen=True)

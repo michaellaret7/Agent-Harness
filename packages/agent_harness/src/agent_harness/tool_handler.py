@@ -30,6 +30,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from agent_harness.gates import GateContext
 from agent_harness.messages import tool_msg
 from agent_harness.sinks.base import Sink, ToolOutcome, ToolStatus
 from agent_harness.base_tools.helpers.paths import resolve_path
@@ -209,10 +210,16 @@ class ToolHandler:
             # Load the arguments from the tool call dictionary into a smaller dict called kwargs
             kwargs = json.loads(args_json) if args_json else {}
         except (ValueError, TypeError) as e:
-            # Raise an error if the arguments are bad 
+            # Raise an error if the arguments are bad
             return f'error: bad arguments JSON: {e}', 'error'
 
-        # TODO: This is an issue here. This tool handling snippet is specific to tools from coding agent 
+        # Run the tool call thropugh the gate and return the kwargs and the verdict (allowed, denied, or rewrite)
+        kwargs, deny_reason = self._apply_gates(name, tool_call_id, kwargs)
+
+        if deny_reason is not None:
+            return f'denied: {deny_reason}', 'denied'
+
+        # TODO: This is an issue here. This tool handling snippet is specific to tools from coding agent
         # These need to be gotten rid of and handled at the tool level
         target: Path | None = None
 
@@ -251,6 +258,50 @@ class ToolHandler:
         # Return the safe parallel flag from the tool function dictionary
         # This will determine if the tool can be run in the ThreadPoolExecutor or not 
         return getattr(fn, 'tool', {}).get('safe_parallel', False)
+
+    def _apply_gates(
+        self,
+        name: str,
+        tool_call_id: str,
+        kwargs: dict,
+    ) -> tuple[dict, str | None]:
+        """
+        Run this one tool call past every registered gate, in order.
+
+        Called once per dispatch for a single tool call (`name`). Each gate
+        decides whether it applies (via its tool filter) and, if so, returns
+        a verdict. Returns `(resolved_kwargs, deny_reason)`: a non-None
+        `deny_reason` means a gate blocked the call and dispatch must stop.
+        A rewrite is visible to every later gate; the first deny wins.
+        """
+
+        # self.agent.gates holds one (tool_filter, gate_fn) tuple per registered
+        # gate. Walk them all; `tool_filter` is the set of tool names a gate
+        # guards (None = every tool), and `name` is the tool this call invokes.
+        for tool_filter, gate in self.agent.gates:
+            # Skip gates whose filter doesn't cover this tool (None = all tools).
+            if tool_filter is not None and name not in tool_filter:
+                continue
+
+            # Present this call to the gate and consume its verdict.
+            ctx = GateContext(
+                name,
+                tool_call_id,
+                kwargs,
+                self.agent,
+            )
+            verdict = gate(ctx)
+
+            if verdict.decision == 'deny':
+                return kwargs, verdict.reason
+
+            # A rewrite carries replacement args (guaranteed by the factory);
+            # apply them so later gates and _invoke see the new values.
+            if verdict.decision == 'rewrite' and verdict.args is not None:
+                kwargs = verdict.args
+
+        # If no gate applied, just pass the kwargs through to the invoke method
+        return kwargs, None
 
     def _invoke(self, name: str, kwargs: dict) -> str:
         """Look up the registered function and run it with exception wrapping."""
