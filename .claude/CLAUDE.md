@@ -4,17 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-Dependencies live in the `agent` group, not the default group. Use `uv sync --group agent` to install — a plain `uv sync` will leave `openai`, `httpx`, and `pydantic` missing.
+This repo is a **uv workspace** of three packages (see Architecture). Install the whole workspace into one shared venv with `uv sync --all-packages` — a plain `uv sync` only syncs the virtual root (which depends on nothing) and leaves the members uninstalled.
 
 Entry points:
 - `uv run python -m coding` — the coding-domain agent (bash, read/write/edit, glob/grep/tree + base web tools).
-- `uv run python -m agent` — the bare base agent with no domain tools. Used as a dev sanity check that the streaming loop and TUI work end-to-end without any coding tools attached.
+- `uv run python -m agent_harness` — the bare base agent with no domain tools. Used as a dev sanity check that the streaming loop and TUI work end-to-end without any coding tools attached.
 
 Both launch the TUI (`tui/app.py`). To use the agent programmatically, import `Agent` and call `agent.run(task, sink=..., cancel_event=...)`. The task can also be set at init via `Agent(task=...)` and `run()` called with no arg — useful for batch pipelines. If `sink` is None, output goes to stdout via `StdoutSink`.
 
 Pinned to Python 3.12 (`<3.13`) via `pyproject.toml` and `.python-version`. uv will refuse to sync on a 3.13 interpreter.
 
-There is no test suite, linter, or build step configured.
+There is no test suite or linter configured. The two library packages build as wheels via hatchling (`uv build packages/agent_harness`); `coding` is a non-package (`package = false`) consumer that runs in place.
 
 ## Response Type 
 - Please be clear, concise, and to the point in your responses and do your best to avoid unecessary verbosity
@@ -24,37 +24,39 @@ There is no test suite, linter, or build step configured.
 
 ## Architecture
 
-### Top-level package layout
+### Workspace layout
 
-Three top-level packages live at the project root:
+The repo is a **uv workspace** with a virtual root (`pyproject.toml` at the repo root holds only `[tool.uv.workspace]`, `package = false`). Three members:
 
-- `agent/` — the base `Agent` class, streaming loop, ToolHandler, sinks, base skills, and base tools (`agent/base_tools/`: WebSearch, WebExtract, Plan, Skill, LoadTool, ReadFile; `agent/base_tools/helpers/` for path normalization). Domain-agnostic. Treat it as the shared, domain-agnostic package: no domain logic leaks in, and the dependency direction is one-way (domains → `agent`, never the reverse). It **reads** configuration (`os.getenv`) but never **loads** it — applications (the entry points) own bootstrap, including `load_dotenv()`. This is a discipline for clean boundaries, not a roadmap to a separately-versioned published library (the "No backwards-compatibility shims / update every caller" rule below assumes you own every caller, i.e. a monorepo package).
-- `tui/` — prompt_toolkit + Rich frontend. Generic — no domain knowledge.
-- `coding/` — the coding **domain**. Owns coding-specific tools (`coding/tools/`), system prompt (`coding/prompt.md`), memory (`coding/memory.md`), skills (`coding/skills/`), and the user-facing entry point (`coding/__main__.py`).
+- `packages/agent_harness/` — the `agent-harness` distributable (import `agent_harness`). The base `Agent` class, streaming loop, ToolHandler, sinks, base skills, and base tools (`agent_harness/base_tools/`: WebSearch, WebExtract, Plan, Skill, LoadTool, ReadFile; `agent_harness/base_tools/helpers/` for path normalization). Domain-agnostic. Treat it as the shared package: no domain logic leaks in, and the dependency direction is one-way (frontend/domains → `agent_harness`, never the reverse). It **reads** configuration (`os.getenv`) but never **loads** it — applications (the entry points) own bootstrap, including `load_dotenv()`. Core deps are `openai`/`httpx`/`pydantic`/`langfuse` — the LangfuseSink ships with the engine and auto-registers when `LANGFUSE_PUBLIC_KEY` is present (its import in `sinks/__init__.py` is lazy, gated on that env var, so the package is pulled but only loaded when tracing is on). Built with hatchling under `src/` layout.
+- `packages/tui/` — the `tui` distributable (import `tui`). prompt_toolkit + Rich frontend; depends on `agent-harness`. Generic — no domain knowledge. `prompt_toolkit`/`rich` live here, not in the engine, so headless consumers of `agent_harness` never pull terminal-UI deps.
+- `coding/` — the coding **domain** and in-repo consumer (`package = false`, runs in place; consumes both libraries). Owns coding-specific tools (`coding/tools/`), system prompt (`coding/system_prompt.md`), memory (`coding/memory.md`), skills (`coding/skills/`), and the user-facing entry point (`coding/__main__.py`).
+
+**On distribution & backwards-compat:** the two library packages are meant to be consumed by domains in *other* repos (via Git dependency, e.g. `agent-harness @ git+…#subdirectory=packages/agent_harness`). Because external systems pin a version, `agent_harness`'s public API warrants SemVer discipline — the "No backwards-compatibility shims / update every caller" Hard Rule below applies cleanly *within* this workspace, but a breaking change to the engine's public surface is a real major-version event for outside consumers.
 
 Domains assemble an Agent by passing constructor args: `system`, `tools`, `domain_root` (and optionally `task` for batch / one-shot use). The base ships generic methodology only — no skills (it has no write/edit/bash tools, so a skill like `skill_builder` belongs in a domain that can execute it, e.g. `coding/skills/`). The domain appends a `<role>` block via `system=`, registers its tools, and points `domain_root=` at its package directory — Agent then loads `<root>/skills/` (auto-creating the dir if missing) and `<root>/memory.md` (optional) by convention. No subclassing — just composition through `Agent(...)`.
 
 ### TUI
 
-`tui/` is the prompt_toolkit + Rich frontend. Architecture:
-- `tui/cells.py` — Cell taxonomy (User/Assistant/Tool/Error). Each cell renders to ANSI via Rich and caches the result on `cell.ansi`.
+`packages/tui/` is the prompt_toolkit + Rich frontend (import `tui`). Architecture:
+- `tui/cells/` — Cell taxonomy (User/Assistant/Tool/Error). Each cell renders to ANSI via Rich and caches the result on `cell.ansi`.
 - `tui/history.py` — Lock-protected list of cells. Mutated by Sink (worker thread); read by renderer (UI thread).
-- `tui/sink.py` — `Sink` Protocol with 8 methods (`on_user_message`, `on_reasoning_delta`, `on_content_delta`, `on_assistant_end`, `on_tool_start`, `on_tool_end`, `on_error`, `on_interrupted`). Two implementations: `TUISink` (mutates History + invalidates app), `StdoutSink` (legacy fallback).
-- `tui/panels.py` — `OutputPanel` (FormattedTextControl + ANSI), `InputPanel` (TextArea, multi-line, Shift+Enter newline), `StatusBar`.
+- `tui/sink.py` — `TUISink`, one implementation of the engine's `Sink` Protocol (`on_user_message`, `on_reasoning_delta`, `on_content_delta`, `on_assistant_end`, `on_tool_start`, `on_tool_end`, `on_error`, `on_interrupted`) that mutates History + invalidates the app. The Protocol itself and the headless `StdoutSink` live in `agent_harness/sinks/`.
+- `tui/panels/` — `OutputPanel` (FormattedTextControl + ANSI), `InputPanel` (TextArea, multi-line, Shift+Enter newline), `StatusBar`.
 - `tui/app.py` — `TUIApp` class. Async shell, sync loop. On Enter, `agent.run(prompt, sink, cancel_event)` runs in a worker via `asyncio.to_thread`. Esc sets `cancel_event` AND closes the in-flight stream. Ctrl+C double-tap exits.
 
 **Transparent background is a hard constraint** — Rich and prompt_toolkit are configured to never set a background color, so the terminal's native theme shows through.
 
 ### Provider abstraction
 
-Both providers (`vllm`, `openrouter`) talk through the **OpenAI Python SDK**. `agent/client.py` is the single place that knows about provider differences:
+Both providers (`vllm`, `openrouter`) talk through the **OpenAI Python SDK**. `agent_harness/client.py` is the single place that knows about provider differences:
 
 - `vllm` uses a placeholder API key (the hosted endpoint is unauthenticated) and pulls `VLLM_API_URL` / `VLLM_MODEL` from env.
 - `openrouter` requires `OPENROUTER_API_KEY` and a `model` argument (any model string from openrouter.ai/models); `OPENROUTER_API_URL` is optional.
 
 Note: the `Agent` class default is `provider='vllm'`, but `coding/__main__.py` (the user entry point) overrides it to `provider='openrouter', model='anthropic/claude-opus-4.7'`. Changing the default behavior of `python -m coding` means editing that file, not the class default.
 
-### The streaming loop (`agent/loop.py`)
+### The streaming loop (`agent_harness/loop.py`)
 
 This is the load-bearing file. Two non-obvious invariants:
 
@@ -70,7 +72,7 @@ The loop bails at `max_iters` (default 100) to prevent runaway tool-call cycles.
 
 ### Tool schema
 
-A tool module exports a `tool` dict with exactly four keys: `name`, `description`, `parameters` (JSON Schema), `function` (callable). Register via `agent.add_tool(module.tool)`. Functions decorated with `@agent_tool` (see `agent/decorator.py`) carry the dict on their `.tool` attribute; pass the function itself: `agent.add_tool(my_fn)`. `add_tool` is idempotent by name — re-registering is a silent no-op, not an error.
+A tool module exports a `tool` dict with exactly four keys: `name`, `description`, `parameters` (JSON Schema), `function` (callable). Register via `agent.add_tool(module.tool)`. Functions decorated with `@agent_tool` (see `agent_harness/decorator.py`) carry the dict on their `.tool` attribute; pass the function itself: `agent.add_tool(my_fn)`. `add_tool` is idempotent by name — re-registering is a silent no-op, not an error.
 
 ### Bash tool platform handling
 
@@ -81,7 +83,7 @@ A tool module exports a `tool` dict with exactly four keys: `name`, `description
 `.env` is required. `.env.example` lists both provider blocks (`OPENROUTER_*`, `VLLM_*`). Only the credentials for the provider you actually use need real values.
 
 System prompts live in two places:
-- `agent/context/system_prompt.md` — the always-loaded base methodology (Tools, Skills, Planning + generic constraints). Domain-agnostic.
+- `agent_harness/context/system_prompt.md` — the always-loaded base methodology (Tools, Skills, Planning + generic constraints). Domain-agnostic.
 - `<domain>/prompt.md` — appended to the base by `Agent.__init__` when the caller passes `prompt=...`. Holds the `<role>` and any domain-specific constraints. The caller reads this and passes the string; the framework doesn't auto-discover it (unlike skills/ and memory.md).
 
 Per-domain memory lives at `<domain>/memory.md` and is loaded automatically when the caller passes `domain_root=...` (missing file → empty memory, not an error). The base agent has no memory file of its own. Everything is read at `Agent.__init__` — there is no runtime reload.

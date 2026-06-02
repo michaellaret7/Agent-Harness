@@ -17,6 +17,12 @@
 
 A minimal agent loop wrapped in a full-screen terminal UI. It streams tokens from a chat-completions endpoint, parses tool calls, executes them, and feeds the results back — until the model stops asking for tools and returns a final answer.
 
+The repo is a **uv workspace** of three packages:
+
+- `agent-harness` (`agent_harness`) — the domain-agnostic engine: agent loop, tools, sinks, hooks. The distributable other repos pull.
+- `tui` — the prompt_toolkit + Rich terminal frontend; depends on `agent-harness`.
+- `coding` — the coding domain (tools, skills, entry point); consumes both. The in-repo reference domain.
+
 The client supports two backends:
 
 - A hosted vLLM endpoint (e.g. RunPod proxy) — original target was NVIDIA Nemotron on vLLM.
@@ -32,7 +38,7 @@ The client supports two backends:
 - **Built-in tools** — bash, read/write/edit, glob, grep, tree, plus base web search/extract.
 - **Skills & deferred tools** — Markdown-defined skills and lazily-loaded tools, discovered by convention from each domain.
 - **Lifecycle hooks** — register callbacks on turn/loop/tool events for side effects (logging, metrics).
-- **Optional Langfuse tracing** — set `LANGFUSE_PUBLIC_KEY` and LLM generations are auto-captured per turn.
+- **Built-in Langfuse tracing** — the LangfuseSink ships with the engine; set `LANGFUSE_PUBLIC_KEY` and LLM generations are auto-captured per turn (unset it and the framework is silent).
 
 ## Requirements
 
@@ -43,8 +49,8 @@ The client supports two backends:
 ## Setup
 
 ```bash
-# 1. Install dependencies (note the --group flag — a plain `uv sync` leaves agent deps missing)
-uv sync --group agent
+# 1. Install the whole workspace (engine + tui + coding) into one shared venv
+uv sync --all-packages
 
 # 2. Configure provider credentials
 cp .env.example .env
@@ -60,11 +66,11 @@ uv run python -m coding
 This launches the TUI with the coding-domain agent (bash, write, edit, glob, grep, tree + base read/web tools). Type a prompt and press `Enter` to submit. Try:
 
 ```
-what's 2 ** 16 plus the number of files in agent/base_tools?
-read agent/loop.py and explain how tool calls are reassembled across stream chunks
+what's 2 ** 16 plus the number of files in packages/agent_harness/src/agent_harness/base_tools?
+read packages/agent_harness/src/agent_harness/loop.py and explain how tool calls are reassembled across stream chunks
 ```
 
-`uv run python -m agent` is also available — it runs the bare base agent (no domain tools attached), useful as a dev sanity check for the streaming loop and base-tool registration.
+`uv run python -m agent_harness` is also available — it runs the bare base agent (no domain tools attached), useful as a dev sanity check for the streaming loop and base-tool registration.
 
 ### Key bindings
 
@@ -83,7 +89,7 @@ read agent/loop.py and explain how tool calls are reassembled across stream chun
 
 ## Configuring the endpoint
 
-`agent/client.py` builds the OpenAI-compatible client. Two modes:
+`agent_harness/client.py` builds the OpenAI-compatible client. Two modes:
 
 **OpenRouter** — `Agent(provider='openrouter', model='...')`. The client reads `OPENROUTER_API_KEY` and optionally `OPENROUTER_API_URL`. OpenRouter exposes every supported model (OpenAI, Anthropic, Google, Meta, etc.) through a single OpenAI-compatible endpoint — pick whatever `model` string you want from openrouter.ai/models.
 
@@ -94,44 +100,61 @@ The `Agent` class default is `provider='vllm'`, but the user entry point `coding
 ## Project layout
 
 ```
-local-agent/
-├── agent/
-│   ├── __main__.py         # bare-base dev entry point (uv run python -m agent)
-│   ├── agent.py            # Agent class — message history, tool registry, context wiring
-│   ├── client.py           # OpenAI-compatible client builder (vllm / openrouter)
-│   ├── loop.py             # streaming execution loop, tool-call reassembly
-│   ├── tool_handler.py     # tool dispatch (execution only)
-│   ├── decorator.py        # @agent_tool decorator + bind_tool
-│   ├── hooks.py            # lifecycle hook types
-│   ├── messages.py         # message constructors
-│   ├── skills.py           # skill loading + listing
-│   ├── usage.py            # token usage tracking
-│   ├── base_tools/         # base tools — search, extract, read, plan, skill, load_tool
-│   │   └── helpers/        # path normalization
-│   ├── context/
-│   │   └── system_prompt.md   # always-loaded methodology (base)
-│   └── sinks/              # output sinks — base, stdout, log, langfuse, hooks
-├── tui/                    # prompt_toolkit + Rich frontend (generic)
-│   ├── app.py
-│   ├── cells/              # cell taxonomy (user/assistant/tool/error/diff/header)
-│   ├── panels/             # output/input/status panels
-│   ├── history.py
-│   ├── keybindings.py
-│   ├── sprites.py
-│   └── sink.py
-├── coding/                 # the coding DOMAIN
-│   ├── __main__.py         # user entry point (uv run python -m coding)
-│   ├── tools/              # bash, write, edit, glob, grep, tree
-│   ├── system_prompt.md    # <role> + coding-specific constraints (appended to base)
-│   └── skills/             # coding-domain skills — auto-loaded via domain_root
-└── pyproject.toml
+coding_agent/                        # uv workspace root (virtual — no built package)
+├── pyproject.toml                   # [tool.uv.workspace] members
+├── packages/
+│   ├── agent_harness/               # ENGINE — distributable (agent-harness)
+│   │   ├── pyproject.toml
+│   │   └── src/agent_harness/
+│   │       ├── __main__.py          # bare-base dev entry point (uv run python -m agent_harness)
+│   │       ├── agent.py             # Agent class — message history, tool registry, context wiring
+│   │       ├── client.py            # OpenAI-compatible client builder (vllm / openrouter)
+│   │       ├── loop.py              # streaming execution loop, tool-call reassembly
+│   │       ├── tool_handler.py      # tool dispatch (execution only)
+│   │       ├── decorator.py         # @agent_tool decorator + bind_tool
+│   │       ├── hooks.py             # lifecycle hook types
+│   │       ├── messages.py          # message constructors
+│   │       ├── skills.py            # skill loading + listing
+│   │       ├── usage.py             # token usage tracking
+│   │       ├── base_tools/          # base tools — search, extract, read, plan, skill, load_tool
+│   │       │   └── helpers/         # path normalization
+│   │       ├── context/
+│   │       │   └── system_prompt.md # always-loaded methodology (base)
+│   │       └── sinks/               # output sinks — base, stdout, log, langfuse, hooks
+│   └── tui/                         # FRONTEND — distributable (tui)
+│       ├── pyproject.toml
+│       └── src/tui/
+│           ├── app.py
+│           ├── cells/               # cell taxonomy (user/assistant/tool/error/diff/header)
+│           ├── panels/              # output/input/status panels
+│           ├── history.py
+│           ├── keybindings.py
+│           ├── sprites.py
+│           └── sink.py
+└── coding/                          # the coding DOMAIN (consumer; package=false)
+    ├── pyproject.toml
+    ├── __main__.py                  # user entry point (uv run python -m coding)
+    ├── tools/                       # bash, write, edit, glob, grep, tree
+    ├── system_prompt.md             # <role> + coding-specific constraints (appended to base)
+    └── skills/                      # coding-domain skills — auto-loaded via domain_root
 ```
 
-The base (`agent/`, `tui/`) is domain-agnostic. Domains assemble an Agent by passing constructor args (`system`, `tools`, `domain_root`); the framework discovers `<domain_root>/skills/` by convention and appends the domain's `system` string under a `<domain>` block. No subclassing needed. The base ships no skills of its own — skills like `skill_builder` live in a domain that has the tools to execute them (e.g. `coding/skills/`).
+The base (`agent_harness`, `tui`) is domain-agnostic. Domains assemble an Agent by passing constructor args (`system`, `tools`, `domain_root`); the framework discovers `<domain_root>/skills/` by convention and appends the domain's `system` string under a `<domain>` block. No subclassing needed. The base ships no skills of its own — skills like `skill_builder` live in a domain that has the tools to execute them (e.g. `coding/skills/`).
+
+### Consuming the engine from another repo
+
+The two libraries build as standalone wheels, so external systems pull them as Git dependencies — headless workers take just the engine, interactive apps add the TUI:
+
+```toml
+# engine only (no TUI deps):
+"agent-harness @ git+https://your-host/coding_agent.git#subdirectory=packages/agent_harness"
+# with the terminal frontend:
+"tui @ git+https://your-host/coding_agent.git#subdirectory=packages/tui"
+```
 
 ## How the loop works
 
-`agent/loop.py` is the load-bearing file. The model's response can interleave plain text, reasoning, and tool-call fragments — the latter arrive in pieces keyed by `index`, with the function name on the first fragment and arguments dribbling in across many subsequent chunks. The loop:
+`agent_harness/loop.py` is the load-bearing file. The model's response can interleave plain text, reasoning, and tool-call fragments — the latter arrive in pieces keyed by `index`, with the function name on the first fragment and arguments dribbling in across many subsequent chunks. The loop:
 
 1. Streams a completion, surfacing content and reasoning to the Sink as deltas.
 2. Reassembles fragmented `tool_calls` into complete dicts (index-keyed merge — concatenating in arrival order would corrupt parallel tool calls).
@@ -146,18 +169,18 @@ Reasoning content is surfaced live but **deliberately not appended to history**,
 To drive the agent from a script instead of the TUI, import `Agent` directly and pass a `Sink`:
 
 ```python
-from agent.agent import Agent
-from agent.sinks import StdoutSink
+from agent_harness.agent import Agent
+from agent_harness.sinks import StdoutSink
 
 agent = Agent(provider='openrouter', model='anthropic/claude-opus-4.8')
-agent.run('summarize agent/loop.py', sink=StdoutSink())
+agent.run('summarize agent_harness/loop.py', sink=StdoutSink())
 ```
 
 If `sink` is `None`, output goes to stdout via `StdoutSink`. An optional `cancel_event: threading.Event` lets you abort an in-flight turn. The task can also be set at init via `Agent(task=...)` and `run()` called with no argument — handy for batch pipelines.
 
 ## Adding a tool
 
-A tool is just a dict with four keys: `name`, `description`, `parameters` (JSON Schema), `function` (callable). Put base tools in `agent/base_tools/`; put domain tools in `<domain>/tools/`:
+A tool is just a dict with four keys: `name`, `description`, `parameters` (JSON Schema), `function` (callable). Put base tools in `agent_harness/base_tools/`; put domain tools in `<domain>/tools/`:
 
 ```python
 # coding/tools/echo.py
@@ -181,7 +204,7 @@ tool = {
 Then pass it to the Agent at construction (preferred) or register it after:
 
 ```python
-from agent.agent import Agent
+from agent_harness.agent import Agent
 from coding.tools import echo
 
 agent = Agent(tools=[echo.tool])

@@ -12,21 +12,21 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dotenv import load_dotenv
 
-from agent.agent import Agent
+from agent_harness.agent import Agent
 from coding.tools.bash import bash
 from coding.tools.edit import edit
 from coding.tools.glob import glob
 from coding.tools.grep import grep
-from agent.base_tools.read import read
+from agent_harness.base_tools.read import read
 from coding.tools.tree import tree
 from coding.tools.write import write
 from tui.app import TUIApp
-from agent.sinks import StdoutSink
+from agent_harness.sinks import StdoutSink
 
 
 def main() -> None:
     # Application owns config bootstrap: load .env before constructing the
-    # Agent so `agent/` (which only reads the environment) sees credentials.
+    # Agent so `agent_harness/` (which only reads the environment) sees credentials.
     load_dotenv()
 
     agent = Agent(

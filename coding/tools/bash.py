@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 from typing import Annotated
 
-from agent.decorator import Param, agent_tool
+from agent_harness.decorator import Param, agent_tool
 
 MAX_CHARS = 16000
 DEFAULT_TIMEOUT = 120

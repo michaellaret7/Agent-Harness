@@ -1,0 +1,20 @@
+[project]
+name = "tui"
+version = "0.1.0"
+description = "prompt_toolkit + Rich terminal frontend for agent-harness."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "agent-harness",
+    "prompt_toolkit>=3.0.50",
+    "rich>=13.7",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv.sources]
+agent-harness = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tui"]

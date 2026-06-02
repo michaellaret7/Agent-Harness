@@ -2,17 +2,17 @@ import json
 import threading
 from pathlib import Path
 
-from agent.agent import Agent
-from agent.hooks import HookContext
-from agent.messages import system_msg
-from agent.sinks import StdoutSink
+from agent_harness.agent import Agent
+from agent_harness.hooks import HookContext
+from agent_harness.messages import system_msg
+from agent_harness.sinks import StdoutSink
 from coding.tools.bash import bash
 from coding.tools.edit import edit
 from coding.tools.glob import glob
 from coding.tools.grep import grep
 from coding.tools.tree import tree
 from coding.tools.write import write
-from agent.sinks import LogSink
+from agent_harness.sinks import LogSink
 from dotenv import load_dotenv
 
 load_dotenv()

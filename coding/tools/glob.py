@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated
 
-from agent.decorator import Param, agent_tool
+from agent_harness.decorator import Param, agent_tool
 from coding.tools.helpers.paths import resolve_path
 
 MAX_RESULTS = 200
