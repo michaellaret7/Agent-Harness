@@ -72,6 +72,7 @@ class HookSink(BaseSink):
         tool_call_id: str | None = None,
         args: dict | None = None,
         outcome: ToolOutcome | None = None,
+        detail: dict | None = None,
     ) -> None:
         """Build the context and run every hook registered for this event."""
 
@@ -81,14 +82,15 @@ class HookSink(BaseSink):
         if not hooks:
             return
 
-        # Pass the agent class object to the Hook Context data class 
+        # Pass the agent class object to the Hook Context data class
         ctx = HookContext(
-            event, 
-            self.agent, 
-            tool_name, 
-            tool_call_id, 
-            args, 
-            outcome
+            event,
+            self.agent,
+            tool_name,
+            tool_call_id,
+            args,
+            outcome,
+            detail,
         )
 
         # Iterate through the hooks and run the hook functions
@@ -125,7 +127,12 @@ class HookSink(BaseSink):
         self._fire('iteration_start')
 
     def on_iteration_end(self, number: int, action: str, content: str, tools_called: list[str]) -> None:
-        self._fire('iteration_end')
+        self._fire('iteration_end', detail={
+            'number': number,
+            'action': action,
+            'content': content,
+            'tools_called': tools_called,
+        })
 
     #     ---- Tool events ----
 

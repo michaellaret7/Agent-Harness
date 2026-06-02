@@ -104,6 +104,13 @@ def memory_adder(ctx: HookContext) -> None:
     threading.Thread(target=_curate, daemon=False).start()
 
 
+def on_iteration_end(ctx: HookContext) -> None:
+    print(f'[hook] iteration end: {ctx.detail}')
+
+    print('number: ', ctx.detail.get('number'))
+    print('action: ', ctx.detail.get('action'))
+    print('content: ', ctx.detail.get('content'))
+    print('tools_called: ', ctx.detail.get('tools_called'))
 
 agent = Agent(
     provider='openrouter',
@@ -112,10 +119,12 @@ agent = Agent(
     task="Read the file t.py and the .gitignore IN PARALLEL and give me a one-sentence summary of what it does.",
 )
 
-# Filtered to ReadFile, so the hook runs only when that tool is called.
-agent.add_hook('tool_end', on_readfile, tool=['ReadFile'])
-agent.add_hook('loop_start', on_start)
-agent.add_hook('loop_end', code_reviewer)
-agent.add_hook('loop_end', memory_adder)
+agent.add_hook('iteration_end', on_iteration_end)
 
-agent.run(sink=LogSink('agent'))
+# Filtered to ReadFile, so the hook runs only when that tool is called.
+# agent.add_hook('tool_end', on_readfile, tool=['ReadFile'])
+# agent.add_hook('loop_start', on_start)
+# agent.add_hook('loop_end', code_reviewer)
+# agent.add_hook('loop_end', memory_adder)
+
+agent.run()

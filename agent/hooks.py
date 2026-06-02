@@ -59,6 +59,10 @@ class HookContext:
     tool_call_id: str | None = None
     args: dict | None = None
     outcome: 'ToolOutcome | None' = None
+    # Event-specific payload the live agent can't supply (e.g. an iteration's
+    # action/content/tools_called, which aren't yet in agent.messages when the
+    # event fires). None on events that carry nothing extra.
+    detail: dict | None = None
 
 
 Hook = Callable[[HookContext], None]
