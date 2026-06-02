@@ -121,7 +121,7 @@ class HookSink(BaseSink):
         self._fire('loop_start')
 
     def on_loop_end(self, stop_reason: str, iterations: int) -> None:
-        self._fire('loop_end')
+        self._fire('loop_end', detail={'stop_reason': stop_reason})
 
     def on_iteration_start(self, number: int, message_count: int) -> None:
         self._fire('iteration_start')
