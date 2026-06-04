@@ -10,8 +10,8 @@ from coding.tools.helpers.paths import resolve_path
 @agent_tool(name='EditFile')
 def edit(
     file_path: Annotated[str, Param(description='Absolute or relative path to the file.')],
-    old_strings: Annotated[list[str], Param(description='List of exact strings to find and replace.')],
-    new_strings: Annotated[list[str], Param(description='List of replacement strings, one per old_strings entry.')],
+    old_strings: Annotated[list[str], Param(description='A JSON array of exact strings to find. Must be a list even for a single edit — wrap one string as ["..."], do not pass a bare string. Must have the same number of items as new_strings.')],
+    new_strings: Annotated[list[str], Param(description='A JSON array of replacement strings, paired by index with old_strings (new_strings[i] replaces old_strings[i]). Must be a list even for a single edit — wrap one string as ["..."]. Must have the same number of items as old_strings.')],
     replace_all: Annotated[bool, Param(description='For each pair, replace every occurrence instead of requiring uniqueness. Default false.')] = False,
 ) -> str:
     """
@@ -25,13 +25,31 @@ def edit(
     if not target.is_file():
         return f'error: not a file: {file_path!r}'
 
+    # Guard against the common mistake of passing a bare string instead of a
+    # list. We reject rather than coerce: coercing a mismatched pair (e.g. a
+    # list old_strings with a bare-string new_strings) could silently apply a
+    # wrong edit to the file. A loud error is cheap; a corrupted file is not.
+    bad = [
+        name
+        for name, val in (('old_strings', old_strings), ('new_strings', new_strings))
+        if isinstance(val, str)
+    ]
+    if bad:
+        return (
+            f'error: {" and ".join(bad)} must be a JSON array of strings, not a bare '
+            'string. Wrap a single edit as ["..."]. old_strings and new_strings must '
+            'be lists of equal length, paired by index.'
+        )
+
     if not old_strings:
         return 'error: old_strings must not be empty'
 
     if len(old_strings) != len(new_strings):
         return (
-            f'error: old_strings ({len(old_strings)}) and '
-            f'new_strings ({len(new_strings)}) must have the same length'
+            f'error: old_strings and new_strings must have the same number of '
+            f'items (got {len(old_strings)} and {len(new_strings)}). Each must be a '
+            f'JSON array; wrap a single edit as ["..."]. Note: if you passed bare '
+            f'strings, these counts are character lengths, not item counts.'
         )
 
     text = target.read_text(encoding='utf-8')

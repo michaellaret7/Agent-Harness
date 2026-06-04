@@ -323,34 +323,6 @@ class History:
 
         self._bump_version()
 
-    def append_file_diff(self, tool_call_id: str, path: str, before: str, after: str) -> None:
-        """Attach a file diff to its originating ToolCell (no new cell created)."""
-        cell = self._tool_index.get(tool_call_id)
-
-        if cell is None:
-            return
-
-        with cell.render_lock:
-            cell.diff_path = path
-            cell.diff_before = before
-            cell.diff_after = after
-            self._render(cell)
-
-        self._bump_version()
-
-    def toggle_tool_diff_expand(self, tool_call_id: str) -> None:
-        """Flip the diff-expand state of one ToolCell."""
-        cell = self._tool_index.get(tool_call_id)
-
-        if cell is None or not cell.has_diff():
-            return
-
-        with cell.render_lock:
-            cell.diff_expanded = not cell.diff_expanded
-            self._render(cell)
-
-        self._bump_version()
-
     def toggle_assistant_reasoning(self, cell_id: str) -> None:
         """Flip the reasoning-collapse state of one AssistantCell."""
         with self._lock:

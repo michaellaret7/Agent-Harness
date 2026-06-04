@@ -1,13 +1,11 @@
 """StdoutSink — headless Sink implementation.
 
 Used when no TUI is running (tests, scripts, pipelines). Renders the
-assistant's reasoning/content stream, tool calls, file diffs, and errors
-to stdout with ANSI styling, grouping starts/ends of consecutive tool
-blocks into paired clusters for readability.
+assistant's reasoning/content stream, tool calls, and errors to stdout
+with ANSI styling, grouping starts/ends of consecutive tool blocks into
+paired clusters for readability.
 """
 from __future__ import annotations
-
-import difflib
 
 from agent_harness.sinks.helpers import format_args_inline, format_tool_summary
 from agent_harness.sinks.base import BaseSink, ToolOutcome
@@ -23,7 +21,6 @@ _CYAN = '\033[36m'
 _YELLOW = '\033[33m'
 _BOLD = '\033[1m'
 _RED = '\033[31m'
-_GREEN = '\033[32m'
 _RESET = '\033[0m'
 
 
@@ -99,24 +96,6 @@ class StdoutSink(BaseSink):
         summary = format_tool_summary(outcome)
         print(f'  {_YELLOW}->{_RESET} {summary}')
         self._tool_phase = 'ends'
-
-    def on_file_diff(self, tool_call_id: str, path: str, before: str, after: str) -> None:
-        lines = difflib.unified_diff(
-            before.splitlines(keepends=True),
-            after.splitlines(keepends=True),
-            fromfile=path,
-            tofile=path,
-        )
-
-        for line in lines:
-            if line.startswith('+') and not line.startswith('+++'):
-                print(f'{_GREEN}{line}{_RESET}', end='')
-
-            elif line.startswith('-') and not line.startswith('---'):
-                print(f'{_RED}{line}{_RESET}', end='')
-
-            else:
-                print(line, end='')
 
     def on_plan_update(self, plan: list[dict]) -> None:
         completed = sum(1 for i in plan if i.get('status') == 'completed')

@@ -1,8 +1,8 @@
-"""ToolCell — header + args row + inline diff + collapsible result body.
+"""ToolCell — header + args row + collapsible result body.
 
 The tool-status taxonomy (running/ok/error), the args-row formatting, and
 the result-summary tail all live here because they're only ever consumed
-by this cell. The actual diff rendering lives in cells/diff.py.
+by this cell.
 """
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ from rich.console import Group, RenderableType
 from rich.text import Text
 
 from tui.cells.base import Cell, render_to_ansi
-from tui.cells.diff import DIFF_INDENT, compute_diff_rows, render_diff_panel
 
 #     ================================
 # --> Helper funcs and constants
@@ -138,17 +137,7 @@ class ToolCell(Cell):
     expanded: bool = False
     started_at: float | None = None
     ended_at: float | None = None
-    # Diff attachment — populated by ToolHandler for file mutators. When set,
-    # a `▸ diff` sub-arrow appears under the args row. Default collapsed; the
-    # user expands it explicitly.
-    diff_path: str | None = None
-    diff_before: str | None = None
-    diff_after: str | None = None
-    diff_expanded: bool = False
     ansi: str = field(default='', init=False)
-
-    def has_diff(self) -> bool:
-        return self.diff_before is not None and self.diff_after is not None
 
     def render(self, width: int) -> None:
         color = STATUS_COLOR[self.status]
@@ -179,31 +168,6 @@ class ToolCell(Cell):
                 style='dim',
             )
             parts.append(sub)
-
-        if self.has_diff():
-            diff_arrow = '▾' if self.diff_expanded else '▸'
-
-            _, adds, dels = compute_diff_rows(self.diff_before or '', self.diff_after or '')
-
-            diff_header = Text()
-            diff_header.append('  ', style='dim')
-            diff_header.append(f'{diff_arrow} ', style='cyan')
-            diff_header.append('diff', style='cyan')
-            diff_header.append('   ')
-            diff_header.append(f'+{adds}', style='green')
-            diff_header.append(' ', style='dim')
-            diff_header.append(f'-{dels}', style='red')
-
-            parts.append(diff_header)
-
-            if self.diff_expanded:
-                content_width = max(20, width - DIFF_INDENT)
-                parts.append(render_diff_panel(
-                    self.diff_path or '',
-                    self.diff_before or '',
-                    self.diff_after or '',
-                    content_width,
-                ))
 
         if self.expanded and self.result is not None:
             indented = '\n'.join(

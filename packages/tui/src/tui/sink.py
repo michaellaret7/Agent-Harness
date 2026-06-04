@@ -76,10 +76,6 @@ class TUISink(BaseSink):
         self.history.update_tool_result(tool_call_id, outcome.payload, outcome.status)
         self._invalidate()
 
-    def on_file_diff(self, tool_call_id: str, path: str, before: str, after: str) -> None:
-        self.history.append_file_diff(tool_call_id, path, before, after)
-        self._invalidate()
-
     def on_error(self, message: str) -> None:
         self.history.append_error(message)
         self._invalidate()

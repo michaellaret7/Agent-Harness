@@ -336,22 +336,6 @@ class LangfuseSink(BaseSink):
         except Exception as e:
             log.warning('langfuse: failed to end tool span %s: %s', tool_call_id, e)
 
-    def on_file_diff(self, tool_call_id: str, path: str, before: str, after: str) -> None:
-        span = self._tool_spans.get(tool_call_id)
-
-        if span is None:
-            return
-
-        try:
-            span.update(metadata={
-                'diff_path': path,
-                'diff_before_chars': len(before),
-                'diff_after_chars': len(after),
-            })
-
-        except Exception as e:
-            log.warning('langfuse: failed to attach diff metadata: %s', e)
-
     #     ================================
     # --> Error / interruption flags
     #     ================================

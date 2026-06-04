@@ -6,7 +6,7 @@ ignores `get_vertical_scroll` when `wrap_lines=True`. The virtual cursor is
 pinned to the same line so the Window's auto-scroll-to-cursor logic stays
 consistent with our requested position.
 
-Click handlers (tool dropdown, diff sub-arrow, reasoning toggle) all submit
+Click handlers (tool dropdown, reasoning toggle) all submit
 their History mutation to the single-worker render pool owned by History
 (`history.submit_render`). Routing every background Rich render through the
 same worker keeps the GIL available to the prompt_toolkit event loop —
@@ -28,7 +28,6 @@ from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
 from tui.cells import AssistantCell, Cell, ToolCell
 from tui.panels.fragments import (
     ASSISTANT_ARROW_CHARS,
-    DIFF_ARROW_CHARS,
     attach_arrow_handler,
     cell_separator,
 )
@@ -173,10 +172,6 @@ class OutputPanel:
                 tool_handler = self._make_toggle_handler(cell.tool_call_id)
                 cell_frags = attach_arrow_handler(cell_frags, tool_handler)
 
-                if cell.has_diff():
-                    diff_handler = self._make_diff_handler(cell.tool_call_id)
-                    cell_frags = attach_arrow_handler(cell_frags, diff_handler, arrows=DIFF_ARROW_CHARS)
-
             elif isinstance(cell, AssistantCell) and cell.reasoning and (cell.content or cell.done):
                 handler = self._make_reasoning_handler(cell.cell_id)
                 cell_frags = attach_arrow_handler(cell_frags, handler, arrows=ASSISTANT_ARROW_CHARS)
@@ -211,24 +206,6 @@ class OutputPanel:
 
         return handler
 
-    def _make_diff_handler(self, tool_call_id: str) -> Callable[[MouseEvent], Any]:
-        """Per-fragment mouse handler that toggles a ToolCell's diff expansion.
-
-        The diff lives inline within the ToolCell — this handler is bound only
-        to the secondary ▸/▾ glyph (DIFF_ARROW_CHARS), so it can coexist with
-        the outer ⮞/⮟ tool-result toggle.
-        """
-        history = self.history
-
-        def handler(mouse_event: MouseEvent) -> Any:
-            if mouse_event.event_type == MouseEventType.MOUSE_DOWN:
-                self._dispatch_toggle(lambda: history.toggle_tool_diff_expand(tool_call_id))
-                return None
-
-            return NotImplemented
-
-        return handler
-
     def _make_reasoning_handler(self, cell_id: str) -> Callable[[MouseEvent], Any]:
         """Per-fragment mouse handler that toggles an AssistantCell's reasoning.
 
@@ -250,10 +227,9 @@ class OutputPanel:
         """Submit a History toggle+render to the shared render pool.
 
         Reason: Rich rendering and ANSI-fragment parsing scale with content
-        size. A click on a tool with a multi-MB result, or on a `▸ diff` over
-        a full-file rewrite, would otherwise run cell.render() synchronously
-        inside the prompt_toolkit event loop and block clicks, scroll, and
-        keystrokes for the full render duration.
+        size. A click on a tool with a multi-MB result would otherwise run
+        cell.render() synchronously inside the prompt_toolkit event loop and
+        block clicks, scroll, and keystrokes for the full render duration.
 
         Routing through `history.submit_render` ensures all heavy renders
         — final Markdown, resize re-renders, toggle re-renders — share a

@@ -4,11 +4,6 @@ The handler does one thing: take parsed tool_calls from the model, run the
 matching Python callables, push start/end events to the Sink, and return
 tool-result messages. Registration lives on the Agent.
 
-For `EditFile` / `WriteFile` calls the handler snapshots the target file
-before and after the call and emits a `on_file_diff` event so the UI can
-render an inline highlighted diff. Tool functions themselves stay pure —
-the LLM's tool-result message is unchanged.
-
 Cancellation: between tool calls, checks `cancel_event`. Tool calls
 in-flight are not killed (Python sync code can't be interrupted), but
 remaining calls in the batch are skipped and synthesized as interrupted.
@@ -27,32 +22,14 @@ import json
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agent_harness.gates import GateContext
 from agent_harness.messages import tool_msg
 from agent_harness.sinks.base import Sink, ToolOutcome, ToolStatus
-from agent_harness.base_tools.helpers.paths import resolve_path
 
 if TYPE_CHECKING:
     from agent_harness.agent import Agent
-
-#     ================================
-# --> Helper funcs
-#     ================================
-
-
-def _snapshot(path: Path) -> str:
-    """Read file contents, returning '' if the file doesn't exist yet."""
-    if not path.is_file():
-        return ''
-
-    try:
-        return path.read_text(encoding='utf-8')
-
-    except OSError:
-        return ''
 
 #     ================================
 # --> Handler
@@ -220,30 +197,12 @@ class ToolHandler:
         if deny_reason is not None:
             return f'denied: {deny_reason}', 'denied'
 
-        # TODO: This is an issue here. This tool handling snippet is specific to tools from coding agent
-        # These need to be gotten rid of and handled at the tool level
-        target: Path | None = None
-
-        if name in ('EditFile', 'WriteFile'):
-            raw = kwargs.get('file_path')
-
-            if isinstance(raw, str) and raw:
-                target = resolve_path(raw)
-
-        before = _snapshot(target) if target else ''
-
-        # Run the actual tool funtion and return the result 
+        # Run the actual tool funtion and return the result
         result = self._invoke(name, kwargs)
 
-        # Check the success status of the tool and see if it threw an error or not 
-        # If there was an error update the tool status else return ok 
+        # Check the success status of the tool and see if it threw an error or not
+        # If there was an error update the tool status else return ok
         status: ToolStatus = 'error' if result.startswith('error:') else 'ok'
-
-        if target is not None and status == 'ok':
-            after = _snapshot(target)
-
-            if after != before:
-                sink.on_file_diff(tool_call_id, str(target), before, after)
 
         if name == 'Plan' and status == 'ok':
             sink.on_plan_update(self.agent.plan)
