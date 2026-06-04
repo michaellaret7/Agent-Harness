@@ -213,7 +213,8 @@ class ToolHandler:
             # Raise an error if the arguments are bad
             return f'error: bad arguments JSON: {e}', 'error'
 
-        # Run the tool call thropugh the gate and return the kwargs and the verdict (allowed, denied, or rewrite)
+        # Run the call past the gates: returns the (possibly rewritten) kwargs
+        # and a deny reason if any gate blocked it (None means nothing is blocking the tool call)
         kwargs, deny_reason = self._apply_gates(name, tool_call_id, kwargs)
 
         if deny_reason is not None:
@@ -283,14 +284,24 @@ class ToolHandler:
             if tool_filter is not None and name not in tool_filter:
                 continue
 
-            # Present this call to the gate and consume its verdict.
+            # Present this call to the gate and consume its verdict. A gate
+            # that raises fails closed: we deny the call rather than letting a
+            # broken guard pass it through.
             ctx = GateContext(
                 name,
                 tool_call_id,
                 kwargs,
                 self.agent,
             )
-            verdict = gate(ctx)
+
+            try:
+                verdict = gate(ctx)
+                
+            except Exception as e:
+                gate_name = getattr(gate, '__name__', repr(gate))
+                print(f'[GATE ERROR] {gate_name} raised on {name}, denying: {e}')
+
+                return kwargs, f'gate error in {gate_name}: {e}'
 
             if verdict.decision == 'deny':
                 return kwargs, verdict.reason
