@@ -1,124 +1,63 @@
-import json
-import threading
-from pathlib import Path
+"""Subagent demo: a parent agent that deploys two subagents.
 
-from agent_harness.agent import Agent
-from agent_harness.hooks import HookContext
-from agent_harness.messages import system_msg
-from agent_harness.sinks import StdoutSink
-from coding.tools.bash import bash
-from coding.tools.edit import edit
-from coding.tools.glob import glob
-from coding.tools.grep import grep
-from coding.tools.tree import tree
-from coding.tools.write import write
-from agent_harness.sinks import LogSink
+Run: python t.py
+
+Defines two SubAgentSpecs (a poet and a translator), hands them to a parent
+Agent via `subagents=`, and gives the parent a task whose only path to
+completion is deploying both. The parent calls DeploySubagent(name, prompt)
+for each; every deployment spins up a fresh, isolated SubAgent.
+"""
+from __future__ import annotations
+
 from dotenv import load_dotenv
 
+from agent_harness.agent import Agent
+from agent_harness.base_tools.deploy_subagent import SubAgentSpec
+from agent_harness.sinks import LogSink
+
+# Application owns config bootstrap: load .env before constructing any Agent
+# so agent_harness (which only reads the environment) sees credentials.
 load_dotenv()
 
-MEMORY_PATH = Path('memory.md')
-
-MEMORY_CURATOR_SYSTEM = (
-    "for this particular task, justy remember some random stuff, we are testing rn"
-)
+MODEL = 'cohere/north-mini-code:free'
 
 
-def on_readfile(ctx: HookContext) -> None:
-    """Fires after every ReadFile call — does xyz with the path and result."""
+# ---- Subagent specs ---- #
 
-    path = ctx.args.get('file_path', '<unknown>') if ctx.args else '<unknown>'
-    outcome = ctx.outcome
-
-    status = outcome.status if outcome else 'unknown'
-    size = len(outcome.payload) if outcome else 0
-
-    # xyz: react to the read. Swap this for a notification, log write, etc.
-    print(f'[hook] ReadFile -> {path} (status={status}, {size} chars)')
-
-def on_start(ctx: HookContext) -> None:
-    tsk = ctx.agent.task
-
-    ctx.agent.messages.append(
-        system_msg(f"Your name is jeff, which you say all the time and you love to curse.")
-    )
-
-    print(f'[hook] Agent started with task: {tsk}')
-
-
-def code_reviewer(ctx: HookContext) -> None:
-    transcript = json.dumps(ctx.agent.messages, indent=2, default=str)
-
-    review_agent = Agent(
-        provider='openrouter',
-        model='anthropic/claude-opus-4.8',
-        system="You are a helpful assistant that reviews other agents work.",
-        task=f"Read the messages transcript and summarize how the agent did.\n\n<transcript>\n{transcript}\n</transcript>",
-    )
-
-    result = review_agent.run(sink=LogSink('review_agent'))
-
-    print(f'[hook] Review agent summary: {result}')
-
-def memory_adder(ctx: HookContext) -> None:
-    """On loop end, ask an LLM (off-thread) whether anything is worth remembering.
-
-    The single completions call runs on a separate thread so it never blocks
-    the agent loop. The thread is non-daemon on purpose: in a one-shot script
-    the process would otherwise exit the instant `run()` returns and kill the
-    call mid-flight.
-    """
-
-    # Snapshot the transcript synchronously — the thread must not read
-    # agent.messages while the loop may still be mutating it.
-    transcript = json.dumps(ctx.agent.messages, indent=2, default=str)
-
-    # Reuse the agent's already-built client/model rather than rebuilding one.
-    # Both are guaranteed set by run() before the loop fires loop_end.
-    client = ctx.agent.client
-    model = ctx.agent.model
-
-    assert client is not None and model is not None
-
-    def _curate() -> None:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {'role': 'system', 'content': MEMORY_CURATOR_SYSTEM},
-                {'role': 'user', 'content': f'<transcript>\n{transcript}\n</transcript>'},
-            ],
-            stream=False,
-        )
-
-        verdict = (response.choices[0].message.content or '').strip()
-
-        if not verdict or verdict == 'NONE':
-            print('[hook] memory curator: nothing worth saving')
-            return
-
-        with MEMORY_PATH.open('a', encoding='utf-8') as f:
-            f.write(f'- {verdict}\n')
-
-        print(f'[hook] memory curator: saved -> {verdict}')
-
-    threading.Thread(target=_curate, daemon=False).start()
-
-
-def on_iteration_end(ctx: HookContext) -> None:
-    print(f'[hook] iteration end: {ctx.detail}')
-
-    print('number: ', ctx.detail.get('number'))
-    print('action: ', ctx.detail.get('action'))
-    print('content: ', ctx.detail.get('content'))
-    print('tools_called: ', ctx.detail.get('tools_called'))
-
-agent = Agent(
+poet = SubAgentSpec(
+    name='poet',
+    description='Writes a haiku about a given topic. Input: the topic.',
+    system='You are a poet. Given a topic, write a single haiku about it. Output only the haiku. YOU MUST USE THE WEB SEARCH TOOLS FIRST TO FIND THE BEST PRACTICES FOR YOUR TASK',
     provider='openrouter',
-    model='anthropic/claude-opus-4.8',
-    system="You are a helpful assistant that can help with coding tasks. You will sat this 'i need to remember my name is jeff'",
-    task="Read the file t.py and the .gitignore IN PARALLEL and give me a one-sentence summary of what it does.",
+    model=MODEL,
 )
 
-agent.add_hook('iteration_end', on_iteration_end)
+translator = SubAgentSpec(
+    name='translator',
+    description='Translates English text into French. Input: the English text.',
+    system='You are a translator. Translate the given English text into French. Output only the translation. YOU MUST USE THE WEB SEARCH TOOLS FIRST TO FIND THE BEST PRACTICES FOR YOUR TASK',
+    provider='openrouter',
+    model=MODEL,
+)
 
-agent.run()
+
+# ---- Parent agent: instructed to run both subagents ---- #
+
+parent = Agent(
+    provider='openrouter',
+    model=MODEL,
+    system=(
+        'You are a helpful assistant that can help with tasks. You will be receiving a message from the parent agent, execute the task.'
+    ),
+    subagents=[poet, translator],
+)
+
+
+if __name__ == '__main__':
+    result = parent.run(
+        task='Research nivida in depth and tell me whats in their research and development department. Then deploy the translator subagent to translate the information into French',
+        sink=LogSink('parent'),
+    )
+
+    print('=' * 80)
+    print(result)

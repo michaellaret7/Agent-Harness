@@ -23,6 +23,7 @@ from agent_harness.base_tools.plan import plan
 from agent_harness.base_tools.search import search
 from agent_harness.base_tools.skill import load_skill
 from agent_harness.base_tools.read import read
+from agent_harness.base_tools.deploy_subagent import SubAgentSpec, make_deploy_subagent_tool
 
 
 class Agent:
@@ -35,6 +36,7 @@ class Agent:
         task: str | None = None,
         domain_root: Path | None = None,
         max_iters: int = 100,
+        subagents: list[SubAgentSpec] = [],
     ) -> None:
 
         # Construction is inert: the client is built lazily on first run() so module-level `agent = Agent(...)` 
@@ -53,7 +55,7 @@ class Agent:
         self.tools: list[dict[str, Any]] = []
         self.tool_functions: dict[str, Callable] = {}
         self.deferred_tools: dict[str, dict[str, Any]] = {}
-        self.loaded_deferred: set[str] = set()
+        self.loaded_deferred: set[str] = set() # This needs to be a set data structure to avoid duplicate tool names
 
         # Hook registry: event -> [(tool_filter, callback)]. Driven by HookSink.
         self.hooks: dict[str, list[tuple[frozenset[str] | None, Hook]]] = {}
@@ -62,6 +64,10 @@ class Agent:
         # like hooks — gates fire at one point (before tool dispatch). Consulted
         # by ToolHandler._dispatch, which consumes each verdict.
         self.gates: list[tuple[frozenset[str] | None, Gate]] = []
+
+        # Subagent registry: name -> spec. Populated below only when specs are
+        # passed; the DeploySubagent tool reads the registry from this dict.
+        self.subagents: dict[str, SubAgentSpec] = {}
 
         # Initialize Tool Handler
         self.tool_handler = ToolHandler(self)
@@ -96,6 +102,13 @@ class Agent:
         if tools:
             for tool in tools:
                 self.add_tool(tool)
+
+        # Register the DeploySubagent tool only when a roster was passed —
+        # agents without subagents never see the tool.
+        if subagents:
+            self.subagents = {spec.name: spec for spec in subagents}
+
+            self.add_tool(make_deploy_subagent_tool(self.subagents)) # Only add the subagent deploy tool if subagents are passed
 
         self.build_initial_context()
 
