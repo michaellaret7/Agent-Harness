@@ -23,7 +23,7 @@ from agent_harness.base_tools.plan import plan
 from agent_harness.base_tools.search import search
 from agent_harness.base_tools.skill import load_skill
 from agent_harness.base_tools.read import read
-from agent_harness.base_tools.deploy_subagent import SubAgentSpec, make_deploy_subagent_tool
+from agent_harness.base_tools.deploy_subagent import SubAgentConfig, make_deploy_subagent_tool
 
 
 class Agent:
@@ -36,7 +36,7 @@ class Agent:
         task: str | None = None,
         domain_root: Path | None = None,
         max_iters: int = 100,
-        subagents: list[SubAgentSpec] = [],
+        subagents: list[SubAgentConfig] = [],
     ) -> None:
 
         # Construction is inert: the client is built lazily on first run() so module-level `agent = Agent(...)` 
@@ -67,7 +67,7 @@ class Agent:
 
         # Subagent registry: name -> spec. Populated below only when specs are
         # passed; the DeploySubagent tool reads the registry from this dict.
-        self.subagents: dict[str, SubAgentSpec] = {}
+        self.subagents: dict[str, SubAgentConfig] = {}
 
         # Initialize Tool Handler
         self.tool_handler = ToolHandler(self)

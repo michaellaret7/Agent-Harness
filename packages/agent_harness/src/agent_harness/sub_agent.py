@@ -1,6 +1,6 @@
 """SubAgent: an Agent deployed as a tool of a parent agent.
 
-A parent registers a roster of `SubAgentSpec` configs at construction
+A parent registers a roster of `SubAgentConfig` configs at construction
 (`Agent(subagents=[...])`); the `DeploySubagent` tool (see
 `base_tools/deploy_subagent.py`) lets the parent model hand a task to one of
 them by name. Each deployment instantiates a fresh `SubAgent`, so message
@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 from agent_harness.agent import Agent
-from agent_harness.base_tools.deploy_subagent import SubAgentSpec
+from agent_harness.base_tools.deploy_subagent import SubAgentConfig
 
 
 class SubAgent(Agent):
@@ -42,7 +42,7 @@ class SubAgent(Agent):
         raise NotImplementedError('SubAgents cannot register hooks.')
 
     @classmethod
-    def from_spec(cls, spec: SubAgentSpec) -> 'SubAgent':
+    def from_spec(cls, spec: SubAgentConfig) -> 'SubAgent':
         """Instantiate a fresh SubAgent from a spec (isolated history).
 
         `subagents` and `domain_root` are intentionally not forwarded: a

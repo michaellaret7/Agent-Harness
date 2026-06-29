@@ -1,6 +1,6 @@
 """DeploySubagent: hand a bounded task to a named subagent.
 
-A parent registers a roster of `SubAgentSpec` configs at construction
+A parent registers a roster of `SubAgentConfig` configs at construction
 (`Agent(subagents=[...])`). `make_deploy_subagent_tool` binds that roster
 into the tool the parent model calls; each invocation spins up a fresh
 `SubAgent` (isolated history) and returns its final answer.
@@ -27,7 +27,7 @@ from agent_harness.sinks import LogSink
 
 
 @dataclass(frozen=True)
-class SubAgentSpec:
+class SubAgentConfig:
     """Config for one deployable subagent.
 
     `name` is the key the parent model deploys by; `description` tells the
@@ -54,7 +54,7 @@ class SubAgentSpec:
 def deploy_subagent(
     name: Annotated[str, Param(description='Which subagent to deploy.')],
     prompt: Annotated[str, Param(description='The task to hand the subagent.')],
-    _registry: dict[str, SubAgentSpec] | None = None,
+    _registry: dict[str, SubAgentConfig] | None = None,
 ) -> str:
     """Hand a self-contained task to a named subagent and return its result.
 
@@ -78,7 +78,7 @@ def deploy_subagent(
     return SubAgent.from_spec(spec).run(prompt, sink=LogSink(name))
 
 
-def make_deploy_subagent_tool(registry: dict[str, SubAgentSpec]) -> dict[str, Any]:
+def make_deploy_subagent_tool(registry: dict[str, SubAgentConfig]) -> dict[str, Any]:
     """Build the DeploySubagent tool dict bound to `registry`.
 
     Binds the registry into the hidden `_registry` param, then bakes the
