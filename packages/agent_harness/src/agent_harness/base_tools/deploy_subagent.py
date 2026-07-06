@@ -50,7 +50,10 @@ class SubAgentConfig:
 #     ================================
 
 
-@agent_tool(name='DeploySubagent')
+# safe_parallel: each deployment builds a fresh SubAgent (isolated history,
+# own LogSink) and only reads the shared registry, so concurrent deployments
+# don't contend — subagent rosters must stay non-mutating for this to hold.
+@agent_tool(name='DeploySubagent', safe_parallel=True)
 def deploy_subagent(
     name: Annotated[str, Param(description='Which subagent to deploy.')],
     prompt: Annotated[str, Param(description='The task to hand the subagent.')],

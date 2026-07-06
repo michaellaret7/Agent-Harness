@@ -212,12 +212,9 @@ class ToolHandler:
     def _is_parallel(self, tc: dict) -> bool:
         """A small helper function to check whether a tool call's underlying tool opted into safe parallelism."""
 
-        # Get the tool function from the agent's tool functions dictionary
-        fn = self.agent.tool_functions.get(tc['function']['name'])
-
-        # Return the safe parallel flag from the tool function dictionary
-        # This will determine if the tool can be run in the ThreadPoolExecutor or not 
-        return getattr(fn, 'tool', {}).get('safe_parallel', False)
+        # Check the agent's registry of safe-parallel tool names, recorded at add_tool time.
+        # This will determine if the tool can be run in the ThreadPoolExecutor or not
+        return tc['function']['name'] in self.agent.parallel_tools
 
     def _apply_gates(
         self,

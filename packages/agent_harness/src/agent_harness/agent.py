@@ -55,6 +55,7 @@ class Agent:
         self.tools: list[dict[str, Any]] = []
         self.tool_functions: dict[str, Callable] = {}
         self.deferred_tools: dict[str, dict[str, Any]] = {}
+        self.parallel_tools: set[str] = set()
         self.loaded_deferred: set[str] = set() # This needs to be a set data structure to avoid duplicate tool names
 
         # Hook registry: event -> [(tool_filter, callback)]. Driven by HookSink.
@@ -160,6 +161,11 @@ class Agent:
         })
 
         self.tool_functions[name] = tool['function']
+
+        # Record safe_parallel here, from the tool dict: the registered callable
+        # may be a functools.partial (bind_tool), which drops the `.tool` attr.
+        if tool.get('safe_parallel', False):
+            self.parallel_tools.add(name)
 
     def add_hook(
         self,
