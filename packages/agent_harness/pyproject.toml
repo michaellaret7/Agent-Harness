@@ -2,7 +2,7 @@
 name = "agent-harness"
 version = "0.1.0"
 description = "Streaming, tool-calling agent engine for any OpenAI-compatible endpoint."
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "openai>=1.40",
     "httpx>=0.27",

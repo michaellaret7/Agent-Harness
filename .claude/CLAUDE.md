@@ -12,7 +12,7 @@ Entry points:
 
 Both launch the TUI (`tui/app.py`). To use the agent programmatically, import `Agent` and call `agent.run(task, sink=..., cancel_event=...)`. The task can also be set at init via `Agent(task=...)` and `run()` called with no arg — useful for batch pipelines. If `sink` is None, output goes to stdout via `StdoutSink`.
 
-Pinned to Python 3.12 (`<3.13`) via `pyproject.toml` and `.python-version`. uv will refuse to sync on a 3.13 interpreter.
+Supports Python 3.12–3.13 (`>=3.12,<3.14` in `pyproject.toml`); `.python-version` keeps this repo's own venv on 3.12. uv will refuse to sync on a 3.14 interpreter.
 
 There is no test suite or linter configured. The two library packages build as wheels via hatchling (`uv build packages/agent_harness`); `coding` is a non-package (`package = false`) consumer that runs in place.
 

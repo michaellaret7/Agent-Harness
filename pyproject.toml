@@ -2,7 +2,7 @@
 name = "coding-agent-workspace"
 version = "0"
 description = "uv workspace root: agent-harness engine, its TUI frontend, and the coding domain."
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.12,<3.14"
 
 [tool.uv]
 package = false
