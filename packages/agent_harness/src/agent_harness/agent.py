@@ -56,7 +56,6 @@ class Agent:
         self.tool_functions: dict[str, Callable] = {}
         self.deferred_tools: dict[str, dict[str, Any]] = {}
         self.parallel_tools: set[str] = set()
-        self.loaded_deferred: set[str] = set() # This needs to be a set data structure to avoid duplicate tool names
 
         # Hook registry: event -> [(tool_filter, callback)]. Driven by HookSink.
         self.hooks: dict[str, list[tuple[frozenset[str] | None, Hook]]] = {}
@@ -97,7 +96,7 @@ class Agent:
         self.add_tool(extract)
         self.add_tool(read)
         self.add_tool(bind_tool(load_skill, _skills_map={s.name: s for s in self.skills}))
-        self.add_tool(bind_tool(load_tool, _deferred_tools=self.deferred_tools, _loaded_deferred=self.loaded_deferred))
+        self.add_tool(bind_tool(load_tool, _deferred_tools=self.deferred_tools, _api_tools=self.tools))
         self.add_tool(bind_tool(plan, _plan=self.plan))
 
         if tools:

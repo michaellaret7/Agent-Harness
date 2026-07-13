@@ -274,7 +274,8 @@ class ToolHandler:
         """Look up the registered function and run it with exception wrapping."""
 
         # Check to make sure the deferred tools get loaded before being called if they are deferred
-        if name in self.agent.deferred_tools and name not in self.agent.loaded_deferred:
+        # (LoadTool pops loaded tools out of the registry, so membership alone means "not yet loaded")
+        if name in self.agent.deferred_tools:
             return (
                 f'error: {name!r} is deferred. Call LoadTool(names=[{name!r}]) '
                 f'first to retrieve the full schema, then call {name} with the '

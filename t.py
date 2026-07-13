@@ -19,7 +19,7 @@ from agent_harness.sinks import LogSink
 # so agent_harness (which only reads the environment) sees credentials.
 load_dotenv()
 
-MODEL = 'cohere/north-mini-code:free'
+MODEL = 'openai/gpt-5.6-luna'
 
 
 # ---- Subagent specs ---- #
@@ -55,7 +55,7 @@ parent = Agent(
 
 if __name__ == '__main__':
     result = parent.run(
-        task='Research nivida in depth and tell me whats in their research and development department. Then deploy the translator subagent to translate the information into French',
+        task='Use the Plan tool to create a 3-step plan for researching NVIDIA R&D, then mark step 1 in progress and stop. Do not deploy any subagents.',
         sink=LogSink('parent'),
     )
 
