@@ -35,6 +35,7 @@ from __future__ import annotations
 import functools
 import inspect
 import re
+import types
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, Callable, Literal, Union, get_args, get_origin, get_type_hints, is_typeddict
@@ -188,9 +189,10 @@ def _object_schema(td: Any) -> dict[str, Any]:
 def _resolve_type(tp: Any) -> tuple[str, dict[str, Any]]:
     """Resolve a Python type to (json_type, extra_schema_fields).
 
-    Handles: primitives, Optional[T], list[T], Literal['a','b'], and
-    TypedDict objects (emitting nested `properties`/`required`). Falls back
-    to ("string", {}) for anything unrecognized.
+    Handles: primitives, Optional[T] (both `Optional[T]` and PEP 604 `T | None`
+    spellings), list[T], Literal['a','b'], and TypedDict objects (emitting
+    nested `properties`/`required`). Falls back to ("string", {}) for anything
+    unrecognized.
     """
     origin = get_origin(tp)
     args = get_args(tp)
@@ -198,7 +200,7 @@ def _resolve_type(tp: Any) -> tuple[str, dict[str, Any]]:
     if origin is Literal:
         return 'string', {'enum': list(args)}
 
-    if origin is Union:
+    if origin is Union or origin is types.UnionType:
         non_none = [a for a in args if a is not type(None)]
 
         if len(non_none) == 1:
