@@ -54,7 +54,7 @@ Both providers (`vllm`, `openrouter`) talk through the **OpenAI Python SDK**. `a
 - `vllm` uses a placeholder API key (the hosted endpoint is unauthenticated) and pulls `VLLM_API_URL` / `VLLM_MODEL` from env.
 - `openrouter` requires `OPENROUTER_API_KEY` and a `model` argument (any model string from openrouter.ai/models); `OPENROUTER_API_URL` is optional.
 
-Note: the `Agent` class default is `provider='vllm'`, but `coding/__main__.py` (the user entry point) overrides it to `provider='openrouter', model='anthropic/claude-opus-4.7'`. Changing the default behavior of `python -m coding` means editing that file, not the class default.
+Note: the `Agent` class defaults to `provider='openrouter'`. `coding/__main__.py` (the user entry point) also selects its OpenRouter model explicitly. Pass `provider='vllm'` to use the hosted vLLM endpoint.
 
 ### The streaming loop (`agent_harness/loop.py`)
 

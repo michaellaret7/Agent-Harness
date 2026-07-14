@@ -29,7 +29,7 @@ from agent_harness.base_tools.deploy_subagent import SubAgentConfig, make_deploy
 class Agent:
     def __init__(
         self,
-        provider: str = 'vllm',
+        provider: str = 'openrouter',
         model: str | None = None,
         tools: list[dict[str, Any] | Callable] = [],
         system: str | None = None,

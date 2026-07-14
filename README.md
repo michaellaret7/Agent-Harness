@@ -95,7 +95,7 @@ read packages/agent_harness/src/agent_harness/loop.py and explain how tool calls
 
 **Hosted vLLM** — `Agent(provider='vllm')`. The client reads `VLLM_API_URL` and `VLLM_MODEL` from `.env`. Point `VLLM_API_URL` at your RunPod (or other) endpoint. The hosted endpoint is treated as unauthenticated.
 
-The `Agent` class default is `provider='vllm'`, but the user entry point `coding/__main__.py` overrides it to `provider='openrouter', model='anthropic/claude-opus-4.8'`. To change what `python -m coding` launches, edit that file — not the class default.
+The `Agent` class defaults to `provider='openrouter'`. Pass `provider='vllm'` explicitly to use a hosted vLLM endpoint. The `coding/__main__.py` entry point also selects its OpenRouter model explicitly.
 
 ## Project layout
 
