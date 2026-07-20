@@ -249,6 +249,26 @@ class Agent:
 
         parts: list[str] = [self.system_prompt, environment]
 
+        # The deferred-tool registry is Python-side state the model can't see —
+        # its only in-context signal is the ` [deferred]` description marker.
+        # Spell out the protocol here, and only when any deferred tools exist,
+        # so agents without them never read about the mechanism.
+        if self.deferred_tools:
+            names = ', '.join(sorted(self.deferred_tools))
+
+            parts.append(
+                '<deferred_tools>\n'
+                f'Deferred at session start: {names}.\n'
+                'A deferred tool ships as a stub: its description ends with the marker '
+                '` [deferred]` and its parameter schema is empty. Before calling one, call '
+                '`LoadTool(names=[...])` once to fetch its full schema. After loading, the '
+                'marker disappears from the tool list and you call the tool directly for the '
+                'rest of the session — do not call LoadTool for it again.\n'
+                'The tool list is the live source of truth: any tool whose description does '
+                'NOT end with ` [deferred]` is already fully loaded. Never call LoadTool on it.\n'
+                '</deferred_tools>'
+            )
+
         listing = format_skill_listing(self.skills)
 
         if listing:
