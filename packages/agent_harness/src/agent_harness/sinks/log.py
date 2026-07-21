@@ -10,6 +10,8 @@ Events emitted:
 - INFO    turn.start  / turn.end
 - INFO    loop.start  / loop.end
 - INFO    tool.start  / tool.end
+- ERROR   tool.end when the tool call failed (status 'error')
+- WARNING tool.end when the call was denied or interrupted
 - WARNING interrupted
 - ERROR   error
 
@@ -177,7 +179,15 @@ class LogSink(BaseSink):
 
         summary = format_tool_summary(outcome)
 
-        self.log.info('tool.end %s %s', name, summary)
+        # Escalate the log level on failure so broken tool calls stand out:
+        # error → ERROR, denied/interrupted → WARNING, ok → INFO. The summary
+        # already carries the (truncated) failure message for non-ok outcomes.
+        if outcome.status == 'error':
+            self.log.error('tool.end %s %s', name, summary)
+        elif outcome.status in ('denied', 'interrupted'):
+            self.log.warning('tool.end %s %s', name, summary)
+        else:
+            self.log.info('tool.end %s %s', name, summary)
 
     #     ================================
     # --> Diagnostics
