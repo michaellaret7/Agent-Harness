@@ -30,6 +30,30 @@ if TYPE_CHECKING:
 #     ================================
 
 
+def _format_api_error(exc: BaseException) -> str:
+    """Render a provider failure as one log line: type, HTTP status, message."""
+    status = getattr(exc, 'status_code', None)
+    label = type(exc).__name__
+
+    if status is not None:
+        label += f' [{status}]'
+
+    return f'{label}: {exc}'
+
+
+def _stream_error(chunk) -> str | None:
+    """Return the error text when a chunk carries a mid-stream provider error."""
+    err = getattr(chunk, 'error', None)
+
+    if not err:
+        return None
+
+    code = err.get('code') if isinstance(err, dict) else getattr(err, 'code', None)
+    message = err.get('message') if isinstance(err, dict) else getattr(err, 'message', '')
+
+    return f'[{code}] {message}'
+
+
 def _extract_reasoning(obj) -> str:
     """Pull reasoning text from any of the provider shapes: `reasoning`,
     `reasoning_content`, or structured `reasoning_details[].text`."""
@@ -242,16 +266,6 @@ def call_llm(
 
     _refresh_rolling_cache_breakpoint(messages)
 
-    response = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        tools=tools,
-        tool_choice='auto',
-        stream=True,
-        # Final chunk arrives with empty choices and populated usage.
-        stream_options={'include_usage': True},
-    )
-
     content_pieces: list[str] = []
     # Tool calls arrive in fragments keyed by index — id/name appear on the
     # first fragment; arguments accumulate across the rest.
@@ -259,48 +273,79 @@ def call_llm(
     was_cancelled = False
     usage: Usage | None = None
 
-    for chunk in response:
-        if cancel_event.is_set():
-            was_cancelled = True
-            response.close()
-            break
+    # Every provider failure funnels through this one handler: the request
+    # raising (402 insufficient credits, 401, timeouts), the stream dying
+    # mid-iteration, and the error-chunk case re-raised below. The sink
+    # sees it before it propagates, so headless runs get a log record
+    # instead of a bare traceback.
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            tools=tools,
+            tool_choice='auto',
+            stream=True,
+            # Final chunk arrives with empty choices and populated usage.
+            stream_options={'include_usage': True},
+        )
 
-        # The final usage-only chunk has empty choices but a populated
-        # `usage` field. Capture it before the `not chunk.choices` skip.
-        if getattr(chunk, 'usage', None):
-            usage = Usage.from_response(chunk.usage)
+        for chunk in response:
+            if cancel_event.is_set():
+                was_cancelled = True
+                response.close()
+                break
 
-        if not chunk.choices:
-            continue
+            # The final usage-only chunk has empty choices but a populated
+            # `usage` field. Capture it before the `not chunk.choices` skip.
+            if getattr(chunk, 'usage', None):
+                usage = Usage.from_response(chunk.usage)
 
-        delta = chunk.choices[0].delta
+            # An error chunk still carries a `choices` entry, so this must be
+            # checked before the empty-choices skip below. The stream already
+            # returned 200, so OpenRouter reports later failures (rate limits,
+            # upstream faults) as an error chunk rather than raising — turn it
+            # back into an exception so both failure paths hit the same handler.
+            stream_error = _stream_error(chunk)
 
-        # Surface reasoning live; do not keep it in history.
-        reasoning = _extract_reasoning(delta)
+            if stream_error:
+                response.close()
+                raise RuntimeError(stream_error)
 
-        if reasoning:
-            sink.on_reasoning_delta(reasoning)
+            if not chunk.choices:
+                continue
 
-        if delta.content:
-            content_pieces.append(delta.content)
-            sink.on_content_delta(delta.content)
+            delta = chunk.choices[0].delta
 
-        if delta.tool_calls:
-            for tc in delta.tool_calls:
-                slot = tool_call_slots.setdefault(tc.index, {
-                    'id': '', 'type': 'function',
-                    'function': {'name': '', 'arguments': ''},
-                })
+            # Surface reasoning live; do not keep it in history.
+            reasoning = _extract_reasoning(delta)
 
-                if tc.id:
-                    slot['id'] = tc.id
+            if reasoning:
+                sink.on_reasoning_delta(reasoning)
 
-                if tc.function:
-                    if tc.function.name:
-                        slot['function']['name'] = tc.function.name
+            if delta.content:
+                content_pieces.append(delta.content)
+                sink.on_content_delta(delta.content)
 
-                    if tc.function.arguments:
-                        slot['function']['arguments'] += tc.function.arguments
+            if delta.tool_calls:
+                for tc in delta.tool_calls:
+                    slot = tool_call_slots.setdefault(tc.index, {
+                        'id': '', 'type': 'function',
+                        'function': {'name': '', 'arguments': ''},
+                    })
+
+                    if tc.id:
+                        slot['id'] = tc.id
+
+                    if tc.function:
+                        if tc.function.name:
+                            slot['function']['name'] = tc.function.name
+
+                        if tc.function.arguments:
+                            slot['function']['arguments'] += tc.function.arguments
+
+    except Exception as e:
+        sink.on_error(f'llm.call_failed {_format_api_error(e)}')
+        raise
 
     sink.on_assistant_end()
 

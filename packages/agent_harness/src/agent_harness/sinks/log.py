@@ -13,7 +13,7 @@ Events emitted:
 - ERROR   tool.end when the tool call failed (status 'error')
 - WARNING tool.end when the call was denied or interrupted
 - WARNING interrupted
-- ERROR   error
+- CRITICAL error (provider failure or unhandled exception — the run is dead)
 
 Content deltas, reasoning, iteration boundaries, plan updates and usage
 events are intentionally silent — usage is accumulated internally and
@@ -194,7 +194,11 @@ class LogSink(BaseSink):
     #     ================================
 
     def on_error(self, message: str) -> None:
-        self.log.error('error: %s', message)
+        # CRITICAL, not ERROR: `on_error` only fires when the run itself is
+        # dead — a provider failure (402 insufficient credits, auth, a
+        # broken stream) or an unhandled exception. Recoverable per-tool
+        # failures have their own ERROR path in `on_tool_end`.
+        self.log.critical('error: %s', message)
 
     def on_interrupted(self) -> None:
         self.log.warning('interrupted')
