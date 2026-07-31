@@ -7,6 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable, cast
 
+from pydantic import BaseModel
+
 from agent_harness.client import build_client
 from agent_harness.decorator import bind_tool
 from agent_harness.gates import Gate
@@ -37,6 +39,7 @@ class Agent:
         domain_root: Path | None = None,
         max_iters: int = 100,
         subagents: list[SubAgentConfig] = [],
+        output_model: type[BaseModel] | None = None,
     ) -> None:
 
         # Construction is inert: the client is built lazily on first run() so module-level `agent = Agent(...)` 
@@ -47,6 +50,13 @@ class Agent:
         
         self.max_iters = max_iters
         self.task = task
+
+        if output_model is not None and not (
+            isinstance(output_model, type) and issubclass(output_model, BaseModel)
+        ):
+            raise TypeError('output_model must be a pydantic BaseModel subclass or None')
+
+        self.output_model = output_model
 
         # Initialize Message List
         self.messages: list[dict] = []
@@ -278,12 +288,43 @@ class Agent:
 
         self.messages.append(system_msg(content, cache=True))
 
+    def _parse_output(self, final_text: str) -> BaseModel:
+        """One structured completion: map final agent text into output_model."""
+        if self.client is None or self.model is None or self.output_model is None:
+            raise RuntimeError(
+                '_parse_output requires client, model, and output_model to be set'
+            )
+
+        completion = self.client.chat.completions.parse(
+            model=self.model,
+            messages=[
+                {
+                    'role': 'system',
+                    'content': (
+                        'Convert the agent result into the required structured output. '
+                        'Use only facts present in the input. Do not invent fields.'
+                    ),
+                },
+                {'role': 'user', 'content': final_text or '(empty)'},
+            ],
+            response_format=self.output_model,
+        )
+
+        parsed = completion.choices[0].message.parsed
+
+        if parsed is None:
+            refusal = completion.choices[0].message.refusal
+
+            raise RuntimeError(f'structured output refused or empty: {refusal!r}')
+
+        return parsed
+
     def run(
         self,
         task: str | None = None,
         sink: Sink | None = None,
         cancel_event: threading.Event | None = None,
-    ) -> str:
+    ) -> str | BaseModel:
 
         # Build the provider client once on first run (deferred from __init__); 
         # build_client also resolves any provider default model (e.g. VLLM_MODEL) into self.model.
@@ -322,7 +363,11 @@ class Agent:
                 cancel_event=cancel_event,
             )
 
+            if self.output_model is not None:
+                return self._parse_output(result)
+
             return result
 
         finally:
+            # Free-text only — result is never overwritten with the structured model.
             sink.on_turn_end(result)
