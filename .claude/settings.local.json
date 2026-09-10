@@ -3,5 +3,6 @@
     "allow": [
       "WebSearch"
     ]
-  }
+  },
+  "outputStyle": "Concise"
 }
