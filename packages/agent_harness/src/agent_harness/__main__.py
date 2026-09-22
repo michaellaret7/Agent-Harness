@@ -1,13 +1,10 @@
-"""Dev entry point for `python -m agent_harness`. Launches the TUI with a tool-less Agent.
+"""Headless development entry point for `python -m agent_harness`.
 
-This is a sanity check for the base agent — verifies the streaming loop, the
-TUI, and the base-tool registration (search/extract/skill/load_tool/plan) work
-end-to-end without any domain tools attached. For the coding agent, use
-`python -m coding`.
+Exercises the streaming loop and built-in tools without the optional TUI
+library. Applications consume Agent directly from their own projects.
 """
 from __future__ import annotations
 
-import asyncio
 import os
 import sys
 
@@ -21,8 +18,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 
 from agent_harness.agent import Agent
-from agent_harness.sinks.log import LogSink
-from tui.app import TUIApp
 
 
 def main() -> None:
@@ -30,9 +25,6 @@ def main() -> None:
     # Agent so `agent_harness/` (which only reads the environment) sees credentials.
     load_dotenv()
 
-    # Define the agent that will be used
-    # Config tools, model, and provider
-    # agent = Agent(provider='openrouter', model='anthropic/claude-opus-4.7')
     agent = Agent(
         provider='openrouter', 
         model='qwen/qwen3.7-max'
@@ -41,12 +33,6 @@ def main() -> None:
     while True:
         x = input("Enter a task: ")
         agent.run(x)
-
-    # Define the TUI app that will be the UI for the agent
-    # app = TUIApp(agent)
-
-    # Run the app asynchronously
-    # asyncio.run(app.run_async())
 
 
 if __name__ == '__main__':

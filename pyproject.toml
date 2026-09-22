@@ -1,11 +1,11 @@
 [project]
-name = "coding-agent-workspace"
+name = "agent-harness-workspace"
 version = "0"
-description = "uv workspace root: agent-harness engine, its TUI frontend, and the coding domain."
+description = "uv workspace for the reusable agent harness and optional TUI library."
 requires-python = ">=3.12,<3.14"
 
 [tool.uv]
 package = false
 
 [tool.uv.workspace]
-members = ["packages/agent_harness", "packages/tui", "coding"]
+members = ["packages/agent_harness", "packages/tui"]

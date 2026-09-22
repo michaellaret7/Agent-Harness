@@ -1,218 +1,232 @@
-<div align="center">
+# agent-harness
 
-# local-agent
+A reusable Python harness for streaming, tool-calling agents. Applications import the engine and supply their own tools, instructions, and skills.
 
-**A streaming, tool-calling agent with a Rich + prompt_toolkit TUI, talking to any OpenAI-compatible endpoint.**
+This repository is a **uv workspace** with two distributable libraries:
 
+- **agent-harness** (`agent_harness`): execution loop, tool registration and dispatch, hooks, gates, skills, subagents, and output sinks.
+- **tui**: an optional prompt_toolkit + Rich terminal frontend that consumes the engine.
 
-
-[![Python](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![uv](https://img.shields.io/badge/uv-managed-DE5FE9)](https://github.com/astral-sh/uv)
-
-</div>
-
----
-
-## What this is
-
-A minimal agent loop wrapped in a full-screen terminal UI. It streams tokens from a chat-completions endpoint, parses tool calls, executes them, and feeds the results back — until the model stops asking for tools and returns a final answer.
-
-The repo is a **uv workspace** of three packages:
-
-- `agent-harness` (`agent_harness`) — the domain-agnostic engine: agent loop, tools, sinks, hooks. The distributable other repos pull.
-- `tui` — the prompt_toolkit + Rich terminal frontend; depends on `agent-harness`.
-- `coding` — the coding domain (tools, skills, entry point); consumes both. The in-repo reference domain.
-
-The client supports two backends:
-
-- A hosted vLLM endpoint (e.g. RunPod proxy) — original target was NVIDIA Nemotron on vLLM.
-- OpenRouter — gives you access to OpenAI, Anthropic, Google, Meta, and other models through a single OpenAI-compatible endpoint.
+Application-specific agents belong in separate projects. The engine can be installed and used without the TUI.
 
 ## Features
 
-- **Full-screen TUI** built on prompt_toolkit + Rich. Transparent background, native terminal theme shows through.
-- **Streaming token-by-token output** with live reasoning passthrough (the `<think>...</think>` blocks thinking models emit).
-- **Tool calling** in the standard OpenAI tool-call format, with fragment reassembly across stream chunks.
-- **Cancellable turns** — `Esc` aborts an in-flight stream; `Ctrl+C` double-tap exits.
-- **Click-to-copy mode** — `Ctrl+T` releases mouse capture so the terminal's native click-drag selection works.
-- **Built-in tools** — bash, read/write/edit, glob, grep, tree, plus base web search/extract.
-- **Skills & deferred tools** — Markdown-defined skills and lazily-loaded tools, discovered by convention from each domain.
-- **Lifecycle hooks** — register callbacks on turn/loop/tool events for side effects (logging, metrics).
-- **Built-in Langfuse tracing** — the LangfuseSink ships with the engine; set `LANGFUSE_PUBLIC_KEY` and LLM generations are auto-captured per turn (unset it and the framework is silent).
+- Streaming text and reasoning output, with fragmented tool-call reassembly.
+- Tool registration through dictionaries or the `@agent_tool` decorator.
+- Deferred tools and Markdown-defined skills supplied by consuming applications.
+- Lifecycle hooks for observation and gates for allowing, denying, or rewriting tool calls.
+- Parallel execution of tools marked `safe_parallel=True`.
+- Cooperative cancellation through a `threading.Event`.
+- Subagent delegation and optional Pydantic structured output.
+- Output sinks for stdout, logging, Langfuse tracing, and the optional TUI.
+- Built-in web search/extraction, file reading, skill loading, deferred-tool loading, and planning.
 
-## Requirements
+## Use from another project
 
-- Python 3.12 (pinned; uv refuses to sync on 3.13)
-- [`uv`](https://github.com/astral-sh/uv) for dependency management
-- An endpoint to talk to — OpenRouter or a hosted vLLM endpoint
+Python 3.12 and 3.13 are supported. The client currently supports OpenRouter and hosted vLLM endpoints using the OpenAI-compatible chat-completions API.
 
-## Setup
+Install a built engine wheel into the consuming project:
 
 ```bash
-# 1. Install the whole workspace (engine + tui + coding) into one shared venv
-uv sync --all-packages
-
-# 2. Configure provider credentials
-cp .env.example .env
-# then edit .env — see "Configuring the endpoint" below
+uv add /path/to/agent_harness/dist/agent_harness-0.1.0-py3-none-any.whl
 ```
 
-## Running
-
-```bash
-uv run python -m coding
-```
-
-This launches the TUI with the coding-domain agent (bash, write, edit, glob, grep, tree + base read/web tools). Type a prompt and press `Enter` to submit. Try:
-
-```
-what's 2 ** 16 plus the number of files in packages/agent_harness/src/agent_harness/base_tools?
-read packages/agent_harness/src/agent_harness/loop.py and explain how tool calls are reassembled across stream chunks
-```
-
-`uv run python -m agent_harness` is also available — it runs the bare base agent (no domain tools attached), useful as a dev sanity check for the streaming loop and base-tool registration.
-
-### Key bindings
-
-| Key                | Action                                                |
-| ------------------ | ----------------------------------------------------- |
-| `Enter`            | Submit the prompt                                     |
-| `Shift+Enter`      | Insert a newline (multi-line input)                   |
-| `Esc`              | Cancel the in-flight turn / clear the input           |
-| `Ctrl+C`           | Cancel the turn; double-tap within 2s to exit         |
-| `Ctrl+D`           | Exit (when input is empty)                            |
-| `PgUp` / `PgDn`    | Scroll the output panel                               |
-| `Ctrl+↑` / `Ctrl+↓`| Scroll the output panel                               |
-| `End`              | Jump to bottom and re-lock to tail                    |
-| `Ctrl+T`           | Toggle copy mode (releases mouse for text selection)  |
-| `Tab`              | Cycle focus                                           |
-
-## Configuring the endpoint
-
-`agent_harness/client.py` builds the OpenAI-compatible client. Two modes:
-
-**OpenRouter** — `Agent(provider='openrouter', model='...')`. The client reads `OPENROUTER_API_KEY` and optionally `OPENROUTER_API_URL`. OpenRouter exposes every supported model (OpenAI, Anthropic, Google, Meta, etc.) through a single OpenAI-compatible endpoint — pick whatever `model` string you want from openrouter.ai/models.
-
-**Hosted vLLM** — `Agent(provider='vllm')`. The client reads `VLLM_API_URL` and `VLLM_MODEL` from `.env`. Point `VLLM_API_URL` at your RunPod (or other) endpoint. The hosted endpoint is treated as unauthenticated.
-
-The `Agent` class defaults to `provider='openrouter'`. Pass `provider='vllm'` explicitly to use a hosted vLLM endpoint. The `coding/__main__.py` entry point also selects its OpenRouter model explicitly.
-
-## Project layout
-
-```
-coding_agent/                        # uv workspace root (virtual — no built package)
-├── pyproject.toml                   # [tool.uv.workspace] members
-├── packages/
-│   ├── agent_harness/               # ENGINE — distributable (agent-harness)
-│   │   ├── pyproject.toml
-│   │   └── src/agent_harness/
-│   │       ├── __main__.py          # bare-base dev entry point (uv run python -m agent_harness)
-│   │       ├── agent.py             # Agent class — message history, tool registry, context wiring
-│   │       ├── client.py            # OpenAI-compatible client builder (vllm / openrouter)
-│   │       ├── loop.py              # streaming execution loop, tool-call reassembly
-│   │       ├── tool_handler.py      # tool dispatch (execution only)
-│   │       ├── decorator.py         # @agent_tool decorator + bind_tool
-│   │       ├── hooks.py             # lifecycle hook types
-│   │       ├── messages.py          # message constructors
-│   │       ├── skills.py            # skill loading + listing
-│   │       ├── usage.py             # token usage tracking
-│   │       ├── base_tools/          # base tools — search, extract, read, plan, skill, load_tool
-│   │       │   └── helpers/         # path normalization
-│   │       ├── context/
-│   │       │   └── system_prompt.md # always-loaded methodology (base)
-│   │       └── sinks/               # output sinks — base, stdout, log, langfuse, hooks
-│   └── tui/                         # FRONTEND — distributable (tui)
-│       ├── pyproject.toml
-│       └── src/tui/
-│           ├── app.py
-│           ├── cells/               # cell taxonomy (user/assistant/tool/error/diff/header)
-│           ├── panels/              # output/input/status panels
-│           ├── history.py
-│           ├── keybindings.py
-│           ├── sprites.py
-│           └── sink.py
-└── coding/                          # the coding DOMAIN (consumer; package=false)
-    ├── pyproject.toml
-    ├── __main__.py                  # user entry point (uv run python -m coding)
-    ├── tools/                       # bash, write, edit, glob, grep, tree
-    ├── system_prompt.md             # <role> + coding-specific constraints (appended to base)
-    └── skills/                      # coding-domain skills — auto-loaded via domain_root
-```
-
-The base (`agent_harness`, `tui`) is domain-agnostic. Domains assemble an Agent by passing constructor args (`system`, `tools`, `domain_root`); the framework discovers `<domain_root>/skills/` by convention and appends the domain's `system` string under a `<domain>` block. No subclassing needed. The base ships no skills of its own — skills like `skill_builder` live in a domain that has the tools to execute them (e.g. `coding/skills/`).
-
-### Consuming the engine from another repo
-
-The two libraries build as standalone wheels, so external systems pull them as Git dependencies — headless workers take just the engine, interactive apps add the TUI:
+Alternatively, declare a Git dependency, replacing the example host with this repository's location:
 
 ```toml
-# engine only (no TUI deps):
-"agent-harness @ git+https://your-host/coding_agent.git#subdirectory=packages/agent_harness"
-# with the terminal frontend:
-"tui @ git+https://your-host/coding_agent.git#subdirectory=packages/tui"
+[project]
+dependencies = [
+    "agent-harness @ git+https://your-host/agent_harness.git#subdirectory=packages/agent_harness",
+]
 ```
 
-## How the loop works
+Interactive applications can add the TUI wheel or Git dependency alongside the engine:
 
-`agent_harness/loop.py` is the load-bearing file. The model's response can interleave plain text, reasoning, and tool-call fragments — the latter arrive in pieces keyed by `index`, with the function name on the first fragment and arguments dribbling in across many subsequent chunks. The loop:
-
-1. Streams a completion, surfacing content and reasoning to the Sink as deltas.
-2. Reassembles fragmented `tool_calls` into complete dicts (index-keyed merge — concatenating in arrival order would corrupt parallel tool calls).
-3. If there are tool calls, executes each one through `ToolHandler.execute()` and appends the results as `role: "tool"` messages.
-4. Repeats until the model returns a turn with no tool calls — that's the final answer.
-5. Bails out at `max_iters` (default 100) to avoid runaway loops.
-
-Reasoning content is surfaced live but **deliberately not appended to history**, matching the convention for thinking-model APIs and keeping `<think>` blocks out of subsequent prompts.
+```toml
+[project]
+dependencies = [
+    "agent-harness @ git+https://your-host/agent_harness.git#subdirectory=packages/agent_harness",
+    "tui @ git+https://your-host/agent_harness.git#subdirectory=packages/tui",
+]
+```
 
 ## Programmatic use
 
-To drive the agent from a script instead of the TUI, import `Agent` directly and pass a `Sink`:
+The consuming application owns configuration bootstrap. The engine reads environment variables but does not load a `.env` file automatically.
+
+For the examples below, create a `.env` file next to your script:
+
+```dotenv
+OPENROUTER_API_KEY=your-api-key
+OPENROUTER_API_URL=https://openrouter.ai/api/v1
+```
+
+Replace `your-model-id` with the OpenRouter model you want to use.
+
+### Run just the agent
+
+Save this as `run_agent.py`:
+
+```python
+from dotenv import load_dotenv
+from agent_harness.agent import Agent
+
+
+if __name__ == "__main__":
+    load_dotenv()
+    agent = Agent(
+        provider="openrouter",
+        model="your-model-id",
+        system="You are a helpful assistant.",
+    )
+    result = agent.run("Explain how solar panels work.")
+```
+
+To try it from this repository, save the script in the repository root and run:
+
+```bash
+uv run --package agent-harness python run_agent.py
+```
+
+The response streams to stdout and is also returned as `result`. Pass a custom `sink` to change where output goes. An optional `cancel_event: threading.Event` requests cancellation. A task can also be supplied at construction with `Agent(task=...)` and executed with `run()`.
+
+### Configuration
+
+- **OpenRouter:** pass `provider="openrouter"` and an explicit model. Set `OPENROUTER_API_KEY` and `OPENROUTER_API_URL=https://openrouter.ai/api/v1`.
+- **Hosted vLLM:** pass `provider="vllm"`. Set `VLLM_API_URL` and either pass a model or set `VLLM_MODEL`.
+- **Web tools:** set `PARALLEL_API_KEY` to use the built-in web search and extraction tools.
+- **Tracing:** setting `LANGFUSE_PUBLIC_KEY` with the corresponding secret enables Langfuse instrumentation and sink composition. See `.env.example` for the available settings.
+
+### Custom tools and skills
+
+Define application-specific tools in the consuming project and pass them to the engine:
 
 ```python
 from agent_harness.agent import Agent
-from agent_harness.sinks import StdoutSink
+from agent_harness.decorator import agent_tool
 
-agent = Agent(provider='openrouter', model='anthropic/claude-opus-4.8')
-agent.run('summarize agent_harness/loop.py', sink=StdoutSink())
-```
-
-If `sink` is `None`, output goes to stdout via `StdoutSink`. An optional `cancel_event: threading.Event` lets you abort an in-flight turn. The task can also be set at init via `Agent(task=...)` and `run()` called with no argument — handy for batch pipelines.
-
-## Adding a tool
-
-A tool is just a dict with four keys: `name`, `description`, `parameters` (JSON Schema), `function` (callable). Put base tools in `agent_harness/base_tools/`; put domain tools in `<domain>/tools/`:
-
-```python
-# coding/tools/echo.py
+@agent_tool(name="Echo")
 def echo(text: str) -> str:
+    """Echo text back unchanged."""
     return text
 
-tool = {
-    'name': 'echo',
-    'description': 'Echo a string back unchanged.',
-    'parameters': {
-        'type': 'object',
-        'properties': {
-            'text': {'type': 'string', 'description': 'String to echo.'},
-        },
-        'required': ['text'],
-    },
-    'function': echo,
-}
+agent = Agent(tools=[echo], system="You are a concise assistant.")
 ```
 
-Then pass it to the Agent at construction (preferred) or register it after:
+Tool dictionaries with `name`, `description`, `parameters`, and `function` are also supported. Registering a duplicate name keeps the existing tool and emits a warning. Tools passed to the constructor are added to the built-in tools.
+
+For application-owned skills, pass `domain_root=Path(...)`; the harness discovers `<domain_root>/skills/`. The supplied `system` text is appended to the base prompt. This repository supplies the loading mechanism; consuming applications own their skill content.
+
+### Optional terminal frontend
+
+A consuming application can attach the TUI to its agent. Save this as `run_tui.py`, using the same `.env` settings above:
 
 ```python
-from agent_harness.agent import Agent
-from coding.tools import echo
+import asyncio
 
-agent = Agent(tools=[echo.tool])
-# or: agent.add_tool(echo.tool)
+from dotenv import load_dotenv
+from agent_harness.agent import Agent
+from tui.app import TUIApp
+
+
+async def main():
+    load_dotenv()
+
+    agent = Agent(
+        provider="openrouter",
+        model="your-model-id",
+        system="You are a helpful assistant.",
+        # tools=[your_custom_tool],
+    )
+
+    await TUIApp(agent).run_async()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
-`add_tool` is idempotent by name — re-registering is a silent no-op (logs a warning), not an error. The schema goes to the model on the next request, and `ToolHandler` dispatches to your `function` when the model calls it.
+To try it from this repository, save the script in the repository root and run:
 
-## License
+```bash
+uv run --package tui python run_tui.py
+```
 
-MIT — add a `LICENSE` file if you fork this.
+The frontend provides streaming display, tool history, usage status, scrolling, and cancellation controls. Both examples use the harness's built-in tools; add your own through `tools=[...]`.
+
+In a separate project with the libraries installed, run `uv run python run_agent.py` or `uv run python run_tui.py` without the workspace-specific `--package` option.
+
+## Repository layout
+
+```text
+agent_harness/
+├── pyproject.toml                   # virtual workspace root
+├── README.md
+└── packages/
+    ├── agent_harness/
+    │   ├── pyproject.toml           # distributable engine
+    │   └── src/agent_harness/
+    │       ├── agent.py             # agent configuration and state
+    │       ├── client.py            # provider client construction
+    │       ├── loop.py              # streaming execution loop
+    │       ├── tool_handler.py      # tool dispatch
+    │       ├── decorator.py         # tool schema generation and binding
+    │       ├── hooks.py
+    │       ├── gates.py
+    │       ├── sub_agent.py
+    │       ├── messages.py
+    │       ├── skills.py
+    │       ├── usage.py
+    │       ├── base_tools/
+    │       ├── context/             # base system prompt
+    │       ├── sinks/
+    │       └── tests/               # live development demos
+    └── tui/
+        ├── pyproject.toml           # optional frontend library
+        └── src/tui/
+            ├── app.py
+            ├── sink.py
+            ├── history.py
+            ├── keybindings.py
+            ├── sprites.py
+            ├── cells/
+            └── panels/
+```
+
+The dependency direction is `tui → agent-harness`. External applications depend on the engine and optionally the frontend.
+
+## Development and builds
+
+The repository pins Python 3.12 for local development.
+
+```bash
+uv sync --all-packages
+cp .env.example .env
+# Edit .env with credentials for any live development runs.
+```
+
+Build the distributable engine, or both libraries:
+
+```bash
+uv build --package agent-harness
+uv build --all-packages
+```
+
+Build output goes to `dist/`. The workspace root is not itself a distributable package.
+
+A headless development entry point exercises the base engine:
+
+```bash
+uv run --package agent-harness python -m agent_harness
+```
+
+It uses the model configured in `agent_harness/__main__.py`. Live demos under `agent_harness/tests/` demonstrate hooks, gates, and subagent delegation; they require configured providers and can incur API usage.
+
+## Execution flow
+
+1. Stream a completion and send content/reasoning deltas to the sink.
+2. Reassemble tool-call fragments by index.
+3. Execute requested tools through `ToolHandler` and append their results to message history.
+4. Repeat until the model returns an answer without tool calls, cancellation is requested, or `max_iters` is reached.
+
+Reasoning is surfaced to sinks but is not appended to conversation history.

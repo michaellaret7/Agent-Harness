@@ -9,7 +9,7 @@ function directly — it reads `.tool` off it.
 Trimmed port of the ProphitAI Atlas decorator — dropped `Schema()` injection
 (no current consumer) and the `additionalProperties: False` line to match
 the existing hand-written schemas. Runtime validation returns an `error: ...`
-string (the Coding Agent tool-error convention) rather than a structured
+string (the harness tool-error convention) rather than a structured
 response.
 
 Example:
@@ -405,7 +405,7 @@ def agent_tool(
     and `__doc__`, which `functools.wraps` preserves.
 
     The wrapper validates arguments at call time and returns an `error: ...`
-    string on bad input (matches the Coding Agent tool-error convention).
+    string on bad input (matches the harness tool-error convention).
 
     Args:
         name: Override the tool name (defaults to the function name).
