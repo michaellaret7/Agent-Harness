@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 
 from agent_harness.agent import Agent
+from agent_harness.base_tools.execute_code import execute_code_tool
 
 
 def main() -> None:
@@ -25,9 +26,12 @@ def main() -> None:
     # Agent so `agent_harness/` (which only reads the environment) sees credentials.
     load_dotenv()
 
+    # The sandbox behind ExecuteCode outlives every run so variables persist
+    # across tasks; its kernel is killed automatically at interpreter exit.
     agent = Agent(
         provider='openrouter', 
-        model='qwen/qwen3.7-max'
+        model='qwen/qwen3.7-max',
+        tools=[execute_code_tool()],
     )
 
     while True:
