@@ -28,7 +28,7 @@ Python 3.12 and 3.13 are supported. The client currently supports OpenRouter and
 Install a built engine wheel into the consuming project:
 
 ```bash
-uv add /path/to/agent_harness/dist/agent_harness-0.1.0-py3-none-any.whl
+uv add /path/to/agent_harness/dist/agent_harness-1.0.0-py3-none-any.whl
 ```
 
 Alternatively, declare a Git dependency, replacing the example host with this repository's location:
@@ -104,16 +104,23 @@ Define application-specific tools in the consuming project and pass them to the 
 ```python
 from agent_harness.agent import Agent
 from agent_harness.decorator import agent_tool
+from agent_harness.tool_result import ToolResult
 
 @agent_tool(name="Echo")
-def echo(text: str) -> str:
+def echo(text: str) -> ToolResult:
     """Echo text back unchanged."""
-    return text
+    return ToolResult(text, status='ok')
 
 agent = Agent(tools=[echo], system="You are a concise assistant.")
 ```
 
 Tool dictionaries with `name`, `description`, `parameters`, and `function` are also supported. Registering a duplicate name keeps the existing tool and emits a warning. Tools passed to the constructor are added to the built-in tools.
+
+Every tool callable must return `ToolResult(payload: str, status='ok' | 'error')`.
+Status is independent of payload text; exceptions are converted to error results
+by the handler. Version 1.0 removes plain-value tool returns and the `error:`
+prefix convention for detecting failures. See [the tool result contract](docs/tools/results.md)
+for migration and batch-result semantics.
 
 For application-owned skills, pass `domain_root=Path(...)`; the harness discovers `<domain_root>/skills/`. The supplied `system` text is appended to the base prompt. This repository supplies the loading mechanism; consuming applications own their skill content.
 

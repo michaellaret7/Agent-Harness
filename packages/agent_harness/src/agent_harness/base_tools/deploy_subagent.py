@@ -19,6 +19,7 @@ from typing import Annotated, Any, Callable
 
 from agent_harness.decorator import Param, agent_tool, bind_tool
 from agent_harness.sinks import LogSink
+from agent_harness.tool_result import ToolResult
 
 
 #     ================================
@@ -58,7 +59,7 @@ def deploy_subagent(
     name: Annotated[str, Param(description='Which subagent to deploy.')],
     prompt: Annotated[str, Param(description='The task to hand the subagent.')],
     _registry: dict[str, SubAgentConfig] | None = None,
-) -> str:
+) -> ToolResult:
     """Hand a self-contained task to a named subagent and return its result.
 
     The subagent runs to completion with its own tools and isolated message
@@ -69,16 +70,18 @@ def deploy_subagent(
     from agent_harness.sub_agent import SubAgent
 
     if _registry is None:
-        return 'error: DeploySubagent not bound to a registry'
+        return ToolResult('error: DeploySubagent not bound to a registry', status='error')
 
     spec = _registry.get(name)
 
     if spec is None:
-        return f"error: no subagent named '{name}'. Available: {sorted(_registry)}"
+        return ToolResult(f"error: no subagent named '{name}'. Available: {sorted(_registry)}", status='error')
 
     # Subagents always log through a LogSink keyed by name (`agent.<name>`),
     # so a deployment's events land in the logging stream rather than stdout.
-    return SubAgent.from_spec(spec).run(prompt, sink=LogSink(name))
+    result = SubAgent.from_spec(spec).run(prompt, sink=LogSink(name))
+
+    return ToolResult(str(result), status='ok')
 
 
 def make_deploy_subagent_tool(registry: dict[str, SubAgentConfig]) -> dict[str, Any]:

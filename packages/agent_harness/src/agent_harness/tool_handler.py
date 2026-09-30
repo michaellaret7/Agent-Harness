@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 from agent_harness.gates import GateContext
 from agent_harness.messages import tool_msg
+from agent_harness.tool_result import ToolResult
 from agent_harness.sinks.base import Sink, ToolOutcome, ToolStatus
 
 if TYPE_CHECKING:
@@ -200,14 +201,13 @@ class ToolHandler:
         # Run the actual tool funtion and return the result
         result = self._invoke(name, kwargs)
 
-        # Check the success status of the tool and see if it threw an error or not
-        # If there was an error update the tool status else return ok
-        status: ToolStatus = 'error' if result.startswith('error:') else 'ok'
+        # Read the explicit tool status independently of its model-facing payload.
+        status: ToolStatus = result.status
 
         if name == 'Plan' and status == 'ok':
             sink.on_plan_update(self.agent.plan)
 
-        return result, status
+        return result.payload, status
 
     def _is_parallel(self, tc: dict) -> bool:
         """A small helper function to check whether a tool call's underlying tool opted into safe parallelism."""
@@ -270,16 +270,17 @@ class ToolHandler:
         # If no gate applied, just pass the kwargs through to the invoke method
         return kwargs, None
 
-    def _invoke(self, name: str, kwargs: dict) -> str:
+    def _invoke(self, name: str, kwargs: dict) -> ToolResult:
         """Look up the registered function and run it with exception wrapping."""
 
         # Check to make sure the deferred tools get loaded before being called if they are deferred
         # (LoadTool pops loaded tools out of the registry, so membership alone means "not yet loaded")
         if name in self.agent.deferred_tools:
-            return (
+            return ToolResult(
                 f'error: {name!r} is deferred. Call LoadTool(names=[{name!r}]) '
                 f'first to retrieve the full schema, then call {name} with the '
-                f'correct arguments.'
+                f'correct arguments.',
+                status='error',
             )
 
         # Get the tool function from the agent's tool functions dictionary
@@ -287,12 +288,17 @@ class ToolHandler:
 
         # If the tool name is not found in the tool function dictionary, return an error
         if fn is None:
-            return f'error: unknown tool {name!r}'
+            return ToolResult(f'error: unknown tool {name!r}', status='error')
 
         try:
             # Run the actual tool function with the keyword arguments 
-            # Return the result as a string
-            return str(fn(**kwargs))
+            # Require an explicit result; arbitrary output cannot imply success.
+            result = fn(**kwargs)
+
+            if not isinstance(result, ToolResult):
+                raise TypeError(f'tool {name!r} must return ToolResult, got {type(result).__name__}')
+
+            return result
 
         except Exception as e:
-            return f'error: {type(e).__name__}: {e}'
+            return ToolResult(f'error: {type(e).__name__}: {e}', status='error')

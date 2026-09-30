@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from agent_harness.decorator import Param, agent_tool
+from agent_harness.tool_result import ToolResult
 from agent_harness.skills import SKILL_FILE, Skill, parse_frontmatter
 
 
@@ -21,7 +22,7 @@ from agent_harness.skills import SKILL_FILE, Skill, parse_frontmatter
 def load_skill(
     skill: Annotated[str, Param(description='Name of the skill to load (from the <skills> listing).')],
     _skills_map: dict[str, Skill] | None = None,
-) -> str:
+) -> ToolResult:
     """
     Load the full instructions for a skill listed in the <skills> block of
     the system prompt. CALL THIS FIRST whenever a skill's description matches
@@ -36,7 +37,7 @@ def load_skill(
 
     if match is None:
         available = ', '.join(sorted(by_name)) or '(none)'
-        return f'error: unknown skill {skill!r}. Available: {available}'
+        return ToolResult(f'error: unknown skill {skill!r}. Available: {available}', status='error')
 
     skill_md = match.root / SKILL_FILE
 
@@ -44,11 +45,12 @@ def load_skill(
         text = skill_md.read_text(encoding='utf-8')
 
     except (OSError, UnicodeDecodeError) as e:
-        return f'error: cannot read {skill_md}: {e}'
+        return ToolResult(f'error: cannot read {skill_md}: {e}', status='error')
 
     _, body = parse_frontmatter(text)
 
-    return (
+    return ToolResult(
         f'Base directory for this skill: {match.root}\n\n'
-        f'{body.rstrip()}\n'
+        f'{body.rstrip()}\n',
+        status='ok',
     )

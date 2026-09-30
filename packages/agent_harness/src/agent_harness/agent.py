@@ -19,6 +19,7 @@ from agent_harness.sinks import MultiSink, Sink, StdoutSink, compose_sinks
 from agent_harness.sinks.hooks import HookSink
 from agent_harness.skills import Skill, format_skill_listing, load_skills
 from agent_harness.tool_handler import ToolHandler
+from agent_harness.tool_result import ToolResult
 from agent_harness.base_tools.extract import extract
 from agent_harness.base_tools.load_tool import load_tool
 from agent_harness.base_tools.plan import plan
@@ -63,7 +64,7 @@ class Agent:
 
         # Tool registry
         self.tools: list[dict[str, Any]] = []
-        self.tool_functions: dict[str, Callable] = {}
+        self.tool_functions: dict[str, Callable[..., ToolResult]] = {}
         self.deferred_tools: dict[str, dict[str, Any]] = {}
         self.parallel_tools: set[str] = set()
 
@@ -127,6 +128,7 @@ class Agent:
 
         Accepts either a tool dict (`{name, description, parameters, function, deferred?}`)
         or a function decorated with `@agent_tool` (carries `.tool` attr).
+        Tool functions must return ToolResult with explicit payload and status.
         No-op if a tool with the same name is already registered.
 
         If `deferred` is True, the entry stored in `self.tools` carries a

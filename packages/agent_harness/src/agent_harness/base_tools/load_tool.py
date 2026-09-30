@@ -22,6 +22,7 @@ import json
 from typing import Annotated, Any
 
 from agent_harness.decorator import Param, agent_tool
+from agent_harness.tool_result import ToolResult
 
 
 @agent_tool(name='LoadTool')
@@ -29,7 +30,7 @@ def load_tool(
     names: Annotated[list[str], Param(description='Tool names to load full schemas for.')],
     _deferred_tools: dict[str, dict[str, Any]] | None = None,
     _api_tools: list[dict[str, Any]] | None = None,
-) -> str:
+) -> ToolResult:
     """
     Load the full schema(s) for one or more deferred tools. Use this whenever
     you need to call a tool whose description ends with ` [deferred]` — the
@@ -43,9 +44,10 @@ def load_tool(
     api_tools = _api_tools if _api_tools is not None else []
 
     if not names:
-        return 'error: provide at least one tool name'
+        return ToolResult('error: provide at least one tool name', status='error')
 
     blocks: list[str] = []
+    failed = False
 
     for name in names:
         match = registry.pop(name, None)
@@ -54,6 +56,7 @@ def load_tool(
             if any(entry['function']['name'] == name for entry in api_tools):
                 blocks.append(f'{name!r} is already loaded — call it directly.')
             else:
+                failed = True
                 available = ', '.join(sorted(registry)) or '(none)'
                 blocks.append(f'error: unknown deferred tool {name!r}. Available: {available}')
 
@@ -78,4 +81,4 @@ def load_tool(
 
         blocks.append(f'Schema for {name!r}:\n{json.dumps(schema, indent=2)}')
 
-    return '\n\n'.join(blocks)
+    return ToolResult('\n\n'.join(blocks), status='error' if failed else 'ok')

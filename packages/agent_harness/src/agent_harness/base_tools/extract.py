@@ -20,9 +20,10 @@ from typing import Annotated
 import httpx
 
 from agent_harness.decorator import Param, agent_tool
+from agent_harness.tool_result import ToolResult
 
 ENDPOINT = 'https://api.parallel.ai/v1/extract'
-CLIENT_MODEL = 'claude-opus-4-7'
+CLIENT_MODEL = 'claude-opus-4-7' # TODO: MAKE THIS A NEWER MODEL
 DEFAULT_TIMEOUT = 120  # Reason: full-page extracts of slow sites can take 60s+.
 MAX_URLS = 20  # Reason: API hard limit.
 MAX_OUTPUT_CHARS = 24000  # Reason: extracts are deeper than search excerpts; allow more room.
@@ -35,7 +36,7 @@ def extract(
     objective: Annotated[str | None, Param(description='Natural-language description of what you are looking for on these pages. When set, the API returns excerpts focused on this objective (ignored if full_content=True).')] = None,
     full_content: Annotated[bool, Param(description='If True, returns the entire page as markdown instead of focused excerpts. Use when the objective is too broad to pre-filter, or when you need details beyond what excerpts surface. Default False.')] = False,
     max_chars_per_result: Annotated[int, Param(description='Max characters per excerpt block. Values below 1000 are floored to 1000 by the API. Default 4000.')] = 4000,
-) -> str:
+) -> ToolResult:
     """
     Fetch and extract URL content via the Parallel Extract API. Returns clean
     markdown — either focused excerpts aligned to `objective` (default) or the
@@ -45,13 +46,13 @@ def extract(
     """
     api_key = os.environ.get('PARALLEL_API_KEY')
     if not api_key:
-        return 'error: PARALLEL_API_KEY not set'
+        return ToolResult('error: PARALLEL_API_KEY not set', status='error')
 
     if not urls:
-        return 'error: urls is empty'
+        return ToolResult('error: urls is empty', status='error')
 
     if len(urls) > MAX_URLS:
-        return f'error: max {MAX_URLS} urls per request, got {len(urls)}'
+        return ToolResult(f'error: max {MAX_URLS} urls per request, got {len(urls)}', status='error')
 
     advanced: dict = {
         'excerpt_settings': {'max_chars_per_result': max_chars_per_result},
@@ -80,13 +81,13 @@ def extract(
         response.raise_for_status()
 
     except httpx.TimeoutException:
-        return f'error: Parallel Extract timed out after {DEFAULT_TIMEOUT}s'
+        return ToolResult(f'error: Parallel Extract timed out after {DEFAULT_TIMEOUT}s', status='error')
 
     except httpx.HTTPStatusError as e:
-        return f'error: Parallel Extract returned HTTP {e.response.status_code}: {e.response.text[:500]}'
+        return ToolResult(f'error: Parallel Extract returned HTTP {e.response.status_code}: {e.response.text[:500]}', status='error')
 
     except httpx.RequestError as e:
-        return f'error: Parallel Extract request failed: {type(e).__name__}: {e}'
+        return ToolResult(f'error: Parallel Extract request failed: {type(e).__name__}: {e}', status='error')
 
     data = response.json()
     results = data.get('results') or []
@@ -95,9 +96,12 @@ def extract(
     if not results and not errors:
         warnings = data.get('warnings') or []
         suffix = f'  warnings: {warnings}' if warnings else ''
-        return f'[no results]{suffix}'
+        return ToolResult(f'[no results]{suffix}', status='ok')
 
-    return _format_output(results, errors, full_content)
+    return ToolResult(
+        _format_output(results, errors, full_content),
+        status='error' if errors else 'ok',
+    )
 
 
 def _format_output(results: list[dict], errors: list[dict], full_content: bool) -> str:

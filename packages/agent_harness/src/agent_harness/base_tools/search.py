@@ -14,6 +14,7 @@ from typing import Annotated, Literal
 import httpx
 
 from agent_harness.decorator import Param, agent_tool
+from agent_harness.tool_result import ToolResult
 
 ENDPOINT = 'https://api.parallel.ai/v1/search'
 CLIENT_MODEL = 'claude-opus-4-7'
@@ -31,7 +32,7 @@ def search(
     include_domains: Annotated[list[str] | None, Param(description='Optional allowlist of apex domains (e.g. ["arxiv.org", "nature.com"]) or wildcard TLDs (".gov", ".edu"). Restrictive — use only when single-publisher or compliance scope is required.')] = None,
     exclude_domains: Annotated[list[str] | None, Param(description='Optional blocklist of apex domains. Combined with include_domains, total must be <= 200.')] = None,
     after_date: Annotated[str | None, Param(description='Recency filter; YYYY-MM-DD. Only results published on or after this date.')] = None,
-) -> str:
+) -> ToolResult:
     """
     Web search via the Parallel Search API. Returns ranked URLs with extended
     page excerpts optimized for LLM consumption. Use mode="basic" for routine
@@ -43,7 +44,7 @@ def search(
     """
     api_key = os.environ.get('PARALLEL_API_KEY')
     if not api_key:
-        return 'error: PARALLEL_API_KEY not set'
+        return ToolResult('error: PARALLEL_API_KEY not set', status='error')
 
     advanced: dict = {
         'excerpt_settings': {'max_chars_per_result': max_chars_per_result},
@@ -82,13 +83,13 @@ def search(
         response.raise_for_status()
 
     except httpx.TimeoutException:
-        return f'error: Parallel Search timed out after {DEFAULT_TIMEOUT}s'
+        return ToolResult(f'error: Parallel Search timed out after {DEFAULT_TIMEOUT}s', status='error')
 
     except httpx.HTTPStatusError as e:
-        return f'error: Parallel Search returned HTTP {e.response.status_code}: {e.response.text[:500]}'
+        return ToolResult(f'error: Parallel Search returned HTTP {e.response.status_code}: {e.response.text[:500]}', status='error')
 
     except httpx.RequestError as e:
-        return f'error: Parallel Search request failed: {type(e).__name__}: {e}'
+        return ToolResult(f'error: Parallel Search request failed: {type(e).__name__}: {e}', status='error')
 
     data = response.json()
     results = data.get('results') or []
@@ -96,9 +97,9 @@ def search(
     if not results:
         warnings = data.get('warnings') or []
         suffix = f'  warnings: {warnings}' if warnings else ''
-        return f'[no results]{suffix}'
+        return ToolResult(f'[no results]{suffix}', status='ok')
 
-    return _format_results(results)
+    return ToolResult(_format_results(results), status='ok')
 
 
 def _format_results(results: list[dict]) -> str:

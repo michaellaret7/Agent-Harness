@@ -7,7 +7,7 @@ plan, the tool clears and refills the list, then returns the rendered
 state as the tool-result string.
 
 Validation is hard-fail: invalid `status` values or more than one
-`in_progress` item return `error: ...` and leave the plan unchanged.
+`in_progress` item return an error ToolResult and leave the plan unchanged.
 
 `self.plan` is injected into the hidden `_plan` parameter via `bind_tool`
 at registration time (see `agent.py`), so that underscore-prefixed parameter
@@ -19,6 +19,7 @@ import json
 from typing import Annotated, Any, Literal, TypedDict
 
 from agent_harness.decorator import Param, agent_tool
+from agent_harness.tool_result import ToolResult
 
 ALLOWED_STATUSES = ('pending', 'in_progress', 'completed')
 
@@ -130,7 +131,7 @@ def plan(
         )),
     ],
     _plan: list[dict] | None = None,
-) -> str:
+) -> ToolResult:
     """Replace the entire plan with the given items.
 
     Call this to create, update, reorder, or clear the plan. Each call is
@@ -142,23 +143,23 @@ def plan(
       - `status`: one of "pending", "in_progress", "completed"
 
     At most one item may have status "in_progress" at a time. Returns the
-    rendered plan after the update; returns an error string (and leaves
+    rendered plan in a ToolResult after the update; returns error status (and leaves
     the plan unchanged) on invalid input.
     """
     if _plan is None:
-        return 'error: Plan tool not bound to an agent state'
+        return ToolResult('error: Plan tool not bound to an agent state', status='error')
 
     coerced, err = _coerce(items)
 
     if err is not None:
-        return f'error: {err}'
+        return ToolResult(f'error: {err}', status='error')
 
     err = _validate(coerced)
 
     if err is not None:
-        return f'error: {err}'
+        return ToolResult(f'error: {err}', status='error')
 
     _plan.clear()
     _plan.extend({'text': item['text'], 'status': item['status']} for item in coerced)
 
-    return _render(_plan)
+    return ToolResult(_render(_plan), status='ok')

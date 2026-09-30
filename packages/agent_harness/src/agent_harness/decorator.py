@@ -8,20 +8,20 @@ function directly — it reads `.tool` off it.
 
 Trimmed port of the ProphitAI Atlas decorator — dropped `Schema()` injection
 (no current consumer) and the `additionalProperties: False` line to match
-the existing hand-written schemas. Runtime validation returns an `error: ...`
-string (the harness tool-error convention) rather than a structured
-response.
+the existing hand-written schemas. Runtime validation returns a ToolResult
+with explicit error status, just like tool implementations.
 
 Example:
 
     from typing import Annotated
     from agent_harness.decorator import agent_tool, Param
+    from agent_harness.tool_result import ToolResult
 
     @agent_tool(name='Bash')
     def bash(
         command: Annotated[str, Param(description='The bash command.')],
         timeout: int = 120,
-    ) -> str:
+    ) -> ToolResult:
         '''Execute a bash command and return combined stdout/stderr.'''
         ...
 
@@ -39,6 +39,8 @@ import types
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, Callable, Literal, Union, get_args, get_origin, get_type_hints, is_typeddict
+
+from agent_harness.tool_result import ToolResult
 
 #     ================================
 # --> Helper dataclasses
@@ -404,8 +406,8 @@ def agent_tool(
     Must be the outermost decorator when stacked — relies on `__annotations__`
     and `__doc__`, which `functools.wraps` preserves.
 
-    The wrapper validates arguments at call time and returns an `error: ...`
-    string on bad input (matches the harness tool-error convention).
+    The wrapper validates arguments at call time and returns a ToolResult
+    with error status on bad input. Tool functions must return ToolResult.
 
     Args:
         name: Override the tool name (defaults to the function name).
@@ -433,7 +435,7 @@ def agent_tool(
                 bound.apply_defaults()
 
             except TypeError as e:
-                return f'error: {e}'
+                return ToolResult(f'error: {e}', status='error')
 
             for pname, (meta, literal_values) in validators.items():
                 if pname not in bound.arguments:
@@ -442,7 +444,7 @@ def agent_tool(
                 err = _check_value(pname, bound.arguments[pname], meta, literal_values)
 
                 if err:
-                    return f'error: {err}'
+                    return ToolResult(f'error: {err}', status='error')
 
             return fn(*args, **kwargs)
 
