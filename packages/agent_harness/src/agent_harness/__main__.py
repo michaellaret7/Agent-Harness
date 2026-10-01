@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 
 from agent_harness.agent import Agent
-from agent_harness.base_tools.execute_code import execute_code_tool
+from agent_harness.base_tools.code_execution.tool import execute_code_tool
 
 
 def main() -> None:

@@ -4,17 +4,17 @@ This file provides guidance to OpenAI Codex when working with code in this repos
 
 ## Commands
 
-This repo is a **uv workspace** of three packages (see Architecture). Install the whole workspace into one shared venv with `uv sync --all-packages` — a plain `uv sync` only syncs the virtual root (which depends on nothing) and leaves the members uninstalled.
+This repo is a **uv workspace** of two library packages (see Architecture). Install the whole workspace into one shared venv with `uv sync --all-packages` — a plain `uv sync` only syncs the virtual root (which depends on nothing) and leaves the members uninstalled.
 
 Entry points:
-- `uv run python -m coding` — the coding-domain agent (bash, read/write/edit, glob/grep/tree + base web tools).
-- `uv run python -m agent_harness` — the bare base agent with no domain tools. Used as a dev sanity check that the streaming loop and TUI work end-to-end without any coding tools attached.
+- `uv run --package agent-harness python -m agent_harness` — a headless development agent with built-in tools and ExecuteCode.
+- `uv run --package agent-harness python examples/stock_data_analysis.py` — the live stock-data and code-screening example.
 
-Both launch the TUI (`tui/app.py`). To use the agent programmatically, import `Agent` and call `agent.run(task, sink=..., cancel_event=...)`. The task can also be set at init via `Agent(task=...)` and `run()` called with no arg — useful for batch pipelines. If `sink` is None, output goes to stdout via `StdoutSink`.
+Both run headlessly. Applications can opt into the TUI (`tui/app.py`); see the README example. To use the agent programmatically, use `from agent_harness import Agent` and call `agent.run(task, sink=..., cancel_event=...)`. The task can also be set at init via `Agent(task=...)` and `run()` called with no arg — useful for batch pipelines. If `sink` is None, output goes to stdout via `StdoutSink`.
 
 Supports Python 3.12–3.13 (`>=3.12,<3.14` in `pyproject.toml`); `.python-version` keeps this repo's own venv on 3.12. uv will refuse to sync on a 3.14 interpreter.
 
-There is no test suite or linter configured. The two library packages build as wheels via hatchling (`uv build packages/agent_harness`); `coding` is a non-package (`package = false`) consumer that runs in place.
+Executable integration checks live in root `tests/`: `test_code_execution.py`, `test_subagent_tools.py`, and `test_code_screen.py`. Run them with `uv run --package agent-harness python tests/<file>.py`; the screening checks require live OpenRouter credentials. No test runner or linter is configured. The two library packages build as wheels via hatchling (`uv build --all-packages`).
 
 ## Response Type 
 - Please be clear, concise, and to the point in your responses and do your best to avoid unecessary verbosity
@@ -27,11 +27,12 @@ There is no test suite or linter configured. The two library packages build as w
 
 ### Workspace layout
 
-The repo is a **uv workspace** with a virtual root (`pyproject.toml` at the repo root holds only `[tool.uv.workspace]`, `package = false`). Three members:
+The repo is a **uv workspace** with a virtual root (`pyproject.toml` declares the workspace and development dependencies, with `package = false`). Two members:
 
 - `packages/agent_harness/` — the `agent-harness` distributable (import `agent_harness`). The base `Agent` class, streaming loop, ToolHandler, sinks, and base tools (`agent_harness/base_tools/`: WebSearch, WebExtract, Plan, LoadTool). Domain-agnostic. Treat it as the shared package: no domain logic leaks in, and the dependency direction is one-way (frontend/domains → `agent_harness`, never the reverse). It **reads** configuration (`os.getenv`) but never **loads** it — applications (the entry points) own bootstrap, including `load_dotenv()`. Core deps are `openai`/`httpx`/`pydantic`/`langfuse` — the LangfuseSink ships with the engine and auto-registers when `LANGFUSE_PUBLIC_KEY` is present (its import in `sinks/__init__.py` is lazy, gated on that env var, so the package is pulled but only loaded when tracing is on). Built with hatchling under `src/` layout.
 - `packages/tui/` — the `tui` distributable (import `tui`). prompt_toolkit + Rich frontend; depends on `agent-harness`. Generic — no domain knowledge. `prompt_toolkit`/`rich` live here, not in the engine, so headless consumers of `agent_harness` never pull terminal-UI deps.
-- `coding/` — the coding **domain** and in-repo consumer (`package = false`, runs in place; consumes both libraries). Owns coding-specific tools (`coding/tools/`), system prompt (`coding/system_prompt.md`), memory (`coding/memory.md`), and the user-facing entry point (`coding/__main__.py`).
+
+Application-specific agents live in consuming projects. Root `examples/` contains runnable demonstrations, root `tests/` contains integration checks, and `docs/` contains technical documentation. Code execution lives together under `agent_harness/base_tools/code_execution/`: `tool.py`, `sandbox.py`, `kernel.py`, and `screening.py`. Shared `SubAgentConfig` belongs in `agent_harness/subagent_config.py`; the model-facing deployment tool remains in `base_tools/deploy_subagent.py`.
 
 **On distribution & backwards-compat:** the two library packages are meant to be consumed by domains in *other* repos (via Git dependency, e.g. `agent-harness @ git+…#subdirectory=packages/agent_harness`). Because external systems pin a version, `agent_harness`'s public API warrants SemVer discipline — the "No backwards-compatibility shims / update every caller" Hard Rule below applies cleanly *within* this workspace, but a breaking change to the engine's public surface is a real major-version event for outside consumers.
 
@@ -55,7 +56,7 @@ Both providers (`vllm`, `openrouter`) talk through the **OpenAI Python SDK**. `a
 - `vllm` uses a placeholder API key (the hosted endpoint is unauthenticated) and pulls `VLLM_API_URL` / `VLLM_MODEL` from env.
 - `openrouter` requires `OPENROUTER_API_KEY` and a `model` argument (any model string from openrouter.ai/models); `OPENROUTER_API_URL` is optional.
 
-Note: the `Agent` class defaults to `provider='openrouter'`. `coding/__main__.py` (the user entry point) also selects its OpenRouter model explicitly. Pass `provider='vllm'` to use the hosted vLLM endpoint.
+Note: the `Agent` class defaults to `provider='openrouter'`. `agent_harness/__main__.py` (the development entry point) also selects its OpenRouter model explicitly. Pass `provider='vllm'` to use the hosted vLLM endpoint.
 
 ### The streaming loop (`agent_harness/loop.py`)
 
@@ -69,15 +70,17 @@ The loop bails at `max_iters` (default 100) to prevent runaway tool-call cycles.
 
 ### Agent ↔ ToolHandler split
 
+Tool infrastructure lives in `agent_harness/tooling/`: `decorator.py` generates schemas and binds dependencies, `handler.py` dispatches calls, and `result.py` defines `ToolResult`. Actual model-facing tools live separately in `base_tools/`.
+
 `Agent` owns the tool **registry** (`self.tools` schema list + `self.tool_functions` callable map) and message history. `ToolHandler` owns **execution only** — it reads from `agent.tool_functions` and returns `role: "tool"` messages. The handler does not register tools. Keep this split when extending: registration on `Agent`, dispatch on `ToolHandler`.
 
 ### Tool schema
 
-A tool module exports a `tool` dict with exactly four keys: `name`, `description`, `parameters` (JSON Schema), `function` (callable). Register via `agent.add_tool(module.tool)`. Functions decorated with `@agent_tool` (see `agent_harness/decorator.py`) carry the dict on their `.tool` attribute; pass the function itself: `agent.add_tool(my_fn)`. `add_tool` is idempotent by name — re-registering is a silent no-op, not an error.
+A tool module exports a `tool` dict with exactly four keys: `name`, `description`, `parameters` (JSON Schema), `function` (callable). Register via `agent.add_tool(module.tool)`. Functions decorated with `@agent_tool` (see `agent_harness/tooling/decorator.py`) carry the dict on their `.tool` attribute; pass the function itself: `agent.add_tool(my_fn)`. `add_tool` is idempotent by name — re-registering is a silent no-op, not an error.
 
-### Bash tool platform handling
+### Code execution platform handling
 
-`coding/tools/bash.py` intentionally avoids `shell=True` and resolves a real bash binary at import time. On Windows it prefers Git Bash paths and skips `System32\bash.exe` (WSL), which sees a different filesystem. `BASH_PATH` env var overrides the lookup. Don't replace this with `shell=True` — it would silently dispatch to `cmd.exe` on Windows, which doesn't understand the POSIX commands the model emits.
+`base_tools/code_execution/sandbox.py` launches the sibling `kernel.py` using an explicit Python executable, without `shell=True`. Preserve this relationship when moving either file: the kernel runs as a standalone script in the sandbox workspace.
 
 ## Configuration
 

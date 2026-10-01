@@ -12,10 +12,10 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from agent_harness.base_tools.execute_code import execute_code, execute_code_tool
-from agent_harness.base_tools.helpers import sandbox as sandbox_module
-from agent_harness.base_tools.helpers.sandbox import SubprocessSandbox
-from agent_harness.decorator import bind_tool
+from agent_harness.base_tools.code_execution.tool import execute_code, execute_code_tool
+from agent_harness.base_tools.code_execution import sandbox as sandbox_module
+from agent_harness.base_tools.code_execution.sandbox import SubprocessSandbox
+from agent_harness.tooling.decorator import bind_tool
 
 REAL_VENV_CACHE = sandbox_module.VENV_CACHE
 

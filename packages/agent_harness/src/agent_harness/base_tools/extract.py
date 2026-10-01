@@ -19,8 +19,8 @@ from typing import Annotated
 
 import httpx
 
-from agent_harness.decorator import Param, agent_tool
-from agent_harness.tool_result import ToolResult
+from agent_harness.tooling.decorator import Param, agent_tool
+from agent_harness.tooling.result import ToolResult
 
 ENDPOINT = 'https://api.parallel.ai/v1/extract'
 CLIENT_MODEL = 'claude-opus-4-7' # TODO: MAKE THIS A NEWER MODEL

@@ -21,8 +21,8 @@ from __future__ import annotations
 import json
 from typing import Annotated, Any
 
-from agent_harness.decorator import Param, agent_tool
-from agent_harness.tool_result import ToolResult
+from agent_harness.tooling.decorator import Param, agent_tool
+from agent_harness.tooling.result import ToolResult
 
 
 @agent_tool(name='LoadTool')

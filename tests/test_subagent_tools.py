@@ -6,8 +6,8 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 
-from agent_harness.base_tools.deploy_subagent import SubAgentConfig
-from agent_harness.base_tools.execute_code import execute_code_tool
+from agent_harness.subagent_config import SubAgentConfig
+from agent_harness.base_tools.code_execution.tool import execute_code_tool
 from agent_harness.sub_agent import SubAgent
 
 

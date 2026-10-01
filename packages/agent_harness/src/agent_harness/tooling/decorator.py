@@ -14,8 +14,8 @@ with explicit error status, just like tool implementations.
 Example:
 
     from typing import Annotated
-    from agent_harness.decorator import agent_tool, Param
-    from agent_harness.tool_result import ToolResult
+    from agent_harness.tooling.decorator import agent_tool, Param
+    from agent_harness.tooling.result import ToolResult
 
     @agent_tool(name='Bash')
     def bash(
@@ -40,7 +40,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Any, Callable, Literal, Union, get_args, get_origin, get_type_hints, is_typeddict
 
-from agent_harness.tool_result import ToolResult
+from agent_harness.tooling.result import ToolResult
 
 #     ================================
 # --> Helper dataclasses

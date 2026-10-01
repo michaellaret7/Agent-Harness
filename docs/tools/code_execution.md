@@ -6,15 +6,19 @@
 
 | File | Role |
 |---|---|
-| `agent_harness/base_tools/helpers/kernel.py` | Child-side REPL. Reads `{"code": ...}` JSON lines, execs in one long-lived namespace, replies `{"stdout", "stderr", "ok"}`. Stdlib only, never imported. |
-| `agent_harness/base_tools/helpers/sandbox.py` | `SubprocessSandbox`: launches the kernel, owns the workspace dir, builds the package venv, enforces per-call timeouts, restarts on timeout or crash. |
-| `agent_harness/base_tools/execute_code.py` | The `@agent_tool`. Formats `ExecResult` into a `ToolResult` (head+tail truncated, `error` status on failure). |
+| `agent_harness/base_tools/code_execution/kernel.py` | Child-side REPL. Reads `{"code": ...}` JSON lines, execs in one long-lived namespace, replies `{"stdout", "stderr", "ok"}`. Stdlib only, never imported. |
+| `agent_harness/base_tools/code_execution/sandbox.py` | `SubprocessSandbox`: launches the kernel, owns the workspace dir, builds the package venv, enforces per-call timeouts, restarts on timeout or crash. |
+| `agent_harness/base_tools/code_execution/tool.py` | The `@agent_tool`. Formats `ExecResult` into a `ToolResult` (head+tail truncated, `error` status on failure). |
+| `agent_harness/base_tools/code_execution/screening.py` | Optional Jev screening before execution. Defines rules and interprets the screening response. |
 
 ## Wiring
 
 The tool needs a sandbox instance, so it is not registered by `Agent` automatically:
 
 ```python
+from agent_harness import Agent
+from agent_harness.base_tools.code_execution.tool import execute_code_tool
+
 agent = Agent(tools=[execute_code_tool()])
 ```
 
@@ -58,7 +62,7 @@ No filesystem, network, or resource limits: the kernel runs as the host user and
 
 ## Code screen
 
-Because the sandbox is not a container, `execute_code_tool(j_screen=True)` runs every call past `helpers/sbx_screen.py` before it executes. The code is sent as text to Jev (`typesafe/jev-1.13` through OpenRouter's Decisions API, one request, four yes/no questions) and denied when any rule's probability reaches its threshold. The denial text names the rule and tells the model what is allowed instead, so it can rewrite and retry.
+Because the sandbox is not a container, `execute_code_tool(j_screen=True)` runs every call past `code_execution/screening.py` before it executes. The code is sent as text to Jev (`typesafe/jev-1.13` through OpenRouter's Decisions API, one request, four yes/no questions) and denied when any rule's probability reaches its threshold. The denial text names the rule and tells the model what is allowed instead, so it can rewrite and retry.
 
 ```
 model emits ExecuteCode(code)

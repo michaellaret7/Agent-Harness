@@ -10,20 +10,21 @@ from typing import Any, Callable, Iterable, cast
 from pydantic import BaseModel
 
 from agent_harness.client import build_client
-from agent_harness.decorator import bind_tool
+from agent_harness.tooling.decorator import bind_tool
 from agent_harness.gates import Gate
 from agent_harness.hooks import Hook, HookEvent
 from agent_harness.loop import execution_loop
 from agent_harness.messages import system_msg, user_msg
 from agent_harness.sinks import MultiSink, Sink, StdoutSink, compose_sinks
 from agent_harness.sinks.hooks import HookSink
-from agent_harness.tool_handler import ToolHandler
-from agent_harness.tool_result import ToolResult
+from agent_harness.tooling.handler import ToolHandler
+from agent_harness.tooling.result import ToolResult
 from agent_harness.base_tools.extract import extract
 from agent_harness.base_tools.load_tool import load_tool
 from agent_harness.base_tools.plan import plan
 from agent_harness.base_tools.search import search
-from agent_harness.base_tools.deploy_subagent import SubAgentConfig, make_deploy_subagent_tool
+from agent_harness.base_tools.deploy_subagent import make_deploy_subagent_tool
+from agent_harness.subagent_config import SubAgentConfig
 
 
 class Agent:

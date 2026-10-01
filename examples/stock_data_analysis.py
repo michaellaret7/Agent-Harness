@@ -4,7 +4,7 @@ A real run exercises the modify_outside_workspace rule: relative paths pass,
 /tmp and other absolute paths are blocked.
 
 Setup: uv sync --all-packages
-Run: uv run python t.py
+Run: uv run --package agent-harness python examples/stock_data_analysis.py
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel
 
 from agent_harness.agent import Agent
-from agent_harness.base_tools.execute_code import execute_code_tool
+from agent_harness.base_tools.code_execution.tool import execute_code_tool
 from agent_harness.sinks import LogSink
 
 load_dotenv()

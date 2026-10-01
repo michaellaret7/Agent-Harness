@@ -14,43 +14,12 @@ instantiated when a deployment actually happens.
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass
-from typing import Annotated, Any, Callable, Sequence
+from typing import Annotated, Any
 
-from agent_harness.decorator import Param, agent_tool, bind_tool
+from agent_harness.tooling.decorator import Param, agent_tool, bind_tool
 from agent_harness.sinks import LogSink
-from agent_harness.tool_result import ToolResult
-
-
-#     ================================
-# --> Spec
-#     ================================
-
-
-def _no_tools() -> list[dict[str, Any] | Callable]:
-    return []
-
-
-@dataclass(frozen=True)
-class SubAgentConfig:
-    """Config for one deployable subagent.
-
-    `name` is the key the parent model deploys by; `description` tells the
-    parent when to use it (surfaced in the DeploySubagent tool schema). The
-    rest mirror `Agent.__init__` and are forwarded by `SubAgent.from_spec`.
-
-    `make_tools` is called once per deployment, so tools that own state (a
-    sandbox behind `execute_code_tool`, for instance) are fresh for each
-    subagent and parallel deployments never share one.
-    """
-
-    name: str
-    description: str
-    system: str | None = None
-    make_tools: Callable[[], Sequence[dict[str, Any] | Callable]] = _no_tools
-    provider: str = 'openrouter'
-    model: str | None = None
-    max_iters: int = 100
+from agent_harness.subagent_config import SubAgentConfig
+from agent_harness.tooling.result import ToolResult
 
 
 #     ================================

@@ -69,7 +69,7 @@ Save this as `run_agent.py`:
 
 ```python
 from dotenv import load_dotenv
-from agent_harness.agent import Agent
+from agent_harness import Agent
 
 
 if __name__ == "__main__":
@@ -102,9 +102,9 @@ The response streams to stdout and is also returned as `result`. Pass a custom `
 Define application-specific tools in the consuming project and pass them to the engine:
 
 ```python
-from agent_harness.agent import Agent
-from agent_harness.decorator import agent_tool
-from agent_harness.tool_result import ToolResult
+from agent_harness import Agent
+from agent_harness.tooling.decorator import agent_tool
+from agent_harness.tooling.result import ToolResult
 
 @agent_tool(name="Echo")
 def echo(text: str) -> ToolResult:
@@ -132,7 +132,7 @@ A consuming application can attach the TUI to its agent. Save this as `run_tui.p
 import asyncio
 
 from dotenv import load_dotenv
-from agent_harness.agent import Agent
+from agent_harness import Agent
 from tui.app import TUIApp
 
 
@@ -169,6 +169,11 @@ In a separate project with the libraries installed, run `uv run python run_agent
 agent_harness/
 ├── pyproject.toml                   # virtual workspace root
 ├── README.md
+├── tests/                          # executable integration checks
+├── examples/
+│   └── stock_data_analysis.py      # live stock-data and screening demo
+├── docs/
+│   └── tools/code_execution.md
 └── packages/
     ├── agent_harness/
     │   ├── pyproject.toml           # distributable engine
@@ -176,17 +181,29 @@ agent_harness/
     │       ├── agent.py             # agent configuration and state
     │       ├── client.py            # provider client construction
     │       ├── loop.py              # streaming execution loop
-    │       ├── tool_handler.py      # tool dispatch
-    │       ├── decorator.py         # tool schema generation and binding
     │       ├── hooks.py
     │       ├── gates.py
     │       ├── sub_agent.py
+    │       ├── subagent_config.py   # shared subagent configuration
     │       ├── messages.py
     │       ├── usage.py
+    │       ├── tooling/            # infrastructure shared by tools
+    │       │   ├── decorator.py    # tool schema generation and binding
+    │       │   ├── handler.py      # tool dispatch
+    │       │   └── result.py       # tool result contract
     │       ├── base_tools/
+    │       │   ├── code_execution/
+    │       │   │   ├── tool.py      # ExecuteCode tool and factory
+    │       │   │   ├── sandbox.py   # parent-side process management
+    │       │   │   ├── kernel.py    # child-side Python execution
+    │       │   │   └── screening.py # optional code screening
+    │       │   ├── deploy_subagent.py
+    │       │   ├── extract.py
+    │       │   ├── load_tool.py
+    │       │   ├── plan.py
+    │       │   └── search.py
     │       ├── context/             # base system prompt
-    │       ├── sinks/
-    │       └── tests/               # live development demos
+    │       └── sinks/
     └── tui/
         ├── pyproject.toml           # optional frontend library
         └── src/tui/
@@ -200,6 +217,18 @@ agent_harness/
 ```
 
 The dependency direction is `tui → agent-harness`. External applications depend on the engine and optionally the frontend.
+
+Code execution and subagent configuration use these imports:
+
+```python
+from agent_harness import Agent
+from agent_harness.base_tools.code_execution.tool import execute_code_tool
+from agent_harness.subagent_config import SubAgentConfig
+```
+
+These replace the former `base_tools.execute_code` and `base_tools.deploy_subagent.SubAgentConfig` import paths. Consumers must update their imports; the removed code-execution modules have no compatibility shims. Treat these path changes as a breaking change when publishing the next engine release.
+
+Tool infrastructure now lives in `agent_harness.tooling`: import `agent_tool`, `Param`, and `bind_tool` from `tooling.decorator`, `ToolHandler` from `tooling.handler`, and `ToolResult` from `tooling.result`. These replace the former top-level `decorator`, `tool_handler`, and `tool_result` modules and are also breaking import-path changes. `base_tools/` holds the actual tools offered to the model.
 
 ## Development and builds
 
@@ -226,7 +255,21 @@ A headless development entry point exercises the base engine:
 uv run --package agent-harness python -m agent_harness
 ```
 
-It uses the model configured in `agent_harness/__main__.py`. Live demos under `agent_harness/tests/` demonstrate hooks, gates, and subagent delegation; they require configured providers and can incur API usage.
+It uses the model configured in `agent_harness/__main__.py`. The live example in `examples/stock_data_analysis.py` requires OpenRouter and FMP credentials and can incur API usage:
+
+```bash
+uv run --package agent-harness python examples/stock_data_analysis.py
+```
+
+Executable integration checks live in the repository's `tests/` directory:
+
+```bash
+uv run --package agent-harness python tests/test_code_execution.py
+uv run --package agent-harness python tests/test_subagent_tools.py
+uv run --package agent-harness python tests/test_code_screen.py
+```
+
+The code-execution checks may install packages into isolated test environments. The code-screen checks call the live screening service and require OpenRouter credentials.
 
 ## Execution flow
 

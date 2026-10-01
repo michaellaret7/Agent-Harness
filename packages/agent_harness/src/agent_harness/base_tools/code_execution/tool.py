@@ -6,10 +6,10 @@ import os
 from pathlib import Path
 from typing import Annotated, Any
 
-from agent_harness.base_tools.helpers.sandbox import SubprocessSandbox
-from agent_harness.base_tools.helpers.sbx_screen import screen_code
-from agent_harness.decorator import Param, agent_tool, bind_tool
-from agent_harness.tool_result import ToolResult
+from agent_harness.base_tools.code_execution.sandbox import SubprocessSandbox
+from agent_harness.base_tools.code_execution.screening import screen_code
+from agent_harness.tooling.decorator import Param, agent_tool, bind_tool
+from agent_harness.tooling.result import ToolResult
 
 #     ================================
 # --> Helper funcs
@@ -103,7 +103,7 @@ def execute_code_tool(
     the only host secrets model code may see, e.g. `{'FMP_API_KEY': key}`.
     `packages` adds pip requirements on top of the host environment's
     libraries, e.g. `['pandas']`. `j_screen` runs every call past the Jev
-    code screen (see `helpers/sbx_screen.py`) before it executes; a blocked
+    code screen (see `code_execution/screening.py`) before it executes; a blocked
     call returns an error result and never reaches the kernel. It needs
     `OPENROUTER_API_KEY` and fails fast here if that is missing.
 

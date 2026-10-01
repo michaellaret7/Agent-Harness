@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 from agent_harness.agent import Agent
-from agent_harness.base_tools.deploy_subagent import SubAgentConfig
+from agent_harness.subagent_config import SubAgentConfig
 
 
 class SubAgent(Agent):

@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 from agent_harness.gates import GateContext
 from agent_harness.messages import tool_msg
-from agent_harness.tool_result import ToolResult
+from agent_harness.tooling.result import ToolResult
 from agent_harness.sinks.base import Sink, ToolOutcome, ToolStatus
 
 if TYPE_CHECKING:
