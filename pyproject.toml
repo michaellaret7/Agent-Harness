@@ -10,7 +10,11 @@ package = false
 [tool.uv.workspace]
 members = ["packages/agent_harness", "packages/tui"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [dependency-groups]
 dev = [
     "databento>=0.87.0",
+    "pytest>=9.1.1",
 ]

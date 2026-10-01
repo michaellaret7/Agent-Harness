@@ -187,6 +187,7 @@ def execution_loop(
     active_cancel: threading.Event = cancel_event if cancel_event is not None else threading.Event()
 
     last_content = ''
+    iterations = 0
 
     # Activate langfuse loop span to track the loop iterations and tool calls
     active_sink.on_loop_start(model, max_iters, [t['function']['name'] for t in agent.tools]) 
@@ -199,6 +200,7 @@ def execution_loop(
             break
         
         # Activate langfuse iteration span 
+        iterations = i
         active_sink.on_iteration_start(i, len(agent.messages))
 
         # Call the LLM aka the completions api and stream the response
@@ -244,7 +246,8 @@ def execution_loop(
         # The tool handler class executes the tool calls and returns the output results as tool output messages
         agent.messages.extend(agent.tool_handler.execute(tool_calls, active_sink, active_cancel))
 
-    active_sink.on_loop_end('max_iterations', max_iters)
+    stop_reason = 'cancelled' if active_cancel.is_set() else 'max_iterations'
+    active_sink.on_loop_end(stop_reason, iterations)
 
     return last_content
 

@@ -263,6 +263,16 @@ uv run --package agent-harness python examples/stock_data_analysis.py
 
 Executable integration checks live in the repository's `tests/` directory:
 
+Run the deterministic harness contracts without API credentials or network access:
+
+```bash
+uv run --all-packages pytest
+```
+
+These cover the execution loop, hooks, and tool dispatch using scripted HTTP responses and real local tools. Pytest is a workspace development dependency. See [the behavior contracts](docs/testing/contracts.md) for the guarantees. Expected hook/gate errors are captured by pytest in the failure-isolation cases.
+
+The existing sandbox, subagent, and live screening checks run separately:
+
 ```bash
 uv run --package agent-harness python tests/test_code_execution.py
 uv run --package agent-harness python tests/test_subagent_tools.py

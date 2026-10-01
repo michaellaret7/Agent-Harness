@@ -14,7 +14,7 @@ Both run headlessly. Applications can opt into the TUI (`tui/app.py`); see the R
 
 Supports Python 3.12–3.13 (`>=3.12,<3.14` in `pyproject.toml`); `.python-version` keeps this repo's own venv on 3.12. uv will refuse to sync on a 3.14 interpreter.
 
-Executable integration checks live in root `tests/`: `test_code_execution.py`, `test_subagent_tools.py`, and `test_code_screen.py`. Run them with `uv run --package agent-harness python tests/<file>.py`; the screening checks require live OpenRouter credentials. No test runner or linter is configured. The two library packages build as wheels via hatchling (`uv build --all-packages`).
+Executable checks live in root `tests/`. Run the ten offline behavior contracts with `uv run --all-packages pytest`; they exercise the real harness against scripted HTTP responses. Pytest is a workspace development dependency, and the guarantees are documented in `docs/testing/contracts.md`. Existing `test_code_execution.py`, `test_subagent_tools.py`, and `test_code_screen.py` are excluded from pytest collection and run separately with `uv run --package agent-harness python tests/<file>.py`; the screening checks require live OpenRouter credentials. No linter is configured. The two library packages build as wheels via hatchling (`uv build --all-packages`).
 
 ## Response Type 
 - Please be clear, concise, and to the point in your responses and do your best to avoid unecessary verbosity
@@ -231,7 +231,7 @@ Before writing or planning: assess whether the approach is under-engineered, opt
 
 ### Testing
 
-- No pytest scaffolding — write **real tests with real data**.
+- Use pytest for the deterministic behavior contracts. Write **real tests with real data**, exercising harness code with controlled provider inputs rather than mocking its internal implementation.
 - A test exercises the full flow: pull real inputs, call the function, grade the output. Lint/format afterward.
 - Don't create parallel `test_x.py` and `test_x_fixed.py` files — fix the one test in place.
 
