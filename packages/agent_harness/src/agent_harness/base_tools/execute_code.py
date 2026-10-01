@@ -120,6 +120,7 @@ def execute_code_tool(
     tool = bind_tool(execute_code, _sandbox=sandbox, _j_screen=j_screen)
     tool['description'] = (
         f'{tool["description"]}\n\nWorking directory: {sandbox.workspace}\n'
+        'Save every file here with a relative path (e.g. "defs.parquet"). Writes to absolute paths such as /tmp are blocked.\n'
         f'{_credentials_note(env or {})}\n{_packages_note(packages or [])}'
     )
 

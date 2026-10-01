@@ -39,7 +39,7 @@ TIMEOUT = 15.0
 
 # How much of a credential's value model code may surface. Enough to tell
 # `sk-or-v1-` from `fmp_` apart, far too little to use.
-KEY_PREFIX_CHARS = 4
+KEY_PREFIX_CHARS = 6
 
 # Every question opens with this so the model judges behaviour, not the
 # story the code tells about itself. Code arrives from an LLM that may have
