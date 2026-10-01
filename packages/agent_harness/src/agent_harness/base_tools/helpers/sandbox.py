@@ -2,16 +2,21 @@
 
 Isolation is intentionally light: a child interpreter with a scrubbed
 environment, its own working directory, and a per-call wall-clock timeout.
-It contains a runaway or buggy script, not a hostile one. Stronger backends
-(container, hosted) can replace this class later behind the same surface.
+It contains a runaway or buggy script, not a hostile one, because the kernel
+still runs as the host user. For real containment, run the whole agent in a
+container.
+
+Model code sees the host environment's libraries, plus any extra `packages`
+layered on top in a separate cached venv.
 
 State persists across `exec` calls because the kernel process is long-lived.
 A timeout kills the kernel and starts a fresh one, so state is lost; the
-returned `ExecResult` says so via `timed_out`.
+returned `ExecResult` says so in `stderr`.
 """
 from __future__ import annotations
 
 import atexit
+import hashlib
 import json
 import os
 import shutil
@@ -20,10 +25,12 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
 KERNEL_PATH = Path(__file__).parent / 'kernel.py'
+VENV_CACHE = Path.home() / '.cache' / 'agent-harness' / 'sandbox-venvs'
 
 # Only these host variables reach the kernel. Everything else, including
 # `.env` credentials the application loaded, stays on the host side.
@@ -44,6 +51,84 @@ def _scrubbed_env(extra: dict[str, str]) -> dict[str, str]:
     env.update(extra)
 
     return env
+
+
+def _site_packages(python: str) -> Path:
+    """Return the site-packages directory of the environment `python` belongs to."""
+    found = subprocess.run(
+        [python, '-c', 'import sysconfig; print(sysconfig.get_path("purelib"))'],
+        capture_output=True, text=True, encoding='utf-8', check=True,
+    )
+
+    return Path(found.stdout.strip())
+
+
+def _venv_python(venv: Path) -> Path:
+    return venv / ('Scripts/python.exe' if sys.platform == 'win32' else 'bin/python')
+
+
+def _build_venv(venv: Path, python: str, packages: tuple[str, ...]) -> None:
+    """Create `venv` from `python`, install `packages`, and layer the host's libraries under them.
+
+    Uses `uv` when it is on PATH (about a second with a warm cache), otherwise
+    the stdlib `venv` module and pip.
+    """
+    venv_python = str(_venv_python(venv))
+
+    if shutil.which('uv'):
+        steps = [['uv', 'venv', str(venv), '--python', python], ['uv', 'pip', 'install', '--python', venv_python, *packages]]
+
+    else:
+        steps = [[python, '-m', 'venv', str(venv)], [venv_python, '-m', 'pip', 'install', *packages]]
+
+    for step in steps:
+        done = subprocess.run(step, capture_output=True, text=True, encoding='utf-8')
+
+        if done.returncode != 0:
+            raise RuntimeError(f'could not build sandbox venv for {list(packages)}:\n{done.stderr}')
+
+    # addsitedir, not a bare path line, so the host's own .pth files (editable installs) are honoured too.
+    host_libs = _site_packages(python)
+    overlay = _site_packages(venv_python) / 'host_environment.pth'
+    overlay.write_text(f'import site; site.addsitedir({str(host_libs)!r})\n', encoding='utf-8')
+
+
+def _ensure_venv(python: str, packages: tuple[str, ...]) -> str:
+    """Return the interpreter of a cached venv layering `packages` over `python`'s own libraries.
+
+    The venv holds `packages` and their dependencies. A `.pth` file then adds
+    `python`'s site-packages after the venv's, so everything the host
+    environment has stays importable and the venv's copy wins on a clash.
+    Nothing is installed into the host environment.
+
+    The venv is built under a private name and renamed into place once
+    complete, so a crash never leaves a half-built venv at the cached path and
+    two sandboxes building the same set at once cannot corrupt each other.
+    """
+    cache_key = '\n'.join([*sorted(packages), python])
+    venv = VENV_CACHE / hashlib.sha256(cache_key.encode()).hexdigest()[:12]
+
+    if venv.exists():
+        return str(_venv_python(venv))
+
+    VENV_CACHE.mkdir(parents=True, exist_ok=True)
+    build = venv.with_name(f'{venv.name}.build-{uuid.uuid4().hex[:8]}')
+
+    try:
+        _build_venv(build, python, packages)
+
+        # Rename into place. If another builder won the race its finished venv stays and ours is dropped.
+        try:
+            os.rename(build, venv)
+
+        except OSError:
+            _remove_tree(build)
+
+    except BaseException:
+        _remove_tree(build)
+        raise
+
+    return str(_venv_python(venv))
 
 
 def _remove_tree(path: Path, attempts: int = 20) -> None:
@@ -69,11 +154,10 @@ class ExecResult:
     stdout: str
     stderr: str
     ok: bool
-    timed_out: bool = False
 
 
 class SubprocessSandbox:
-    """Persistent-kernel sandbox.
+    """Persistent-kernel sandbox. Not a security boundary.
 
     The kernel starts lazily on the first `exec` and is killed at interpreter
     exit, so a bare `SubprocessSandbox()` is enough. The context manager form
@@ -87,6 +171,10 @@ class SubprocessSandbox:
         env: Extra variables exposed inside the kernel, on top of the scrubbed
             allowlist. Pass secrets explicitly here; nothing else from the host
             environment leaks through.
+        packages: Extra pip requirements for model code, e.g. `['pandas']`,
+            on top of everything `python`'s environment already has. They
+            go into a separate cached venv; the host environment is not
+            modified.
     """
 
     def __init__(
@@ -94,11 +182,13 @@ class SubprocessSandbox:
         workspace: Path | None = None,
         python: str = sys.executable,
         env: dict[str, str] | None = None,
+        packages: list[str] | None = None,
     ) -> None:
         self._owns_workspace = workspace is None
         self.workspace = workspace or Path(tempfile.mkdtemp(prefix='sandbox_'))
         self.python = python
         self.env = env or {}
+        self.packages = tuple(packages or ())
         self._proc: subprocess.Popen[str] | None = None
 
         atexit.register(self.stop)
@@ -116,8 +206,10 @@ class SubprocessSandbox:
         if self._proc is not None and self._proc.poll() is None:
             return
 
+        python = _ensure_venv(self.python, self.packages) if self.packages else self.python
+
         self._proc = subprocess.Popen(
-            [self.python, '-u', str(KERNEL_PATH)],
+            [python, '-u', str(KERNEL_PATH)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -159,7 +251,7 @@ class SubprocessSandbox:
         if reader.is_alive():
             self.reset()
 
-            return ExecResult('', f'timed out after {timeout:g}s; kernel restarted, state lost', ok=False, timed_out=True)
+            return ExecResult('', f'timed out after {timeout:g}s; kernel restarted, state lost', ok=False)
 
         if not reply or not reply[0]:
             crash = proc.stderr.read() if proc.stderr else ''

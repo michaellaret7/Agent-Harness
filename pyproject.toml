@@ -9,3 +9,8 @@ package = false
 
 [tool.uv.workspace]
 members = ["packages/agent_harness", "packages/tui"]
+
+[dependency-groups]
+dev = [
+    "databento>=0.87.0",
+]

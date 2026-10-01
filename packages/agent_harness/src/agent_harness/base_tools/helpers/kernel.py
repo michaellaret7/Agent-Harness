@@ -3,8 +3,10 @@
 Launched by `SubprocessSandbox` as a standalone script (never imported).
 Reads one JSON request per line from stdin, runs the code in a single
 long-lived namespace so variables survive across calls, and writes one JSON
-reply per line to the real stdout. User code sees a redirected stdout /
-stderr, so its prints land in the reply instead of corrupting the protocol.
+reply per line back. The protocol runs on private copies of the original
+stdin / stdout. File descriptors 0, 1 and 2 are repointed before user code
+runs, so its prints, and the output of any child process it spawns, land in
+the reply instead of corrupting the protocol.
 
 Request:  {"code": "<python source>"}
 Reply:    {"stdout": "...", "stderr": "...", "ok": true|false}
@@ -18,12 +20,17 @@ runs in a scrubbed environment where the package may not be importable.
 from __future__ import annotations
 
 import ast
-import contextlib
 import io
 import json
+import os
 import sys
+import tempfile
 import traceback
-from typing import Any
+from types import TracebackType
+from typing import IO, Any
+
+# Per stream. Head and tail are kept so both the setup and the result survive.
+MAX_OUTPUT_BYTES = 20_000
 
 #     ================================
 # --> Helper funcs
@@ -52,21 +59,63 @@ def _run(code: str, namespace: dict[str, Any]) -> None:
             print(repr(value))
 
 
+def _user_frames(exc: BaseException) -> TracebackType | None:
+    """Drop the kernel's own frames from a traceback so the model sees only its code."""
+    tb = exc.__traceback__
+
+    while tb is not None and tb.tb_frame.f_code.co_filename != '<sandbox>':
+        tb = tb.tb_next
+
+    return tb
+
+
+def _read_back(capture: IO[bytes]) -> str:
+    """Return what was written to `capture`, keeping only the head and tail of oversized output.
+
+    Truncating here, before the reply is built, keeps a runaway print loop
+    from turning into a giant string in the kernel and on the wire.
+    """
+    size = os.fstat(capture.fileno()).st_size
+    capture.seek(0)
+
+    if size <= MAX_OUTPUT_BYTES:
+        data = capture.read()
+
+    else:
+        half = MAX_OUTPUT_BYTES // 2
+        head = capture.read(half)
+
+        capture.seek(size - half)
+        tail = capture.read(half)
+
+        data = head + f'\n... [{size - MAX_OUTPUT_BYTES} bytes truncated] ...\n'.encode() + tail
+
+    return data.decode('utf-8', errors='replace').replace('\r\n', '\n')
+
+
 def _handle(code: str, namespace: dict[str, Any]) -> dict[str, Any]:
     """Run one request and capture everything it wrote or raised."""
-    out = io.StringIO()
-    err = io.StringIO()
     ok = True
 
-    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        # Redirect at the descriptor level, not just sys.stdout, so output
+        # from child processes and C extensions is captured too.
+        os.dup2(out.fileno(), 1)
+        os.dup2(err.fileno(), 2)
+
+        # Fresh text streams per request: user code that closes or replaces
+        # sys.stdout only affects this call, and closefd keeps fd 1 / 2 open.
+        sys.stdout = io.TextIOWrapper(io.FileIO(1, 'w', closefd=False), encoding='utf-8', write_through=True)
+        sys.stderr = io.TextIOWrapper(io.FileIO(2, 'w', closefd=False), encoding='utf-8', write_through=True)
+
         try:
             _run(code, namespace)
 
-        except BaseException:  # noqa: BLE001 — user code may raise anything, including SystemExit
+        except BaseException as exc:  # noqa: BLE001 — user code may raise anything, including SystemExit
             ok = False
-            traceback.print_exc()
+            traceback.print_exception(type(exc), exc, _user_frames(exc))
 
-    return {'stdout': out.getvalue(), 'stderr': err.getvalue(), 'ok': ok}
+        return {'stdout': _read_back(out), 'stderr': _read_back(err), 'ok': ok}
 
 
 #     ================================
@@ -75,10 +124,15 @@ def _handle(code: str, namespace: dict[str, Any]) -> dict[str, Any]:
 
 
 def main() -> None:
-    protocol_out = sys.stdout
+    # Keep private copies of the protocol pipes, then point stdin at nothing so
+    # user code and its child processes cannot swallow the next request.
+    protocol_in = os.fdopen(os.dup(0), 'r', encoding='utf-8')
+    protocol_out = os.fdopen(os.dup(1), 'w', encoding='utf-8')
+    os.dup2(os.open(os.devnull, os.O_RDONLY), 0)
+
     namespace: dict[str, Any] = {'__name__': '__main__'}
 
-    for line in sys.stdin:
+    for line in protocol_in:
         request = json.loads(line)
 
         reply = _handle(request['code'], namespace)

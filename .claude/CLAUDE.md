@@ -18,6 +18,7 @@ There is no test suite or linter configured. The two library packages build as w
 
 ## Response Type 
 - Please be clear, concise, and to the point in your responses and do your best to avoid unecessary verbosity
+- I am a visual learner — when explaining anything, always include visuals (diagrams, flowcharts, tables, ASCII/Mermaid sketches) alongside the text
 
 ## Overall Goal of Code 
 - To write clean, clear, well architected code that is easy for humans to understand 

@@ -1,12 +1,15 @@
-"""Screen stocks with FMP inside the sandbox, then research the shortlist with Parallel.
+"""Screen Databento options in Python and research a defined-risk trade pitch.
 
-Run: python t.py
+Setup: uv sync --all-packages
+Run: uv run python t.py
 """
 from __future__ import annotations
 
 import os
 
 from dotenv import load_dotenv
+from typing import Literal
+
 from pydantic import BaseModel
 
 from agent_harness.agent import Agent
@@ -20,75 +23,40 @@ MODEL = 'meta/muse-spark-1.3'
 
 SYSTEM = '''
 <role>
-You are an equity research analyst. You screen candidates quantitatively with
-code, then research each survivor qualitatively before forming a view.
+You are an options research analyst. Screen options and find one attractive
+defined-risk trade to pitch.
 </role>
 
 <methodology>
-## 0. Find the documentation yourself
-The `WebSearch` tool is off limits and will be denied. All web research goes
-through the Parallel API, called with `httpx` from inside ExecuteCode. The
-key is in `os.environ['PARALLEL_API_KEY']`.
+Do all the work in Python through ExecuteCode and the tools provided:
 
-- POST https://api.parallel.ai/v1/search with header `x-api-key` and JSON
-  body {"objective": str, "search_queries": [str, ...], "mode": "basic"}.
-  Each result has title, url and excerpts.
-- POST https://api.parallel.ai/v1/extract with the same header and body
-  {"urls": [str, ...], "objective": str} to read a page in full.
+- Options data: the `databento` library (dataset `OPRA.PILLAR`), key in
+  `os.environ['DB_KEY']`.
+- Underlying prices: FMP, key in `os.environ['FMP_API_KEY']`.
+- Web research and docs lookups: POST https://api.parallel.ai/v1/search with
+  `httpx`, header `x-api-key: os.environ['PARALLEL_API_KEY']`, JSON body
+  {"objective": str, "search_queries": [str, ...]}.
 
-Write a small `search(objective, queries)` helper once and reuse it. You do
-not know the Financial Modeling Prep endpoints or field names; discover them
-through Parallel before screening. The FMP key is in
-`os.environ['FMP_API_KEY']`.
-
-## 1. Screen with ExecuteCode
-Pull the screener universe once, store it in a variable, then fetch
-per-symbol metrics only for the symbols still in contention. Compute medians
-and ranks in code and print a compact table of the finalists with the
-metrics you used.
-
-## 2. Shortlist
-Pick 3 to 5 tickers. Each needs a one-line quantitative reason drawn from the
-table you printed.
-
-## 3. Research
-For each ticker, search through Parallel for recent results, guidance,
-competitive position and risks; extract the page when an excerpt is
-truncated or you need the primary filing. Prefer primary sources (earnings
-releases, SEC filings) over commentary.
+Screen liquid underlyings for contracts expiring in 30 to 60 days, shortlist
+the best candidates, research them, and pitch the strongest one with exact
+legs, entry price, max profit/loss, breakeven, and an exit plan.
 </methodology>
 
 <constraints>
-- Never call the WebSearch tool. Use the Parallel API in code instead.
-- Every factual claim in research_summary and key_risks must trace to a URL
-  in that ticker's sources.
-- Do not fetch per-symbol metrics for the whole universe; narrow first.
-- Report the screen exactly as run: criteria, thresholds and how many
-  companies were considered.
+- Every number must come from an API response or a Python calculation.
+- Mark the report provisional if quotes are stale; return no_trade if nothing
+  qualifies. Do not place orders.
 </constraints>
 '''
 
 TASK = (
-    'Screen US Technology-sector companies with market cap between $10B and $200B '
-    'for quality at a reasonable price: high return on invested capital, positive free '
-    'cash flow, and a P/E below the sector median. Shortlist 3 to 5, research each, '
-    'and report.'
+    'Use the databento Python library in ExecuteCode with DB_KEY to screen '
+    'attractive options expiring in 30 to 60 days. Research the strongest '
+    'candidates and pitch your best defined-risk trade with '
+    'exact legs, conservative pricing, computed payoff scenarios, catalysts, '
+    'risks, and an exit plan. Label provisional ideas and return no trade if '
+    'nothing qualifies. Do not place any orders.'
 )
-
-
-class StockResearch(BaseModel):
-    ticker: str
-    company: str
-    screen_rationale: str
-    research_summary: str
-    key_risks: list[str]
-    sources: list[str]
-
-
-class ScreenReport(BaseModel):
-    screen_criteria: str
-    candidates_screened: int
-    shortlist: list[StockResearch]
 
 
 agent = Agent(
@@ -96,21 +64,16 @@ agent = Agent(
     model=MODEL,
     system=SYSTEM,
     tools=[
-        execute_code_tool(env={
-            'FMP_API_KEY': os.environ['FMP_API_KEY'],
-            'PARALLEL_API_KEY': os.environ['PARALLEL_API_KEY'],
-        })
-    ],
-    output_model=ScreenReport,
+        execute_code_tool(
+            env={
+                'FMP_API_KEY': os.environ['FMP_API_KEY'],
+                'PARALLEL_API_KEY': os.environ['PARALLEL_API_KEY'],
+                'DB_KEY': 'db-GegmCWsdtdg3TSaGv9XUjYAYGKFjc',
+            },
+            packages=['databento', 'pandas', 'httpx'],
+        )
+    ]
 )
-
-
-def deny_web_search(ctx: GateContext) -> GateVerdict:
-    """Force all searching through the Parallel API inside the sandbox."""
-    return GateVerdict.deny('WebSearch is disabled for this agent. Call the Parallel API with httpx inside ExecuteCode instead.')
-
-
-agent.add_gate(deny_web_search, tool='WebSearch')
 
 
 if __name__ == '__main__':

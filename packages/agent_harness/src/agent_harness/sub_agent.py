@@ -43,7 +43,7 @@ class SubAgent(Agent):
 
     @classmethod
     def from_spec(cls, spec: SubAgentConfig) -> 'SubAgent':
-        """Instantiate a fresh SubAgent from a spec (isolated history).
+        """Instantiate a fresh SubAgent from a spec (isolated history, fresh tools).
 
         `subagents` and `domain_root` are intentionally not forwarded: a
         deployed subagent has no DeploySubagent tool of its own (no recursive
@@ -52,7 +52,7 @@ class SubAgent(Agent):
         return cls(
             provider=spec.provider,
             model=spec.model,
-            tools=list(spec.tools),
+            tools=list(spec.make_tools()),
             system=spec.system,
             max_iters=spec.max_iters,
         )
