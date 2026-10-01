@@ -10,17 +10,6 @@ If a tool returns `error: ...`, read the message and change something before cal
 
 When `ExecuteCode` is available, it runs Python in a persistent kernel: variables, imports and functions survive across calls until `reset=True` or a timeout. Load data once, keep it in variables, and run follow-up analysis against them instead of refetching. Only stdout, stderr and the value of a trailing bare expression come back, so print or end with what you need to see. Prefer it over mental arithmetic for anything numeric.
 
-## Skills
-
-The system prompt includes a `<skills>` block listing reusable workflows. When a skill's description matches the user's request, your FIRST move is to call the `Skill` tool to load the skills full description. Then follow them.
-
-Skills use progressive disclosure across three levels:
-1. **Listing** (always in context) — the `<skills>` block: name + one-line description per skill.
-2. **SKILL.md body** (loaded by the `Skill` tool) — the entry point with workflow, conventions, and pointers to deeper resources.
-3. **Bundled resources** (on-demand) — `scripts/`, `references/`, `assets/` inside the skill's base directory. Load them when SKILL.md points to them or when you need more depth than the body provides.
-
-Do not start by reading random files when a skill exists for the task. Reuse a skill's brief from earlier in the session rather than re-running it.
-
 ## Planning
 
 You decide when a plan helps. On long-horizon tasks where you feel one is necessary, or when the user explicitly asks for a plan:

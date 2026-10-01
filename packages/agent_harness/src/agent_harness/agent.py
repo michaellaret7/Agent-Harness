@@ -17,15 +17,12 @@ from agent_harness.loop import execution_loop
 from agent_harness.messages import system_msg, user_msg
 from agent_harness.sinks import MultiSink, Sink, StdoutSink, compose_sinks
 from agent_harness.sinks.hooks import HookSink
-from agent_harness.skills import Skill, format_skill_listing, load_skills
 from agent_harness.tool_handler import ToolHandler
 from agent_harness.tool_result import ToolResult
 from agent_harness.base_tools.extract import extract
 from agent_harness.base_tools.load_tool import load_tool
 from agent_harness.base_tools.plan import plan
 from agent_harness.base_tools.search import search
-from agent_harness.base_tools.skill import load_skill
-from agent_harness.base_tools.read import read
 from agent_harness.base_tools.deploy_subagent import SubAgentConfig, make_deploy_subagent_tool
 
 
@@ -37,7 +34,6 @@ class Agent:
         tools: list[dict[str, Any] | Callable] = [],
         system: str | None = None,
         task: str | None = None,
-        domain_root: Path | None = None,
         max_iters: int = 100,
         subagents: list[SubAgentConfig] = [],
         output_model: type[BaseModel] | None = None,
@@ -92,21 +88,9 @@ class Agent:
         if system:
             self.system_prompt += '\n\n<domain>\n' + system.strip() + '\n</domain>'
 
-        # Load skills from the base package plus the domain's skills dir (auto-created); base skills win on name collision.
-        skill_roots = [Path(__file__).parent / 'skills']
-
-        if domain_root:
-            domain_skills = domain_root / 'skills'
-            domain_skills.mkdir(parents=True, exist_ok=True)
-            skill_roots.append(domain_skills)
-
-        self.skills: list[Skill] = load_skills(skill_roots)
-
         # ---- Register base tools ---- #
         self.add_tool(search)
         self.add_tool(extract)
-        self.add_tool(read)
-        self.add_tool(bind_tool(load_skill, _skills_map={s.name: s for s in self.skills}))
         self.add_tool(bind_tool(load_tool, _deferred_tools=self.deferred_tools, _api_tools=self.tools))
         self.add_tool(bind_tool(plan, _plan=self.plan))
 
@@ -280,11 +264,6 @@ class Agent:
                 'NOT end with ` [deferred]` is already fully loaded. Never call LoadTool on it.\n'
                 '</deferred_tools>'
             )
-
-        listing = format_skill_listing(self.skills)
-
-        if listing:
-            parts.append(listing)
 
         content = '\n\n'.join(parts)
 

@@ -7,9 +7,8 @@ them by name. Each deployment instantiates a fresh `SubAgent`, so message
 history is isolated per call.
 
 SubAgents are deliberately constrained: no gates, no hooks, no subagents of
-their own, and no `domain_root` (so no domain skills or memory). Interception
-and observation belong to the parent that owns the run, not to a tool-invoked
-sub-run.
+their own. Interception and observation belong to the parent that owns the
+run, not to a tool-invoked sub-run.
 """
 from __future__ import annotations
 
@@ -29,10 +28,6 @@ class SubAgent(Agent):
         if kwargs.get('subagents'):
             raise NotImplementedError('SubAgents cannot have subagents of their own.')
 
-        # Subagents have no domain skills or memory, so domain_root is moot.
-        if kwargs.get('domain_root'):
-            raise NotImplementedError('SubAgents cannot have a domain_root (no skills or memory).')
-
         super().__init__(*args, **kwargs)
 
     def add_gate(self, *args: Any, **kwargs: Any) -> None:
@@ -45,9 +40,8 @@ class SubAgent(Agent):
     def from_spec(cls, spec: SubAgentConfig) -> 'SubAgent':
         """Instantiate a fresh SubAgent from a spec (isolated history, fresh tools).
 
-        `subagents` and `domain_root` are intentionally not forwarded: a
-        deployed subagent has no DeploySubagent tool of its own (no recursive
-        nesting) and no domain skills or memory.
+        `subagents` is intentionally not forwarded: a deployed subagent has
+        no DeploySubagent tool of its own (no recursive nesting).
         """
         return cls(
             provider=spec.provider,

@@ -1,10 +1,10 @@
 # agent-harness
 
-A reusable Python harness for streaming, tool-calling agents. Applications import the engine and supply their own tools, instructions, and skills.
+A reusable Python harness for streaming, tool-calling agents. Applications import the engine and supply their own tools and instructions.
 
 This repository is a **uv workspace** with two distributable libraries:
 
-- **agent-harness** (`agent_harness`): execution loop, tool registration and dispatch, hooks, gates, skills, subagents, and output sinks.
+- **agent-harness** (`agent_harness`): execution loop, tool registration and dispatch, hooks, gates, subagents, and output sinks.
 - **tui**: an optional prompt_toolkit + Rich terminal frontend that consumes the engine.
 
 Application-specific agents belong in separate projects. The engine can be installed and used without the TUI.
@@ -13,13 +13,13 @@ Application-specific agents belong in separate projects. The engine can be insta
 
 - Streaming text and reasoning output, with fragmented tool-call reassembly.
 - Tool registration through dictionaries or the `@agent_tool` decorator.
-- Deferred tools and Markdown-defined skills supplied by consuming applications.
+- Deferred tools supplied by consuming applications.
 - Lifecycle hooks for observation and gates for allowing, denying, or rewriting tool calls.
 - Parallel execution of tools marked `safe_parallel=True`.
 - Cooperative cancellation through a `threading.Event`.
 - Subagent delegation and optional Pydantic structured output.
 - Output sinks for stdout, logging, Langfuse tracing, and the optional TUI.
-- Built-in web search/extraction, file reading, skill loading, deferred-tool loading, and planning.
+- Built-in web search/extraction, deferred-tool loading, and planning.
 
 ## Use from another project
 
@@ -97,7 +97,7 @@ The response streams to stdout and is also returned as `result`. Pass a custom `
 - **Web tools:** set `PARALLEL_API_KEY` to use the built-in web search and extraction tools.
 - **Tracing:** setting `LANGFUSE_PUBLIC_KEY` with the corresponding secret enables Langfuse instrumentation and sink composition. See `.env.example` for the available settings.
 
-### Custom tools and skills
+### Custom tools
 
 Define application-specific tools in the consuming project and pass them to the engine:
 
@@ -122,7 +122,7 @@ by the handler. Version 1.0 removes plain-value tool returns and the `error:`
 prefix convention for detecting failures. See [the tool result contract](docs/tools/results.md)
 for migration and batch-result semantics.
 
-For application-owned skills, pass `domain_root=Path(...)`; the harness discovers `<domain_root>/skills/`. The supplied `system` text is appended to the base prompt. This repository supplies the loading mechanism; consuming applications own their skill content.
+The supplied `system` text is appended to the base prompt.
 
 ### Optional terminal frontend
 
@@ -182,7 +182,6 @@ agent_harness/
     │       ├── gates.py
     │       ├── sub_agent.py
     │       ├── messages.py
-    │       ├── skills.py
     │       ├── usage.py
     │       ├── base_tools/
     │       ├── context/             # base system prompt
