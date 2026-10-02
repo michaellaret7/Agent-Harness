@@ -205,7 +205,13 @@ One entry per rubric criterion, in rubric order.
 
 def judge_agent(model: str, provider: str = 'openrouter', max_iters: int = 25) -> Agent:
     """Build a judge Agent with the judge system prompt and a short iteration cap."""
-    return Agent(provider=provider, model=model, system=JUDGE_SYSTEM, max_iters=max_iters)
+    
+    return Agent(
+        provider=provider,
+        model=model,
+        system=JUDGE_SYSTEM,
+        max_iters=max_iters,
+    )
 
 
 def llm_judge(
