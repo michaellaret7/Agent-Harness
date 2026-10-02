@@ -29,8 +29,8 @@ HOSTED_PROVIDER_ENV: dict[str, tuple[str, str]] = {
     'openrouter': ('OPENROUTER_API_KEY', 'OPENROUTER_API_URL'),
 }
 
-def build_client(provider: str = 'vllm', model: str | None = None) -> tuple[OpenAI, str]:
-    """Return (client, model). provider is 'openrouter' or 'vllm'.
+def build_client(provider: str = 'openrouter', model: str | None = None) -> tuple[OpenAI, str]:
+    """Return (client, model). provider defaults to 'openrouter'; 'vllm' is opt-in.
 
     Reads credentials from the process environment. The application entry
     point must have loaded `.env` (via `load_dotenv()`) before calling this

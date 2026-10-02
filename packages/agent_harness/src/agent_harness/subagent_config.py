@@ -41,3 +41,4 @@ class SubAgentConfig:
     provider: str = 'openrouter'
     model: str | None = None
     max_iters: int = 100
+    reasoning_effort: str | None = None

@@ -211,6 +211,7 @@ def execution_loop(
             model,
             active_sink,
             active_cancel,
+            reasoning_effort=agent.reasoning_effort,
         )
 
         if usage is not None:
@@ -264,6 +265,7 @@ def call_llm(
     model: str,
     sink: Sink,
     cancel_event: threading.Event,
+    reasoning_effort: str | None = None,
 ) -> tuple[str, list[dict], bool, Usage | None]:
     """Call the LLM with streaming. Returns (content, tool_calls, was_cancelled, usage)."""
 
@@ -290,6 +292,8 @@ def call_llm(
             stream=True,
             # Final chunk arrives with empty choices and populated usage.
             stream_options={'include_usage': True},
+            # Only sent when set: an unexpected param can 400 on non-reasoning models.
+            **({'reasoning_effort': reasoning_effort} if reasoning_effort else {}),
         )
 
         for chunk in response:

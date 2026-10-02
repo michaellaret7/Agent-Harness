@@ -92,7 +92,7 @@ The response streams to stdout and is also returned as `result`. Pass a custom `
 
 ### Configuration
 
-- **OpenRouter:** pass `provider="openrouter"` and an explicit model. Set `OPENROUTER_API_KEY` and `OPENROUTER_API_URL=https://openrouter.ai/api/v1`.
+- **OpenRouter (default):** pass an explicit model; `provider="openrouter"` is optional. Set `OPENROUTER_API_KEY` and `OPENROUTER_API_URL=https://openrouter.ai/api/v1`.
 - **Hosted vLLM:** pass `provider="vllm"`. Set `VLLM_API_URL` and either pass a model or set `VLLM_MODEL`.
 - **Web tools:** set `PARALLEL_API_KEY` to use the built-in web search and extraction tools.
 - **Tracing:** setting `LANGFUSE_PUBLIC_KEY` with the corresponding secret enables Langfuse instrumentation and sink composition. See `.env.example` for the available settings.

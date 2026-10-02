@@ -49,4 +49,5 @@ class SubAgent(Agent):
             tools=list(spec.make_tools()),
             system=spec.system,
             max_iters=spec.max_iters,
+            reasoning_effort=spec.reasoning_effort,
         )

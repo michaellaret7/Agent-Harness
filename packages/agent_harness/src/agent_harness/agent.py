@@ -38,6 +38,7 @@ class Agent:
         max_iters: int = 100,
         subagents: list[SubAgentConfig] = [],
         output_model: type[BaseModel] | None = None,
+        reasoning_effort: str | None = None,
     ) -> None:
 
         # Construction is inert: the client is built lazily on first run() so module-level `agent = Agent(...)` 
@@ -45,6 +46,10 @@ class Agent:
         self.provider = provider
         self.model = model
         self.client = None
+        
+        # Forwarded to every completions call as `reasoning_effort`; None omits it so
+        # non-reasoning models are not rejected. Valid values are model-specific.
+        self.reasoning_effort = reasoning_effort
         
         self.max_iters = max_iters
         self.task = task
