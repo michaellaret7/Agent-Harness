@@ -30,7 +30,7 @@ AgentFactory = Callable[[], Agent]
 #     ================================
 
 
-def _run_subject(make_agent: AgentFactory, case: EvalCase) -> RunResult:
+def _run_case(make_agent: AgentFactory, case: EvalCase) -> RunResult:
     """Run one case on a fresh agent. A crash still yields a gradable RunResult."""
     agent = make_agent()
     recorder = EvalSink()
@@ -85,7 +85,7 @@ def run_evals(
     records: list[CaseRecord] = []
 
     for case in cases:
-        run = _run_subject(make_agent, case)
+        run = _run_case(make_agent, case)
 
         scores = tuple(_grade(g, case, run) for g in graders)
 

@@ -44,11 +44,6 @@ def _mark(score: Score) -> str:
     return f'{score.value:.2f}'
 
 
-def _is_judge(score: Score) -> bool:
-    """A judge score carries prose reasoning; deterministic ones carry a short detail."""
-    return '\n' in score.detail or len(score.detail) > 80
-
-
 def _table(records: Sequence[CaseRecord]) -> list[str]:
     """Case × grader grid with aligned columns."""
     names = [s.name for s in records[0].scores]
@@ -84,7 +79,7 @@ def _reasoning_blocks(records: Sequence[CaseRecord]) -> list[str]:
 
 def _record_dict(r: CaseRecord) -> dict:
     """Plain-data view of one record, scores first so a reader sees the verdict before the detail."""
-    meta = asdict(r.run.meta)
+    meta = r.run.meta
 
     return {
         'id': r.case.id,
@@ -92,11 +87,11 @@ def _record_dict(r: CaseRecord) -> dict:
         'task': r.case.task,
         'criteria': list(r.case.criteria),
         'final': r.run.final,
-        'stop_reason': meta['stop_reason'],
-        'iterations': meta['iterations'],
-        'usage': meta['usage'],
-        'tool_calls': [name for name, _ in r.run.meta.tool_outcomes],
-        'errors': list(meta['errors']),
+        'stop_reason': meta.stop_reason,
+        'iterations': meta.iterations,
+        'usage': asdict(meta.usage),
+        'tool_calls': [name for name, _ in meta.tool_outcomes],
+        'errors': list(meta.errors),
     }
 
 

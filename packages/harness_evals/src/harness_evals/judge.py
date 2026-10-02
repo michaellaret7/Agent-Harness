@@ -4,7 +4,8 @@ The judge is an ordinary `Grader`: the runner calls it on `(case, run)` like
 `finished()`. Inside, it builds a fresh judge `Agent`, gives it an
 `ExecuteCode` sandbox whose workspace holds the subject's transcript as
 JSON, hands it the case's success criteria plus any shared criteria as one
-numbered rubric, the task, and parses the JSON verdict the judge writes. The judge scores
+numbered rubric, and the task. The judge returns a `JudgeVerdict` through
+`Agent(output_model=...)`, so the shape is guaranteed rather than parsed. The judge scores
 each criterion on a five-step scale; the overall score is their mean.
 
 The transcript goes into the sandbox, not the prompt. A long run would
@@ -15,17 +16,14 @@ The judge sees content only. Tokens, cost, duration and stop reason stay
 with the deterministic graders so the judge scores what was said, not how
 expensive it was to say it.
 
-The verdict is parsed from the judge's final text rather than through
-`Agent(output_model=...)`: that path makes a second model call per case
-and the judge prompt already pins the JSON shape.
+Structured output costs one extra small model call per case: the engine
+maps the judge's final text into `JudgeVerdict` after the judge finishes.
 """
 from __future__ import annotations
 
 import json
-import re
 import tempfile
-from collections.abc import Callable, Iterator, Sequence
-from contextlib import contextmanager
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import cast
 
@@ -69,31 +67,6 @@ def write_transcript(workspace: Path, run: RunResult) -> Path:
     return path
 
 
-@contextmanager
-def judge_workspace(runs_dir: Path | None, case_id: str) -> Iterator[Path]:
-    """A kept folder `runs_dir/<case id>/` when `runs_dir` is given; otherwise a temp dir removed on exit."""
-    if runs_dir is not None:
-        workspace = runs_dir / case_id
-        workspace.mkdir(parents=True, exist_ok=True)
-
-        yield workspace
-
-        return
-
-    with tempfile.TemporaryDirectory(prefix=f'judge_{case_id}_', ignore_cleanup_errors=True) as tmp:
-        yield Path(tmp)
-
-
-def write_verdict(workspace: Path, name: str, verdict: 'JudgeVerdict') -> Path:
-    """Keep the judge's verdict beside the transcript it was reached from."""
-    path = workspace / f'{name}.verdict.json'
-
-    with path.open('w', encoding='utf-8') as f:
-        f.write(verdict.model_dump_json(indent=2))
-
-    return path
-
-
 def render_task(shared: Sequence[str], case: EvalCase, transcript: Path) -> str:
     """Build the judge's user message: numbered criteria (case first, then shared), task, and where the transcript is."""
     criteria = [*case.criteria, *shared]
@@ -104,13 +77,15 @@ def render_task(shared: Sequence[str], case: EvalCase, transcript: Path) -> str:
     rubric = '\n'.join(f'{i}. {c}' for i, c in enumerate(criteria, 1))
 
     # Absolute path: a relative one gets re-joined onto the kernel's cwd and misses.
+    transcript = transcript.resolve()
+
     return (
         f'<rubric>\n{rubric}\n</rubric>\n\n'
         f'<task>\n{case.task}\n</task>\n\n'
         f'<transcript>\n'
         f'The full transcript is the JSON file at this absolute path, which already exists:\n'
-        f'{transcript.resolve()}\n'
-        f'Load it with exactly: json.load(open(r"{transcript.resolve()}", encoding="utf-8"))\n'
+        f'{transcript}\n'
+        f'Load it with exactly: json.load(open(r"{transcript}", encoding="utf-8"))\n'
         'It is a list of chat messages in order. Each has "role" (user | assistant | tool) and '
         '"content"; assistant messages may carry "tool_calls" (id, function.name, function.arguments); '
         'tool messages carry "tool_call_id" linking the result to its call. The last assistant message '
@@ -129,16 +104,6 @@ def render_reasoning(verdict: 'JudgeVerdict') -> str:
         lines.append('failures:' + ''.join(f'\n  - {f}' for f in verdict.failures))
 
     return '\n'.join(lines)
-
-
-def parse_verdict(text: str) -> 'JudgeVerdict':
-    """Extract the first JSON object from the judge's reply and validate it."""
-    match = re.search(r'\{.*\}', text, re.DOTALL)
-
-    if match is None:
-        raise ValueError(f'judge returned no JSON object: {text[:200]!r}')
-
-    return JudgeVerdict.model_validate(json.loads(match.group(0)))
 
 
 #     ================================
@@ -162,6 +127,7 @@ class JudgeVerdict(BaseModel):
         """Overall score is the mean of the criterion scores, computed here, never by the judge."""
         return sum(c.score for c in self.criteria) / len(self.criteria)
 
+# TODO: REVIEW THIS SYSTEM PROMPT AND IRON OUT HOW THE JUDGE SCORES AND EVIDENCE FOR EACH CRITERION.
 
 JUDGE_SYSTEM = """<role>
 You are an impartial evaluator. You are given a rubric of success criteria, a task, and a file holding the full transcript of an agent attempting the task. You score how well the agent did.
@@ -203,79 +169,56 @@ One entry per rubric criterion, in rubric order.
 #     ================================
 
 
-def judge_agent(model: str, provider: str = 'openrouter', max_iters: int = 25) -> Agent:
-    """Build a judge Agent with the judge system prompt and a short iteration cap."""
-    
+def judge_agent(model: str, max_iters: int = 25) -> Agent:
+    """Build a judge Agent with the judge system prompt and an iteration cap."""
     return Agent(
-        provider=provider,
-        model=model,
-        system=JUDGE_SYSTEM,
-        max_iters=max_iters,
+        model=model, 
+        system=JUDGE_SYSTEM, 
+        max_iters=max_iters
     )
 
 
 def llm_judge(
-    model: str | None = None,
+    model: str,
     shared_criteria: Sequence[str] = (),
-    provider: str = 'openrouter',
     name: str = 'judge',
-    runs_dir: Path | None = None,
     make_judge: JudgeFactory | None = None,
 ) -> Grader:
     """A Grader that runs a fresh judge Agent per case and returns its verdict as a Score.
 
-    `model` is the judge model; a fresh `judge_agent(model, provider)` is
-    built per case. `make_judge` replaces that builder for callers that
-    need a judge with extra tools or an injected client (tests). Exactly
-    one of the two must be given.
-
-    The rubric for a case is `case.criteria` followed by `shared_criteria`
-    (house rules that apply to every task: grounded figures, no duplicate
-    tool calls). The judge scores each one on a five-step scale and the
-    overall score is their mean, so a run that meets three of four
-    criteria lands near 0.75 rather than 0 or 1.
-    The subject's transcript is written as JSON into a
-    per-case workspace; the grader attaches its own `ExecuteCode` tool
-    backed by a sandbox rooted there and closes that sandbox once the
-    verdict is in. By default the workspace is a temp dir removed after
-    the verdict (the transcript already lives in Langfuse when tracing is
-    on). Pass `runs_dir` to keep `runs_dir/<case id>/transcript.json` and
-    `<name>.verdict.json` on disk instead. A judge that fails to answer or returns malformed JSON
-    raises, and the runner records that as a zero score with the traceback.
+    The rubric for a case is `case.criteria` followed by `shared_criteria`.
+    The judge scores each criterion on a five-step scale; the Score is their
+    mean. Per case, the subject's transcript is written to a temp folder that
+    the judge reads through its own ExecuteCode sandbox; folder and sandbox
+    are gone once the verdict is in. `make_judge` replaces the default
+    `judge_agent(model)` builder (a different provider, an injected client).
+    A judge that never answers raises, and the runner records a zero score.
     """
-    if (model is None) == (make_judge is None):
-        raise ValueError('llm_judge: pass exactly one of model= or make_judge=')
-
-    build = make_judge if make_judge is not None else (lambda: judge_agent(cast(str, model), provider))
+    build = make_judge or (lambda: judge_agent(model))
 
     def grade(case: EvalCase, run: RunResult) -> Score:
-        with judge_workspace(runs_dir, case.id) as workspace:
-            transcript = write_transcript(workspace, run)
+        # ignore_cleanup_errors: on Windows the stopped kernel can hold the folder open for a moment.
+        with (
+            tempfile.TemporaryDirectory(prefix=f'judge_{case.id}_', ignore_cleanup_errors=True) as tmp,
+            SubprocessSandbox(Path(tmp)) as sandbox,
+        ):
+            judge = build()
+            judge.output_model = JudgeVerdict
+            judge.add_tool(bind_tool(execute_code, _sandbox=sandbox))
 
-            # Per-case sandbox: closed on exit so a batch does not accumulate kernels.
-            with SubprocessSandbox(workspace) as sandbox:
-                judge = build()
-                judge.add_tool(bind_tool(execute_code, _sandbox=sandbox))
+            # Record the judge's own run so a missing verdict names its cause (max_iters, error).
+            recorder = EvalSink()
+            sink = cast(Sink, MultiSink([recorder, LogSink(f'{case.id}.{name}')]))
+            task = render_task(shared_criteria, case, write_transcript(Path(tmp), run))
 
-                # Record the judge's own run so a missing verdict names its cause (max_iters, error).
-                recorder = EvalSink()
-                sink = cast(Sink, MultiSink([recorder, LogSink(f'{case.id}.{name}')]))
+            verdict = cast(JudgeVerdict, judge.run(task, sink=sink))
 
-                reply = judge.run(render_task(shared_criteria, case, transcript), sink=sink)
+        if recorder.stop_reason != 'answer_ready':
+            raise RuntimeError(
+                f'judge did not answer: stop_reason={recorder.stop_reason!r} '
+                f'after {recorder.iterations} iterations, errors={recorder.errors}'
+            )
 
-            if recorder.stop_reason != 'answer_ready':
-                raise RuntimeError(
-                    f'judge did not answer: stop_reason={recorder.stop_reason!r} '
-                    f'after {recorder.iterations} iterations, errors={list(recorder.errors)}'
-                )
-
-            verdict = parse_verdict(cast(str, reply))
-
-            if runs_dir is not None:
-                write_verdict(workspace, name, verdict)
-
-        reasoning = render_reasoning(verdict)
-
-        return Score(name=name, value=verdict.score, reasoning=reasoning)
+        return Score(name=name, value=verdict.score, reasoning=render_reasoning(verdict))
 
     return Grader(name, grade)

@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
@@ -19,6 +21,7 @@ from harness_evals import (
     EvalCase, EvalSink, Grader, RunResult, Score,
     final_answer_contains, finished, llm_judge, max_iterations, no_tool_errors, print_report, run_evals, tools_called, write_report,
 )
+from harness_evals.judge import write_transcript
 from harness_evals.runner import AgentFactory
 
 
@@ -27,18 +30,48 @@ from harness_evals.runner import AgentFactory
 #     ================================
 
 
+@dataclass(frozen=True)
+class Completion:
+    """A non-streamed reply: what the structured-output parse call receives."""
+
+    content: str
+
+
+def completion_response(content: str) -> httpx.Response:
+    return httpx.Response(200, json={
+        'id': 'completion-test', 'object': 'chat.completion', 'created': 0, 'model': 'contract-model',
+        'choices': [{'index': 0, 'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': content}}],
+    })
+
+
 @contextmanager
 def scripted_factory(
-    responses: Sequence[Sequence[StreamItem]],
+    responses: Sequence[Sequence[StreamItem] | Completion],
     tools: Sequence | None = None,
 ) -> Iterator[tuple[AgentFactory, ScriptedProvider]]:
-    """Yield a factory that builds fresh agents sharing one in-memory provider."""
-    provider = ScriptedProvider(responses)
+    """Yield a factory that builds fresh agents sharing one in-memory provider.
+
+    Streamed calls consume the next stream script; a non-streamed call (the
+    judge's structured-output parse) consumes the next `Completion`.
+    """
+    provider = ScriptedProvider(responses)  # type: ignore[arg-type]
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+
+        if body.get('stream'):
+            return provider.respond(request)
+
+        provider.requests.append(body)
+        item = responses[len(provider.requests) - 1]
+        assert isinstance(item, Completion), 'a non-streamed request needs a scripted Completion'
+
+        return completion_response(item.content)
 
     with pytest.MonkeyPatch.context() as environment:
         environment.setenv('LANGFUSE_PUBLIC_KEY', '')
 
-        with httpx.Client(transport=httpx.MockTransport(provider.respond)) as http_client:
+        with httpx.Client(transport=httpx.MockTransport(respond)) as http_client:
             with OpenAI(api_key='test-only', base_url='https://harness.invalid/v1',
                         http_client=http_client, max_retries=0) as client:
 
@@ -138,7 +171,7 @@ def test_failures_are_recorded_not_raised() -> None:
     assert 'grader bug' in exploding_score.reasoning and exploding_score.detail == 'grader raised'
 
 
-def test_llm_judge_reads_transcript_from_sandbox(tmp_path: Path) -> None:
+def test_llm_judge_reads_transcript_from_sandbox() -> None:
     """The judge gets the transcript as a file in its sandbox, inspects it with ExecuteCode, and its JSON verdict becomes the Score."""
     invoked: list[tuple[str, int, int]] = []
     verdict = ('{"criteria": [{"criterion": "correct sum", "score": 1.0, "evidence": "tool result sum=5, answer says 5"},'
@@ -149,11 +182,12 @@ def test_llm_judge_reads_transcript_from_sandbox(tmp_path: Path) -> None:
         [tool_delta(tool_call('add', {'a': 2, 'b': 3}, 'sum'))], [{'content': 'The sum is 5'}],   # subject
         [tool_delta(tool_call('ExecuteCode', {'code': read_final}, 'read'))],                     # judge inspects
         [{'content': 'Verdict: ' + verdict}],                                                     # judge answers
+        Completion(verdict),                                                                      # parse into JudgeVerdict
     ]
     case = EvalCase('add_case', 'Add 2 and 3.', criteria=('correct sum',))
 
     with scripted_factory(responses, arithmetic_tools(invoked)) as (make_agent, api):
-        grader = llm_judge(make_judge=make_agent, shared_criteria=['units stated'], runs_dir=tmp_path)
+        grader = llm_judge('contract-model', shared_criteria=['units stated'], make_judge=make_agent)
         (record,) = run_evals(make_agent, [case], [grader])
 
     (score,) = record.scores
@@ -165,35 +199,48 @@ def test_llm_judge_reads_transcript_from_sandbox(tmp_path: Path) -> None:
     judge_prompt = api.requests[2]['messages'][-1]['content']
     assert '<rubric>\n1. correct sum\n2. units stated' in judge_prompt, 'case criteria first, shared after'
     assert '<task>\nAdd 2 and 3.' in judge_prompt
-    assert str((tmp_path / 'add_case' / 'transcript.json').resolve()) in judge_prompt
+    assert 'transcript.json' in judge_prompt and 'judge_add_case_' in judge_prompt, 'absolute path into the temp folder'
     assert 'The sum is 5' not in judge_prompt, 'the transcript must not be inlined into the prompt'
+
+    # The structured-output call converts the judge's final text, not anything else.
+    assert api.requests[4]['messages'][-1]['content'].startswith('Verdict: ')
+    assert api.requests[4]['response_format']['json_schema']['name'] == 'JudgeVerdict'
 
     # The sandbox really served the file: the judge's code printed the subject's final answer.
     sandbox_result = api.requests[3]['messages'][-1]
     assert sandbox_result['role'] == 'tool'
     assert 'The sum is 5' in message_text(sandbox_result)
 
-    # The kept workspace holds the evidence and the verdict side by side.
-    workspace = tmp_path / 'add_case'
-    transcript = json.loads((workspace / 'transcript.json').read_text(encoding='utf-8'))
-    assert [m['role'] for m in transcript] == ['user', 'assistant', 'tool', 'assistant']
-    assert all(isinstance(m['content'], str) for m in transcript), 'content is always flat text for the judge'
-    assert transcript[2]['content'] == '5'
-    assert [c['score'] for c in json.loads((workspace / 'judge.verdict.json').read_text(encoding='utf-8'))['criteria']] == [1.0, 0.5]
+    # The judge's temp folder is gone once the verdict is in.
+    assert not any(Path(tempfile.gettempdir()).glob('judge_add_case_*'))
 
 
-def test_llm_judge_malformed_reply_scores_zero(tmp_path: Path) -> None:
-    """A judge that returns no JSON is a grader failure: zero score, traceback in detail."""
-    responses = [[{'content': 'hello'}], [{'content': 'I cannot decide.'}]]
+def test_write_transcript_flattens_content(tmp_path: Path) -> None:
+    """The file the judge reads drops the system prompt and always has string content."""
+    messages = [
+        {'role': 'system', 'content': 'secret system prompt'},
+        {'role': 'user', 'content': 'Add 2 and 3.'},
+        {'role': 'tool', 'tool_call_id': 'sum', 'content': [{'type': 'text', 'text': '5', 'cache_control': {'type': 'ephemeral'}}]},
+    ]
+    run = RunResult(final='5', messages=messages, meta=EvalSink().meta)
+
+    transcript = json.loads(write_transcript(tmp_path, run).read_text(encoding='utf-8'))
+
+    assert [m['role'] for m in transcript] == ['user', 'tool']
+    assert transcript[1]['content'] == '5'
+
+
+def test_llm_judge_malformed_reply_scores_zero() -> None:
+    """A verdict that fails the JudgeVerdict schema is a grader failure: zero score, traceback in reasoning."""
+    responses = [[{'content': 'hello'}], [{'content': 'I cannot decide.'}], Completion('{"reasoning": "unsure"}')]
 
     with scripted_factory(responses) as (make_agent, _):
-        grader = llm_judge(make_judge=make_agent, shared_criteria=['any criterion'])   # default: temp workspace
+        grader = llm_judge('contract-model', shared_criteria=['any criterion'], make_judge=make_agent)
         (record,) = run_evals(make_agent, [EvalCase('greet', 'Say hello.')], [grader])
 
     (score,) = record.scores
     assert score.value == 0.0
-    assert 'no JSON object' in score.reasoning
-    assert not list(tmp_path.iterdir()), 'default mode writes nothing under a runs dir'
+    assert 'grader raised' in score.reasoning and 'criteria' in score.reasoning
 
 
 def test_report_shows_marks_and_judge_reasoning(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -204,11 +251,12 @@ def test_report_shows_marks_and_judge_reasoning(tmp_path: Path, capsys: pytest.C
     responses = [
         [{'content': 'The sum is 5'}],                                                        # subject
         [tool_delta(tool_call('ExecuteCode', {'code': 'print(1)'}, 'read'))], [{'content': verdict}],   # judge
+        Completion(verdict),                                                                             # parse
     ]
     graders = [finished(), max_iterations(1)]
 
     with scripted_factory(responses) as (make_agent, _):
-        graders.append(llm_judge(make_judge=make_agent, runs_dir=tmp_path))
+        graders.append(llm_judge('contract-model', make_judge=make_agent))
         records = run_evals(make_agent, [EvalCase('add_case', 'Add 2 and 3.', criteria=('correct', 'units'))], graders)
 
     print_report(records)
@@ -235,4 +283,46 @@ def test_report_shows_marks_and_judge_reasoning(tmp_path: Path, capsys: pytest.C
     assert 'Answered 5 but gave no units.' in report['scores'][2]['reasoning']
     assert 'messages' not in text and 'transcript' not in text, 'no transcript in the report'
     assert 'reasoning: |' in text, 'multi-line reasoning is a block scalar'
+
+
+@pytest.mark.parametrize('crashed', [False, True])
+def test_report_preserves_run_details(tmp_path: Path, crashed: bool) -> None:
+    """YAML preserves tool order, scores, usage, and errors for completed and crashed runs."""
+    invoked: list[tuple[str, int, int]] = []
+    responses = [
+        [tool_delta(tool_call('add', {'a': 2, 'b': 3}, 'sum'))],
+        [tool_delta(tool_call('multiply', {'a': 5, 'b': 4}, 'product'))],
+    ]
+
+    if not crashed:
+        responses.append([{'content': 'The result is 20'}])
+
+    case = EvalCase('calculation', 'Add 2 and 3, then multiply by 4.', criteria=('result is 20',))
+
+    with scripted_factory(responses, arithmetic_tools(invoked)) as (make_agent, _):
+        records = run_evals(make_agent, [case], [finished()])
+
+    run_dir = write_report(records, tmp_path)
+    report = yaml.safe_load((run_dir / 'calculation.yaml').read_text(encoding='utf-8'))
+    errors = list(records[0].run.meta.errors)
+    stop_reason = '' if crashed else 'answer_ready'
+
+    assert bool(errors) == crashed
+    assert report == {
+        'id': 'calculation',
+        'scores': [{'name': 'finished', 'value': 0.0}] if crashed else [
+            {'name': 'finished', 'value': 1.0, 'detail': 'answer_ready'},
+        ],
+        'task': case.task,
+        'criteria': ['result is 20'],
+        'final': '' if crashed else 'The result is 20',
+        'stop_reason': stop_reason,
+        'iterations': 0 if crashed else 3,
+        'usage': {
+            'prompt_tokens': 0, 'completion_tokens': 0, 'reasoning_tokens': 0,
+            'cached_tokens': 0, 'cache_write_tokens': 0, 'cost': 0.0,
+        },
+        'tool_calls': ['add', 'multiply'],
+        'errors': errors,
+    }
 
