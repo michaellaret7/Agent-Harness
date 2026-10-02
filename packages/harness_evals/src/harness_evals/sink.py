@@ -3,9 +3,9 @@
 The message history already holds what the model decided, saw, and
 answered. What it lacks is how the run went: token usage, stop reason,
 tool status and duration, errors. Those exist only as Sink events, so this
-sink accumulates them and exposes the result as a frozen `RunMeta`.
+sink accumulates them and exposes the result as a frozen `RunMetadata`.
 
-It records; it never grades. Graders read `RunMeta` through `RunResult`.
+It records; it never grades. Graders read `RunMetadata` through `RunResult`.
 """
 from __future__ import annotations
 
@@ -16,12 +16,12 @@ from agent_harness.usage import Usage
 
 
 #     ================================
-# --> RunMeta
+# --> RunMetadata
 #     ================================
 
 
 @dataclass(frozen=True)
-class RunMeta:
+class RunMetadata:
     """Snapshot of one agent run, taken after `Agent.run` returns."""
 
     usage: Usage                                   # summed over every LLM call in the run
@@ -39,7 +39,7 @@ class RunMeta:
 
 
 class EvalSink(BaseSink):
-    """Accumulate loop events; expose them as `RunMeta` via `.meta`."""
+    """Accumulate loop events; expose them as `RunMetadata` via `.meta`."""
 
     def __init__(self) -> None:
         self.usage = Usage.zero()
@@ -77,8 +77,8 @@ class EvalSink(BaseSink):
         self.interrupted = True
 
     @property
-    def meta(self) -> RunMeta:
-        return RunMeta(
+    def meta(self) -> RunMetadata:
+        return RunMetadata(
             usage=self.usage,
             llm_calls=self.llm_calls,
             stop_reason=self.stop_reason,

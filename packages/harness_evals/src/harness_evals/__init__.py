@@ -8,10 +8,10 @@ from harness_evals.grader import (
 from harness_evals.judge import CriterionScore, JudgeVerdict, llm_judge
 from harness_evals.report import print_report, write_report
 from harness_evals.runner import CaseRecord, run_evals
-from harness_evals.sink import EvalSink, RunMeta
+from harness_evals.sink import EvalSink, RunMetadata
 
 __all__ = [
-    'EvalCase', 'EvalSink', 'RunMeta', 'RunResult', 'Score', 'Grader',
+    'EvalCase', 'EvalSink', 'RunMetadata', 'RunResult', 'Score', 'Grader',
     'CaseRecord', 'run_evals',
     'finished', 'no_tool_errors', 'max_iterations', 'max_cost', 'tools_called', 'final_answer_contains',
     'CriterionScore', 'JudgeVerdict', 'llm_judge',

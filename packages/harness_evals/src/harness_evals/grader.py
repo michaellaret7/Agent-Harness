@@ -2,7 +2,7 @@
 
 A grader is a named callable that maps `(case, run) -> Score`. `run` is a
 `RunResult`: the subject's final answer, its message history, and the
-`RunMeta` the sink recorded. Deterministic graders read mostly `run.meta`
+`RunMetadata` the sink recorded. Deterministic graders read mostly `run.meta`
 (numbers the judge should never see); the LLM judge in `judge.py` reads
 mostly `run.messages`.
 
@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from harness_evals.case import EvalCase
-from harness_evals.sink import RunMeta
+from harness_evals.sink import RunMetadata
 
 
 #     ================================
@@ -39,7 +39,7 @@ class RunResult:
 
     final: str                 # what Agent.run returned
     messages: list[dict]       # the subject's context window
-    meta: RunMeta              # what only the sink saw
+    meta: RunMetadata              # what only the sink saw
 
 
 @dataclass(frozen=True)
