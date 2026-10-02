@@ -10,3 +10,4 @@ uv.lock
 dist/
 *.egg-info/
 build/
+runs/

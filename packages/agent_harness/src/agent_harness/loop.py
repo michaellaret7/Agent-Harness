@@ -206,7 +206,7 @@ def execution_loop(
         # Call the LLM aka the completions api and stream the response
         content, tool_calls, was_cancelled, usage = call_llm(
             agent.client,
-            agent.messages,
+            agent.messages, # lets build the renderer module to render the messages everytime and give some fine grained control over the rendering process
             agent.tools,
             model,
             active_sink,

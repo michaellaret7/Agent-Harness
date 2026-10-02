@@ -4,17 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-This repo is a **uv workspace** of three packages (see Architecture). Install the whole workspace into one shared venv with `uv sync --all-packages` — a plain `uv sync` only syncs the virtual root (which depends on nothing) and leaves the members uninstalled.
+This repo is a **uv workspace** of two library packages (see Architecture). Install the whole workspace into one shared venv with `uv sync --all-packages` — a plain `uv sync` only syncs the virtual root (which depends on nothing) and leaves the members uninstalled.
 
 Entry points:
-- `uv run python -m coding` — the coding-domain agent (bash, read/write/edit, glob/grep/tree + base web tools).
-- `uv run python -m agent_harness` — the bare base agent with no domain tools. Used as a dev sanity check that the streaming loop and TUI work end-to-end without any coding tools attached.
+- `uv run --package agent-harness python -m agent_harness` — a headless development REPL: base tools + `ExecuteCode`. Used as a sanity check that the streaming loop and sandbox work end-to-end.
+- `uv run --package agent-harness python examples/stock_data_analysis.py` — the live stock-data and code-screening example.
 
-Both launch the TUI (`tui/app.py`). To use the agent programmatically, import `Agent` and call `agent.run(task, sink=..., cancel_event=...)`. The task can also be set at init via `Agent(task=...)` and `run()` called with no arg — useful for batch pipelines. If `sink` is None, output goes to stdout via `StdoutSink`.
+Application-specific agents live in other repos and import the engine. To use the agent programmatically, `from agent_harness import Agent` and call `agent.run(task, sink=..., cancel_event=...)`. `run()` returns the final text (or a Pydantic instance when `output_model=` is set); the full transcript stays on `agent.messages`. The task can also be set at init via `Agent(task=...)` and `run()` called with no arg — useful for batch pipelines. If `sink` is None, output goes to stdout via `StdoutSink`. The TUI is opt-in: `TUIApp(agent).run_async()` from `tui/app.py`.
 
 Supports Python 3.12–3.13 (`>=3.12,<3.14` in `pyproject.toml`); `.python-version` keeps this repo's own venv on 3.12. uv will refuse to sync on a 3.14 interpreter.
 
-There is no test suite or linter configured. The two library packages build as wheels via hatchling (`uv build packages/agent_harness`); `coding` is a non-package (`package = false`) consumer that runs in place.
+Tests live in root `tests/`. `uv run --all-packages pytest` runs the offline behavior contracts (scripted HTTP responses through the real SDK, loop, and tools — no credentials needed; see `docs/testing/contracts.md`). `test_code_execution.py`, `test_subagent_tools.py`, and `test_code_screen.py` are excluded from collection by `conftest.py` and run as scripts with `uv run --package agent-harness python tests/<file>.py`; the screening checks need live OpenRouter credentials. No linter is configured. The two library packages build as wheels via hatchling (`uv build --all-packages`).
 
 ## Response Type 
 - Please be clear, concise, and to the point in your responses and do your best to avoid unecessary verbosity
@@ -27,22 +27,44 @@ There is no test suite or linter configured. The two library packages build as w
 
 ### Workspace layout
 
-The repo is a **uv workspace** with a virtual root (`pyproject.toml` at the repo root holds only `[tool.uv.workspace]`, `package = false`). Three members:
+The repo is a **uv workspace** with a virtual root (`pyproject.toml` at the repo root holds the workspace members, pytest config and dev dependencies, `package = false`). Two members:
 
-- `packages/agent_harness/` — the `agent-harness` distributable (import `agent_harness`). The base `Agent` class, streaming loop, ToolHandler, sinks, and base tools (`agent_harness/base_tools/`: WebSearch, WebExtract, Plan, LoadTool). Domain-agnostic. Treat it as the shared package: no domain logic leaks in, and the dependency direction is one-way (frontend/domains → `agent_harness`, never the reverse). It **reads** configuration (`os.getenv`) but never **loads** it — applications (the entry points) own bootstrap, including `load_dotenv()`. Core deps are `openai`/`httpx`/`pydantic`/`langfuse` — the LangfuseSink ships with the engine and auto-registers when `LANGFUSE_PUBLIC_KEY` is present (its import in `sinks/__init__.py` is lazy, gated on that env var, so the package is pulled but only loaded when tracing is on). Built with hatchling under `src/` layout.
+- `packages/agent_harness/` — the `agent-harness` distributable (import `agent_harness`). The base `Agent` class, streaming loop, tooling (`tooling/`: decorator, handler, result), hooks, gates, subagents, sinks, and base tools (`base_tools/`: WebSearch, WebExtract, Plan, LoadTool, DeploySubagent, and `code_execution/` for ExecuteCode). Domain-agnostic. Treat it as the shared package: no domain logic leaks in, and the dependency direction is one-way (frontend/domains → `agent_harness`, never the reverse). It **reads** configuration (`os.getenv`) but never **loads** it — applications (the entry points) own bootstrap, including `load_dotenv()`. Core deps are `openai`/`httpx`/`pydantic`/`langfuse` — the LangfuseSink ships with the engine and auto-registers when `LANGFUSE_PUBLIC_KEY` is present (its import in `sinks/__init__.py` is lazy, gated on that env var, so the package is pulled but only loaded when tracing is on). Built with hatchling under `src/` layout.
 - `packages/tui/` — the `tui` distributable (import `tui`). prompt_toolkit + Rich frontend; depends on `agent-harness`. Generic — no domain knowledge. `prompt_toolkit`/`rich` live here, not in the engine, so headless consumers of `agent_harness` never pull terminal-UI deps.
-- `coding/` — the coding **domain** and in-repo consumer (`package = false`, runs in place; consumes both libraries). Owns coding-specific tools (`coding/tools/`), system prompt (`coding/system_prompt.md`), memory (`coding/memory.md`), and the user-facing entry point (`coding/__main__.py`).
+
+Root-level support folders: `examples/` (runnable demos), `tests/` (contracts + standalone scripts), `docs/` (technical docs by topic, e.g. `docs/tools/code_execution.md`). `dist/` holds built wheels and is gitignored.
+
+```
+Agent(system=, tools=, subagents=, output_model=)
+  ├─ base_tools/  search · extract · plan · load_tool · deploy_subagent · code_execution/
+  ├─ tooling/     decorator (@agent_tool, bind_tool) · handler (dispatch) · result (ToolResult)
+  ├─ loop.py      stream → reassemble tool calls → dispatch → repeat
+  ├─ hooks.py / gates.py   observe / allow-deny-rewrite
+  └─ sinks/       Sink Protocol · StdoutSink · LogSink · LangfuseSink · HookSink
+packages/tui/   TUISink + TUIApp (optional frontend)
+```
 
 **On distribution & backwards-compat:** the two library packages are meant to be consumed by domains in *other* repos (via Git dependency, e.g. `agent-harness @ git+…#subdirectory=packages/agent_harness`). Because external systems pin a version, `agent_harness`'s public API warrants SemVer discipline — the "No backwards-compatibility shims / update every caller" Hard Rule below applies cleanly *within* this workspace, but a breaking change to the engine's public surface is a real major-version event for outside consumers.
 
-Domains assemble an Agent by passing constructor args: `system`, `tools` (and optionally `task` for batch / one-shot use). The base ships generic methodology only. The domain appends a `<role>` block via `system=` and registers its tools. No subclassing — just composition through `Agent(...)`.
+Domains assemble an Agent by passing constructor args: `system`, `tools` (and optionally `task` for batch / one-shot use, `subagents`, `output_model`, `reasoning_effort`). The base ships generic methodology only. The domain appends a `<role>` block via `system=` and registers its tools. No subclassing — just composition through `Agent(...)`. The one exception is `SubAgent` (`sub_agent.py`), an engine-internal `Agent` variant that refuses gates, hooks, and nested subagents.
+
+### Extension points
+
+| Mechanism | Register | Fires | Authority |
+|---|---|---|---|
+| Hook (`hooks.py`) | `agent.add_hook(event, fn, tool=...)` | turn / loop / iteration / tool boundaries | None — observe only, return value ignored |
+| Gate (`gates.py`) | `agent.add_gate(fn, tool=...)` | before tool dispatch | `allow` / `deny` / `rewrite` args |
+| Subagent (`subagent_config.py`) | `Agent(subagents=[SubAgentConfig(...)])` | model calls `DeploySubagent` | fresh `SubAgent` per deployment, isolated history |
+| Sink (`sinks/base.py`) | `agent.run(sink=...)` or `register_always_on(factory)` | every lifecycle event | presentation / tracing |
+
+Hooks that append to `agent.messages` must do so only at start boundaries (`turn_start`, `loop_start`, `iteration_start`) where no tool_call awaits its result. Tool-filtered hooks and gates fail fast on an unknown tool name.
 
 ### TUI
 
 `packages/tui/` is the prompt_toolkit + Rich frontend (import `tui`). Architecture:
-- `tui/cells/` — Cell taxonomy (User/Assistant/Tool/Error). Each cell renders to ANSI via Rich and caches the result on `cell.ansi`.
+- `tui/cells/` — Cell taxonomy (User/Assistant/Tool/Error/Header). Each cell renders to ANSI via Rich and caches the result on `cell.ansi`.
 - `tui/history.py` — Lock-protected list of cells. Mutated by Sink (worker thread); read by renderer (UI thread).
-- `tui/sink.py` — `TUISink`, one implementation of the engine's `Sink` Protocol (`on_user_message`, `on_reasoning_delta`, `on_content_delta`, `on_assistant_end`, `on_tool_start`, `on_tool_end`, `on_error`, `on_interrupted`) that mutates History + invalidates the app. The Protocol itself and the headless `StdoutSink` live in `agent_harness/sinks/`.
+- `tui/sink.py` — `TUISink`, one implementation of the engine's `Sink` Protocol (`on_user_message`, `on_reasoning_delta`, `on_content_delta`, `on_assistant_end`, `on_tool_start`, `on_tool_end`, `on_error`, `on_interrupted`, …) that mutates History + invalidates the app. The Protocol itself and the headless `StdoutSink` live in `agent_harness/sinks/`.
 - `tui/panels/` — `OutputPanel` (FormattedTextControl + ANSI), `InputPanel` (TextArea, multi-line, Shift+Enter newline), `StatusBar`.
 - `tui/app.py` — `TUIApp` class. Async shell, sync loop. On Enter, `agent.run(prompt, sink, cancel_event)` runs in a worker via `asyncio.to_thread`. Esc sets `cancel_event` AND closes the in-flight stream. Ctrl+C double-tap exits.
 
@@ -55,7 +77,7 @@ Both providers (`vllm`, `openrouter`) talk through the **OpenAI Python SDK**. `a
 - `vllm` uses a placeholder API key (the hosted endpoint is unauthenticated) and pulls `VLLM_API_URL` / `VLLM_MODEL` from env.
 - `openrouter` requires `OPENROUTER_API_KEY` and a `model` argument (any model string from openrouter.ai/models); `OPENROUTER_API_URL` is optional.
 
-Note: the `Agent` class defaults to `provider='openrouter'`. `coding/__main__.py` (the user entry point) also selects its OpenRouter model explicitly. Pass `provider='vllm'` to use the hosted vLLM endpoint.
+Note: the `Agent` class defaults to `provider='openrouter'`. `agent_harness/__main__.py` (the development entry point) also selects its OpenRouter model explicitly. Pass `provider='vllm'` to use the hosted vLLM endpoint. The client is built lazily on first `run()`, so `Agent(...)` at module level is import-safe without a `.env`.
 
 ### The streaming loop (`agent_harness/loop.py`)
 
@@ -63,29 +85,31 @@ This is the load-bearing file. Two non-obvious invariants:
 
 1. **Tool-call fragment reassembly.** OpenAI emits `tool_calls` as deltas keyed by `index`. The first fragment carries `id` and `function.name`; subsequent fragments append to `function.arguments`. `call_llm` accumulates these into a dict-by-index, then sorts to a list. If you change the streaming logic, preserve the index-keyed merge — concatenating fragments in arrival order will corrupt parallel tool calls.
 
-2. **Reasoning content is printed but never persisted.** `delta.reasoning_content` (and the non-stream `message.reasoning`) are surfaced live to stdout but deliberately **not** appended to `messages`. This matches the convention for thinking-model APIs and keeps `<think>` blocks out of subsequent prompts. Don't "fix" this by adding it to history.
+2. **Reasoning content is printed but never persisted.** `delta.reasoning_content` (and the non-stream `message.reasoning`) are surfaced live to the sink but deliberately **not** appended to `messages`. This matches the convention for thinking-model APIs and keeps `<think>` blocks out of subsequent prompts. Don't "fix" this by adding it to history.
 
-The loop bails at `max_iters` (default 100) to prevent runaway tool-call cycles. Override per-agent via `Agent(max_iters=...)`.
+The loop bails at `max_iters` (default 100) to prevent runaway tool-call cycles. Override per-agent via `Agent(max_iters=...)`. Cancellation via `cancel_event` is checked at iteration boundaries and inside the chunk loop; partial state is fixed up so `messages` stays well-formed.
 
 ### Agent ↔ ToolHandler split
 
-`Agent` owns the tool **registry** (`self.tools` schema list + `self.tool_functions` callable map) and message history. `ToolHandler` owns **execution only** — it reads from `agent.tool_functions` and returns `role: "tool"` messages. The handler does not register tools. Keep this split when extending: registration on `Agent`, dispatch on `ToolHandler`.
+Tool infrastructure lives in `agent_harness/tooling/`: `decorator.py` generates schemas and binds dependencies, `handler.py` dispatches calls, and `result.py` defines `ToolResult`. Model-facing tools live separately in `base_tools/`.
+
+`Agent` owns the tool **registry** (`self.tools` schema list + `self.tool_functions` callable map) and message history. `ToolHandler` owns **execution only** — it reads from `agent.tool_functions`, consults gates, and returns `role: "tool"` messages. The handler does not register tools. Keep this split when extending: registration on `Agent`, dispatch on `ToolHandler`. Consecutive calls to tools marked `safe_parallel=True` run in a thread pool; everything else is sequential.
 
 ### Tool schema
 
-A tool module exports a `tool` dict with exactly four keys: `name`, `description`, `parameters` (JSON Schema), `function` (callable). Register via `agent.add_tool(module.tool)`. Functions decorated with `@agent_tool` (see `agent_harness/decorator.py`) carry the dict on their `.tool` attribute; pass the function itself: `agent.add_tool(my_fn)`. `add_tool` is idempotent by name — re-registering is a silent no-op, not an error.
+A tool module exports a `tool` dict with keys `name`, `description`, `parameters` (JSON Schema), `function` (callable), plus optional `deferred` and `safe_parallel`. Register via `agent.add_tool(module.tool)`. Functions decorated with `@agent_tool` (see `agent_harness/tooling/decorator.py`) carry the dict on their `.tool` attribute; pass the function itself: `agent.add_tool(my_fn)`. Use `bind_tool(fn, _dep=...)` to inject underscore-prefixed dependencies the model never sees (a sandbox, a registry). Every tool function returns `ToolResult(payload, status)` — payload text never determines status. `add_tool` is idempotent by name — re-registering is a silent no-op, not an error.
 
-### Bash tool platform handling
+### Code execution (`base_tools/code_execution/`)
 
-`coding/tools/bash.py` intentionally avoids `shell=True` and resolves a real bash binary at import time. On Windows it prefers Git Bash paths and skips `System32\bash.exe` (WSL), which sees a different filesystem. `BASH_PATH` env var overrides the lookup. Don't replace this with `shell=True` — it would silently dispatch to `cmd.exe` on Windows, which doesn't understand the POSIX commands the model emits.
+`ExecuteCode` is not registered by `Agent` automatically — it needs a sandbox: `Agent(tools=[execute_code_tool(workspace=..., env=..., packages=..., j_screen=...)])`. `sandbox.py` launches the sibling `kernel.py` with an explicit Python executable, never `shell=True`; the kernel is a stdlib-only script that runs in the sandbox workspace and must stay importable as a standalone file. State persists across calls within one sandbox. `j_screen=True` routes every call through the Jev code screen (`screening.py`) before execution. Full reference: `docs/tools/code_execution.md`.
 
 ## Configuration
 
-`.env` is required. `.env.example` lists both provider blocks (`OPENROUTER_*`, `VLLM_*`). Only the credentials for the provider you actually use need real values.
+`.env` is required. `.env.example` lists both provider blocks (`OPENROUTER_*`, `VLLM_*`), `PARALLEL_API_KEY` for WebSearch, and the optional `LANGFUSE_*` block. Only the credentials for the provider you actually use need real values.
 
 System prompts live in two places:
 - `agent_harness/context/system_prompt.md` — the always-loaded base methodology (Tools, Planning + generic constraints). Domain-agnostic.
-- `<domain>/prompt.md` — appended to the base by `Agent.__init__` when the caller passes `system=...`. Holds the `<role>` and any domain-specific constraints. The caller reads this and passes the string; the framework does not auto-discover it.
+- The caller's `system=` string — appended to the base inside a `<domain>` block by `Agent.__init__`. Holds the `<role>` and any domain-specific constraints. The caller reads its own prompt file and passes the string; the framework does not auto-discover it.
 
 Applications own any memory loading and can include that context in `system`. The base agent has no memory file of its own. The system prompt is assembled at `Agent.__init__` — there is no runtime reload.
 

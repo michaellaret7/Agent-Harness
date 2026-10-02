@@ -1,0 +1,19 @@
+[project]
+name = "harness-evals"
+version = "0.1.0"
+description = "Eval runner, recording sink, and grader protocol for agent-harness."
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "agent-harness",
+    "pyyaml>=6.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv.sources]
+agent-harness = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/harness_evals"]
