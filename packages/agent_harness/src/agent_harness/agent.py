@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import os
 import sys
 import threading
@@ -113,6 +114,53 @@ class Agent:
             self.add_tool(make_deploy_subagent_tool(self.subagents)) # Only add the subagent deploy tool if subagents are passed
 
         self.build_initial_context()
+    
+    def _parse_output(self, final_text: str) -> BaseModel:
+        """One structured completion: map final agent text into output_model."""
+        if self.client is None or self.model is None or self.output_model is None:
+            raise RuntimeError(
+                '_parse_output requires client, model, and output_model to be set'
+            )
+
+        completion = self.client.chat.completions.parse(
+            model=self.model,
+            messages=[
+                {
+                    'role': 'system',
+                    'content': (
+                        'Convert the agent result into the required structured output. '
+                        'Use only facts present in the input. Do not invent fields.'
+                    ),
+                },
+                {'role': 'user', 'content': final_text or '(empty)'},
+            ],
+            response_format=self.output_model,
+        )
+
+        parsed = completion.choices[0].message.parsed
+
+        if parsed is None:
+            refusal = completion.choices[0].message.refusal
+
+            raise RuntimeError(f'structured output refused or empty: {refusal!r}')
+
+        return parsed
+    
+    def _offer_for_loading(self, name: str) -> None:
+        """Add a deferred tool's name to LoadTool's `names` enum.
+
+        The enum makes the schema itself rule out loading a tool that is not
+        deferred; prompt text alone left models calling LoadTool on ExecuteCode
+        before first use. The parameters dict is copied first because every
+        Agent's LoadTool entry starts from the same shared `load_tool.tool` dict.
+        """
+        entry = next(t['function'] for t in self.tools if t['function']['name'] == 'LoadTool')
+        parameters = copy.deepcopy(entry['parameters'])
+        items = parameters['properties']['names']['items']
+
+        items['enum'] = [*items.get('enum', []), name]
+
+        entry['parameters'] = parameters
 
     def add_tool(self, tool: dict[str, Any] | Callable) -> None:
         """Register a tool.
@@ -125,7 +173,8 @@ class Agent:
         If `deferred` is True, the entry stored in `self.tools` carries a
         truncated description (first sentence + ` [deferred]` marker) and an
         empty parameter schema. The full canonical dict is stashed in
-        `self.deferred_tools` so `load_tool` can return it on demand.
+        `self.deferred_tools` so `load_tool` can return it on demand, and the
+        name joins LoadTool's `names` enum.
         """
         if callable(tool) and hasattr(tool, 'tool'):
             tool = tool.tool  # type: ignore[attr-defined]
@@ -152,6 +201,7 @@ class Agent:
             description = f'{description.split(".", 1)[0]}. [deferred]'
             parameters = {'type': 'object', 'properties': {}}
             self.deferred_tools[name] = tool
+            self._offer_for_loading(name)
 
         self.tools.append({
             'type': 'function',
@@ -275,37 +325,6 @@ class Agent:
         content = '\n\n'.join(parts)
 
         self.messages.append(system_msg(content, cache=True))
-
-    def _parse_output(self, final_text: str) -> BaseModel:
-        """One structured completion: map final agent text into output_model."""
-        if self.client is None or self.model is None or self.output_model is None:
-            raise RuntimeError(
-                '_parse_output requires client, model, and output_model to be set'
-            )
-
-        completion = self.client.chat.completions.parse(
-            model=self.model,
-            messages=[
-                {
-                    'role': 'system',
-                    'content': (
-                        'Convert the agent result into the required structured output. '
-                        'Use only facts present in the input. Do not invent fields.'
-                    ),
-                },
-                {'role': 'user', 'content': final_text or '(empty)'},
-            ],
-            response_format=self.output_model,
-        )
-
-        parsed = completion.choices[0].message.parsed
-
-        if parsed is None:
-            refusal = completion.choices[0].message.refusal
-
-            raise RuntimeError(f'structured output refused or empty: {refusal!r}')
-
-        return parsed
 
     def run(
         self,

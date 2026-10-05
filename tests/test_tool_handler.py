@@ -7,6 +7,7 @@ from pathlib import Path
 from agent_harness import Agent
 from agent_harness.gates import GateContext, GateVerdict
 from agent_harness.sinks.base import ToolOutcome
+from agent_harness.base_tools.load_tool import load_tool
 from agent_harness.tooling.decorator import agent_tool
 from agent_harness.tooling.result import ToolResult
 from contract_support import RecordingSink, tool_call
@@ -183,3 +184,23 @@ def test_parallel_boundaries() -> None:
     assert [key for key, _ in sink.values('tool_end')] == ['fast', 'slow', 'serial', 'tail']
     assert all(outcome.status == 'ok' for _, outcome in sink.values('tool_end'))
     assert [(m['tool_call_id'], m['content']) for m in messages] == [(name, name) for name in ('slow', 'fast', 'serial', 'tail')]
+
+
+def test_load_tool_enum_lists_only_deferred_tools() -> None:
+    """LoadTool's `names` enum is exactly the deferred tools, per agent, so a loaded tool is not a valid argument."""
+    @agent_tool(name='Lookup', deferred=True)
+    def lookup(word: str) -> ToolResult:
+        """Look up a word. Returns its definition."""
+        return ToolResult(word, status='ok')
+
+    with_lookup = Agent(model='contract-model', tools=[lookup])
+    without_lookup = Agent(model='contract-model')
+
+    def load_enum(agent: Agent) -> list[str]:
+        entry = next(t['function'] for t in agent.tools if t['function']['name'] == 'LoadTool')
+
+        return entry['parameters']['properties']['names']['items']['enum']
+
+    assert load_enum(with_lookup) == ['Plan', 'Lookup']
+    assert load_enum(without_lookup) == ['Plan'], "one agent's deferred tools must not leak into another's LoadTool schema"
+    assert 'enum' not in load_tool.tool['parameters']['properties']['names']['items'], 'the shared decorator dict stays untouched'

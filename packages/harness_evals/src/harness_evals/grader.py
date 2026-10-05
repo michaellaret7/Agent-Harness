@@ -39,6 +39,7 @@ class RunResult:
 
     final: str                 # what Agent.run returned
     messages: list[dict]       # the subject's context window
+    tools: list[dict]          # the subject's tool schemas, as the model saw them
     meta: RunMetadata              # what only the sink saw
     model: str                 # the subject's model, as resolved by the provider
 

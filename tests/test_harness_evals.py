@@ -18,10 +18,10 @@ from agent_harness.sinks.base import ToolOutcome
 from agent_harness.usage import Usage
 from contract_support import ScriptedProvider, StreamItem, arithmetic_tools, message_text, tool_call, tool_delta
 from harness_evals import (
-    EvalCase, EvalSink, Grader, RunResult, Score,
+    PROCESS_CRITERIA, EvalCase, EvalSink, Grader, RunResult, Score,
     final_answer_contains, finished, llm_judge, max_iterations, no_tool_errors, print_report, run_evals, tools_called, write_report,
 )
-from harness_evals.judge import write_transcript
+from harness_evals.judge import write_tools, write_transcript
 from harness_evals.runner import AgentFactory
 
 
@@ -187,7 +187,7 @@ def test_llm_judge_reads_transcript_from_sandbox() -> None:
     case = EvalCase('add_case', 'Add 2 and 3.', criteria=('correct sum',))
 
     with scripted_factory(responses, arithmetic_tools(invoked)) as (make_agent, api):
-        grader = llm_judge('contract-model', shared_criteria=['units stated'], make_judge=make_agent)
+        grader = llm_judge('contract-model', shared_criteria=['units stated'], process_criteria=(), make_judge=make_agent)
         (record,) = run_evals(make_agent, [case], [grader])
 
     (score,) = record.scores
@@ -199,6 +199,8 @@ def test_llm_judge_reads_transcript_from_sandbox() -> None:
     judge_prompt = api.requests[2]['messages'][-1]['content']
     assert '<rubric>\n1. correct sum\n2. units stated' in judge_prompt, 'case criteria first, shared after'
     assert '<task>\nAdd 2 and 3.' in judge_prompt
+    assert 'tools.json' in judge_prompt, "the subject's tools reach the judge as a file"
+    assert '"parameters"}}' in judge_prompt and '"add"' not in judge_prompt, 'tool schemas must not be inlined into the prompt'
     assert 'transcript.json' in judge_prompt and 'judge_add_case_' in judge_prompt, 'absolute path into the temp folder'
     assert 'The sum is 5' not in judge_prompt, 'the transcript must not be inlined into the prompt'
 
@@ -222,7 +224,7 @@ def test_write_transcript_flattens_content(tmp_path: Path) -> None:
         {'role': 'user', 'content': 'Add 2 and 3.'},
         {'role': 'tool', 'tool_call_id': 'sum', 'content': [{'type': 'text', 'text': '5', 'cache_control': {'type': 'ephemeral'}}]},
     ]
-    run = RunResult(final='5', messages=messages, meta=EvalSink().meta, model='test-model')
+    run = RunResult(final='5', messages=messages, tools=[], meta=EvalSink().meta, model='test-model')
 
     transcript = json.loads(write_transcript(tmp_path, run).read_text(encoding='utf-8'))
 
@@ -230,17 +232,63 @@ def test_write_transcript_flattens_content(tmp_path: Path) -> None:
     assert transcript[1]['content'] == '5'
 
 
+def test_run_result_carries_full_schema_for_unloaded_deferred_tool() -> None:
+    """A deferred tool the subject never loaded still reaches the judge with its full description and parameters."""
+    define = {
+        'name': 'Define',
+        'description': 'Look up a word. Returns its dictionary definition.',
+        'parameters': {'type': 'object', 'properties': {'word': {'type': 'string'}}, 'required': ['word']},
+        'function': lambda word: None,
+        'deferred': True,
+    }
+
+    with scripted_factory([[{'content': 'done'}]], [define]) as (make_agent, api):
+        (record,) = run_evals(make_agent, [EvalCase('stub', 'Say done.')], [finished()])
+
+    sent = {t['function']['name']: t['function'] for t in api.requests[0]['tools']}
+    assert sent['Define']['description'].endswith('[deferred]'), 'the subject itself only saw the stub'
+
+    recorded = {t['function']['name']: t['function'] for t in record.run.tools}
+    assert recorded['Define']['description'] == define['description']
+    assert recorded['Define']['parameters'] == define['parameters']
+
+
+def test_write_tools_keeps_full_schemas(tmp_path: Path) -> None:
+    """The tools file the judge reads is the subject's tool schemas, parameters included."""
+    with scripted_factory([], arithmetic_tools([])) as (make_agent, _):
+        agent = make_agent()
+
+    run = RunResult(final='', messages=[], tools=list(agent.tools), meta=EvalSink().meta, model='test-model')
+
+    tools = json.loads(write_tools(tmp_path, run).read_text(encoding='utf-8'))
+
+    assert tools == agent.tools
+    assert any(t['function']['name'] == 'add' and t['function']['parameters']['properties'] for t in tools)
+
+
 def test_llm_judge_malformed_reply_scores_zero() -> None:
     """A verdict that fails the JudgeVerdict schema is a grader failure: zero score, traceback in reasoning."""
     responses = [[{'content': 'hello'}], [{'content': 'I cannot decide.'}], Completion('{"reasoning": "unsure"}')]
 
     with scripted_factory(responses) as (make_agent, _):
-        grader = llm_judge('contract-model', shared_criteria=['any criterion'], make_judge=make_agent)
+        grader = llm_judge('contract-model', shared_criteria=['any criterion'], process_criteria=(), make_judge=make_agent)
         (record,) = run_evals(make_agent, [EvalCase('greet', 'Say hello.')], [grader])
 
     (score,) = record.scores
     assert score.value == 0.0
     assert 'grader raised' in score.reasoning and 'criteria' in score.reasoning
+
+
+def test_llm_judge_appends_process_criteria_by_default() -> None:
+    """With no process_criteria argument, the rubric is the case's criteria followed by PROCESS_CRITERIA."""
+    responses = [[{'content': 'hello'}], [{'content': 'I cannot decide.'}], Completion('{"reasoning": "unsure"}')]
+
+    with scripted_factory(responses) as (make_agent, api):
+        grader = llm_judge('contract-model', make_judge=make_agent)
+        run_evals(make_agent, [EvalCase('greet', 'Say hello.', criteria=('says hello',))], [grader])
+
+    expected = '\n'.join(f'{i}. {c}' for i, c in enumerate(['says hello', *PROCESS_CRITERIA], 1))
+    assert f'<rubric>\n{expected}\n</rubric>' in api.requests[1]['messages'][-1]['content']
 
 
 def test_llm_judge_rejects_skipped_criterion() -> None:
@@ -250,7 +298,7 @@ def test_llm_judge_rejects_skipped_criterion() -> None:
     case = EvalCase('greet', 'Say hello.', criteria=('says hello', 'names the user'))
 
     with scripted_factory(responses) as (make_agent, _):
-        (record,) = run_evals(make_agent, [case], [llm_judge('contract-model', make_judge=make_agent)])
+        (record,) = run_evals(make_agent, [case], [llm_judge('contract-model', process_criteria=(), make_judge=make_agent)])
 
     (score,) = record.scores
     assert score.value == 0.0, 'not 1.0 from averaging only the criterion it kept'
@@ -260,7 +308,7 @@ def test_llm_judge_rejects_skipped_criterion() -> None:
 def test_llm_judge_skips_crashed_subject() -> None:
     """A crashed subject scores zero without a judge run: the only request made is the subject's failed one."""
     with scripted_factory([]) as (make_agent, api):
-        grader = llm_judge('contract-model', shared_criteria=['any criterion'], make_judge=make_agent)
+        grader = llm_judge('contract-model', shared_criteria=['any criterion'], process_criteria=(), make_judge=make_agent)
         (record,) = run_evals(make_agent, [EvalCase('crash', 'Anything.')], [grader])
 
     (score,) = record.scores
@@ -281,7 +329,7 @@ def test_report_shows_marks_and_judge_reasoning(tmp_path: Path, capsys: pytest.C
     graders = [finished(), max_iterations(1)]
 
     with scripted_factory(responses) as (make_agent, _):
-        graders.append(llm_judge('contract-model', make_judge=make_agent))
+        graders.append(llm_judge('contract-model', process_criteria=(), make_judge=make_agent))
         records = run_evals(make_agent, [EvalCase('add_case', 'Add 2 and 3.', criteria=('correct', 'units'))], graders)
 
     print_report(records)

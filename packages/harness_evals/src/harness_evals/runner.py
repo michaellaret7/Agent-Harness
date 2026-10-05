@@ -30,6 +30,27 @@ AgentFactory = Callable[[], Agent]
 #     ================================
 
 
+def _full_tool_schemas(agent: Agent) -> list[dict]:
+    """The subject's tool list with every still-deferred stub swapped for its full schema.
+
+    Loaded deferred tools are already promoted in `agent.tools`; unloaded ones
+    are stubs (one sentence, empty parameters) whose full dict waits in
+    `agent.deferred_tools`. Copies, so the agent's own list is untouched.
+    """
+    schemas: list[dict] = []
+
+    for entry in agent.tools:
+        name = entry['function']['name']
+        full = agent.deferred_tools.get(name)
+
+        if full is not None:
+            entry = {'type': 'function', 'function': {'name': name, 'description': full['description'], 'parameters': full['parameters']}}
+
+        schemas.append(entry)
+
+    return schemas
+
+
 def _run_case(make_agent: AgentFactory, case: EvalCase) -> RunResult:
     """Run one case on a fresh agent. A crash still yields a gradable RunResult."""
     agent = make_agent()
@@ -47,7 +68,9 @@ def _run_case(make_agent: AgentFactory, case: EvalCase) -> RunResult:
         # Recorded, not raised: one bad case must not kill the batch.
         recorder.on_error(f'subject.crashed {type(e).__name__}: {e}')
 
-    return RunResult(final=final, messages=list(agent.messages), meta=recorder.meta, model=agent.model or '')
+    return RunResult(
+        final=final, messages=list(agent.messages), tools=_full_tool_schemas(agent), meta=recorder.meta, model=agent.model or '',
+    )
 
 
 def _grade(grader: Grader, case: EvalCase, run: RunResult) -> Score:
