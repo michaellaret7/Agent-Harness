@@ -45,9 +45,9 @@ def _mark(score: Score) -> str:
 
 
 def _table(records: Sequence[CaseRecord]) -> list[str]:
-    """Case × grader grid with aligned columns."""
+    """Case × grader grid with aligned columns, closed by a mean-per-grader row."""
     names = [s.name for s in records[0].scores]
-    width = max(len(r.case.id) for r in records)
+    width = max(len('mean'), *(len(r.case.id) for r in records))
     cols = [max(len(n), 4) for n in names]
 
     header = 'case'.ljust(width) + '  ' + '  '.join(n.ljust(w) for n, w in zip(names, cols))
@@ -57,6 +57,12 @@ def _table(records: Sequence[CaseRecord]) -> list[str]:
         marks = '  '.join(_mark(s).ljust(w) for s, w in zip(r.scores, cols))
 
         lines.append(r.case.id.ljust(width) + '  ' + marks)
+
+    # The mean per grader is the one number to compare between runs.
+    means = [sum(r.scores[i].value for r in records) / len(records) for i in range(len(names))]
+
+    lines.append('-' * len(header))
+    lines.append('mean'.ljust(width) + '  ' + '  '.join(f'{m:.2f}'.ljust(w) for m, w in zip(means, cols)))
 
     return lines
 
@@ -83,6 +89,7 @@ def _record_dict(r: CaseRecord) -> dict:
 
     return {
         'id': r.case.id,
+        'model': r.run.model,
         'scores': [_score_dict(s) for s in r.scores],
         'task': r.case.task,
         'criteria': list(r.case.criteria),

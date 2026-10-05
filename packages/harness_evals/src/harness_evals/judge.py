@@ -5,8 +5,10 @@ The judge is an ordinary `Grader`: the runner calls it on `(case, run)` like
 `ExecuteCode` sandbox whose workspace holds the subject's transcript as
 JSON, hands it the case's success criteria plus any shared criteria as one
 numbered rubric, and the task. The judge returns a `JudgeVerdict` through
-`Agent(output_model=...)`, so the shape is guaranteed rather than parsed. The judge scores
-each criterion on a five-step scale; the overall score is their mean.
+`Agent(output_model=...)`, so the shape is guaranteed rather than parsed. The judge marks
+each criterion met or not met, by rubric number; the overall score is the
+fraction met. A verdict that skips or invents a rubric number is rejected,
+so a dropped criterion can never inflate the score.
 
 The transcript goes into the sandbox, not the prompt. A long run would
 swamp the judge's context window; as a file, the judge loads, filters and
@@ -67,20 +69,36 @@ def write_transcript(workspace: Path, run: RunResult) -> Path:
     return path
 
 
-def render_task(shared: Sequence[str], case: EvalCase, transcript: Path) -> str:
-    """Build the judge's user message: numbered criteria (case first, then shared), task, and where the transcript is."""
-    criteria = [*case.criteria, *shared]
+def build_rubric(shared: Sequence[str], case: EvalCase) -> list[str]:
+    """The case's criteria first, then the shared ones. Rubric number = list position + 1."""
+    rubric = [*case.criteria, *shared]
 
-    if not criteria:
+    if not rubric:
         raise ValueError(f'case {case.id!r} has no criteria and the judge has no shared criteria')
 
-    rubric = '\n'.join(f'{i}. {c}' for i, c in enumerate(criteria, 1))
+    return rubric
+
+
+def check_coverage(verdict: 'JudgeVerdict', rubric: Sequence[str]) -> None:
+    """Raise unless the verdict marks every rubric number exactly once and nothing else."""
+    numbers = sorted(c.number for c in verdict.criteria)
+    expected = list(range(1, len(rubric) + 1))
+
+    if numbers != expected:
+        missing = sorted(set(expected) - set(numbers))
+
+        raise ValueError(f'judge verdict covers rubric numbers {numbers}, expected {expected} (missing {missing})')
+
+
+def render_task(rubric: Sequence[str], case: EvalCase, transcript: Path) -> str:
+    """Build the judge's user message: numbered rubric, task, and where the transcript is."""
+    numbered = '\n'.join(f'{i}. {c}' for i, c in enumerate(rubric, 1))
 
     # Absolute path: a relative one gets re-joined onto the kernel's cwd and misses.
     transcript = transcript.resolve()
 
     return (
-        f'<rubric>\n{rubric}\n</rubric>\n\n'
+        f'<rubric>\n{numbered}\n</rubric>\n\n'
         f'<task>\n{case.task}\n</task>\n\n'
         f'<transcript>\n'
         f'The full transcript is the JSON file at this absolute path, which already exists:\n'
@@ -95,9 +113,10 @@ def render_task(shared: Sequence[str], case: EvalCase, transcript: Path) -> str:
     )
 
 
-def render_reasoning(verdict: 'JudgeVerdict') -> str:
-    """Per-criterion scores with evidence, the judge's summary, then the failures list."""
-    lines = [f'{c.score:.2f}  {c.criterion}\n      {c.evidence}' for c in verdict.criteria]
+def render_reasoning(verdict: 'JudgeVerdict', rubric: Sequence[str]) -> str:
+    """Per-criterion ✓ / ✗ with evidence in rubric order, the judge's summary, then the failures list."""
+    marks = sorted(verdict.criteria, key=lambda c: c.number)
+    lines = [f'{"✓" if c.met else "✗"}  {rubric[c.number - 1]}\n   {c.evidence}' for c in marks]
     lines.append(verdict.reasoning)
 
     if verdict.failures:
@@ -106,15 +125,15 @@ def render_reasoning(verdict: 'JudgeVerdict') -> str:
     return '\n'.join(lines)
 
 
-#     ================================
+# ================================
 # --> Verdict
-#     ================================
+# ================================
 
 
 class CriterionScore(BaseModel):
-    criterion: str
-    score: float = Field(ge=0.0, le=1.0)
-    evidence: str                     # what in the transcript earned this score
+    number: int                       # 1-based rubric number; the rubric text stays on our side
+    met: bool
+    evidence: str                     # what in the transcript earned this mark
 
 
 class JudgeVerdict(BaseModel):
@@ -124,8 +143,8 @@ class JudgeVerdict(BaseModel):
 
     @property
     def score(self) -> float:
-        """Overall score is the mean of the criterion scores, computed here, never by the judge."""
-        return sum(c.score for c in self.criteria) / len(self.criteria)
+        """Overall score is the fraction of criteria met, computed here, never by the judge."""
+        return sum(c.met for c in self.criteria) / len(self.criteria)
 
 # TODO: REVIEW THIS SYSTEM PROMPT AND IRON OUT HOW THE JUDGE SCORES AND EVIDENCE FOR EACH CRITERION.
 
@@ -137,15 +156,12 @@ You are an impartial evaluator. You are given a rubric of success criteria, a ta
 1. Read the rubric first; it defines what a good run looks like.
 2. Read the task.
 3. Load the transcript file with ExecuteCode. Inspect it with code: list the tool calls in order, pull the tool results a criterion depends on, read the final answer. Print only the slices you need.
-   Budget: aim for 3 to 5 ExecuteCode calls in total. Load once, keep the list in a variable, and answer as soon as every criterion has evidence. Never re-read the file.
-4. Score every rubric criterion separately, on this scale:
-   1.00  fully met, with transcript evidence
-   0.75  met, with a minor gap you can name
-   0.50  partially met: real progress, real omission
-   0.25  attempted, mostly missed
-   0.00  not met, or the claim is fabricated
-   Use the whole scale. A criterion only earns 1.00 when you can point at the evidence.
-5. Do not compute an overall score. The caller averages the criterion scores.
+   Load once, keep the list in a variable, and answer as soon as every criterion has evidence. Never re-read the file.
+4. Mark every rubric criterion separately as met (true) or not met (false):
+   - met: the criterion is fully satisfied, and you can point at the transcript evidence.
+   - not met: anything less, including partially done, missing, or claimed without a supporting tool result.
+   There is no partial credit. When unsure, it is not met.
+5. Do not compute an overall score. The caller counts the criteria met.
 </methodology>
 
 <constraints>
@@ -157,10 +173,10 @@ You are an impartial evaluator. You are given a rubric of success criteria, a ta
 
 <output_format>
 Reply with one JSON object and nothing else:
-{"criteria": [{"criterion": "<rubric criterion, verbatim>", "score": <0.0-1.0>, "evidence": "<what in the transcript earned it>"}, ...],
+{"criteria": [{"number": <rubric number>, "met": <true | false>, "evidence": "<what in the transcript shows it>"}, ...],
  "reasoning": "<2-5 sentences on the run as a whole>",
  "failures": ["<one concrete miss>", ...]}
-One entry per rubric criterion, in rubric order.
+Exactly one entry per rubric number, in rubric order. Do not skip a number.
 </output_format>"""
 
 
@@ -187,8 +203,9 @@ def llm_judge(
     """A Grader that runs a fresh judge Agent per case and returns its verdict as a Score.
 
     The rubric for a case is `case.criteria` followed by `shared_criteria`.
-    The judge scores each criterion on a five-step scale; the Score is their
-    mean. Per case, the subject's transcript is written to a temp folder that
+    The judge marks each criterion met or not met; the Score is the fraction
+    met. A crashed subject scores 0 without running the judge. Per case, the
+    subject's transcript is written to a temp folder that
     the judge reads through its own ExecuteCode sandbox; folder and sandbox
     are gone once the verdict is in. `make_judge` replaces the default
     `judge_agent(model)` builder (a different provider, an injected client).
@@ -197,6 +214,12 @@ def llm_judge(
     build = make_judge or (lambda: judge_agent(model))
 
     def grade(case: EvalCase, run: RunResult) -> Score:
+        # An empty stop_reason means the subject crashed: nothing to judge, so skip the paid judge run.
+        if run.meta.stop_reason == '':
+            return Score(name=name, value=0.0, detail='subject crashed')
+
+        rubric = build_rubric(shared_criteria, case)
+
         # ignore_cleanup_errors: on Windows the stopped kernel can hold the folder open for a moment.
         with (
             tempfile.TemporaryDirectory(prefix=f'judge_{case.id}_', ignore_cleanup_errors=True) as tmp,
@@ -209,7 +232,7 @@ def llm_judge(
             # Record the judge's own run so a missing verdict names its cause (max_iters, error).
             recorder = EvalSink()
             sink = cast(Sink, MultiSink([recorder, LogSink(f'{case.id}.{name}')]))
-            task = render_task(shared_criteria, case, write_transcript(Path(tmp), run))
+            task = render_task(rubric, case, write_transcript(Path(tmp), run))
 
             verdict = cast(JudgeVerdict, judge.run(task, sink=sink))
 
@@ -219,6 +242,8 @@ def llm_judge(
                 f'after {recorder.iterations} iterations, errors={recorder.errors}'
             )
 
-        return Score(name=name, value=verdict.score, reasoning=render_reasoning(verdict))
+        check_coverage(verdict, rubric)
+
+        return Score(name=name, value=verdict.score, reasoning=render_reasoning(verdict, rubric))
 
     return Grader(name, grade)

@@ -174,8 +174,8 @@ def test_failures_are_recorded_not_raised() -> None:
 def test_llm_judge_reads_transcript_from_sandbox() -> None:
     """The judge gets the transcript as a file in its sandbox, inspects it with ExecuteCode, and its JSON verdict becomes the Score."""
     invoked: list[tuple[str, int, int]] = []
-    verdict = ('{"criteria": [{"criterion": "correct sum", "score": 1.0, "evidence": "tool result sum=5, answer says 5"},'
-               ' {"criterion": "units stated", "score": 0.5, "evidence": "no units"}],'
+    verdict = ('{"criteria": [{"number": 1, "met": true, "evidence": "tool result sum=5, answer says 5"},'
+               ' {"number": 2, "met": false, "evidence": "no units"}],'
                ' "reasoning": "Used add, answered 5.", "failures": ["no units"]}')
     read_final = 'import json; t = json.load(open("transcript.json")); print(t[-1]["content"])'
     responses = [
@@ -191,8 +191,8 @@ def test_llm_judge_reads_transcript_from_sandbox() -> None:
         (record,) = run_evals(make_agent, [case], [grader])
 
     (score,) = record.scores
-    assert (score.name, score.value) == ('judge', 0.75), 'mean of 1.0 and 0.5'
-    assert '1.00  correct sum' in score.reasoning and '0.50  units stated' in score.reasoning
+    assert (score.name, score.value) == ('judge', 0.5), 'one of two criteria met'
+    assert '✓  correct sum' in score.reasoning and '✗  units stated' in score.reasoning, 'rubric text restored from numbers'
     assert 'Used add' in score.reasoning and '  - no units' in score.reasoning
     assert score.detail == ''
 
@@ -222,7 +222,7 @@ def test_write_transcript_flattens_content(tmp_path: Path) -> None:
         {'role': 'user', 'content': 'Add 2 and 3.'},
         {'role': 'tool', 'tool_call_id': 'sum', 'content': [{'type': 'text', 'text': '5', 'cache_control': {'type': 'ephemeral'}}]},
     ]
-    run = RunResult(final='5', messages=messages, meta=EvalSink().meta)
+    run = RunResult(final='5', messages=messages, meta=EvalSink().meta, model='test-model')
 
     transcript = json.loads(write_transcript(tmp_path, run).read_text(encoding='utf-8'))
 
@@ -243,10 +243,35 @@ def test_llm_judge_malformed_reply_scores_zero() -> None:
     assert 'grader raised' in score.reasoning and 'criteria' in score.reasoning
 
 
+def test_llm_judge_rejects_skipped_criterion() -> None:
+    """A verdict that skips a rubric number cannot inflate the score: it is a grader failure that scores zero."""
+    verdict = '{"criteria": [{"number": 1, "met": true, "evidence": "says hello"}], "reasoning": "Fine.", "failures": []}'
+    responses = [[{'content': 'hello'}], [{'content': verdict}], Completion(verdict)]
+    case = EvalCase('greet', 'Say hello.', criteria=('says hello', 'names the user'))
+
+    with scripted_factory(responses) as (make_agent, _):
+        (record,) = run_evals(make_agent, [case], [llm_judge('contract-model', make_judge=make_agent)])
+
+    (score,) = record.scores
+    assert score.value == 0.0, 'not 1.0 from averaging only the criterion it kept'
+    assert 'grader raised' in score.reasoning and 'missing [2]' in score.reasoning
+
+
+def test_llm_judge_skips_crashed_subject() -> None:
+    """A crashed subject scores zero without a judge run: the only request made is the subject's failed one."""
+    with scripted_factory([]) as (make_agent, api):
+        grader = llm_judge('contract-model', shared_criteria=['any criterion'], make_judge=make_agent)
+        (record,) = run_evals(make_agent, [EvalCase('crash', 'Anything.')], [grader])
+
+    (score,) = record.scores
+    assert (score.value, score.detail) == (0.0, 'subject crashed')
+    assert len(api.requests) == 1
+
+
 def test_report_shows_marks_and_judge_reasoning(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """The table shows ✓ / ✗ / decimals per grader; every judge score is followed by its reasoning; JSON lands in runs/."""
-    verdict = ('{"criteria": [{"criterion": "correct", "score": 1.0, "evidence": "says 5"},'
-               ' {"criterion": "units", "score": 0.2, "evidence": "none"}],'
+    verdict = ('{"criteria": [{"number": 1, "met": true, "evidence": "says 5"},'
+               ' {"number": 2, "met": false, "evidence": "none"}],'
                ' "reasoning": "Answered 5 but gave no units.", "failures": ["no units"]}')
     responses = [
         [{'content': 'The sum is 5'}],                                                        # subject
@@ -263,8 +288,9 @@ def test_report_shows_marks_and_judge_reasoning(tmp_path: Path, capsys: pytest.C
     out = capsys.readouterr().out
 
     assert 'case      finished  max_iterations  judge' in out
-    assert 'add_case  ✓         ✓               0.60' in out
-    assert '── add_case · judge 0.60' in out
+    assert 'add_case  ✓         ✓               0.50' in out
+    assert 'mean      1.00      1.00            0.50' in out
+    assert '── add_case · judge 0.50' in out
     assert 'Answered 5 but gave no units.' in out
     assert '  - no units' in out
 
@@ -279,7 +305,7 @@ def test_report_shows_marks_and_judge_reasoning(tmp_path: Path, capsys: pytest.C
     assert report['final'] == 'The sum is 5'
     assert report['tool_calls'] == []
     assert [s['name'] for s in report['scores']] == ['finished', 'max_iterations', 'judge']
-    assert report['scores'][2]['reasoning'].startswith('1.00  correct')
+    assert report['scores'][2]['reasoning'].startswith('✓  correct')
     assert 'Answered 5 but gave no units.' in report['scores'][2]['reasoning']
     assert 'messages' not in text and 'transcript' not in text, 'no transcript in the report'
     assert 'reasoning: |' in text, 'multi-line reasoning is a block scalar'
@@ -310,6 +336,7 @@ def test_report_preserves_run_details(tmp_path: Path, crashed: bool) -> None:
     assert bool(errors) == crashed
     assert report == {
         'id': 'calculation',
+        'model': 'contract-model',
         'scores': [{'name': 'finished', 'value': 0.0}] if crashed else [
             {'name': 'finished', 'value': 1.0, 'detail': 'answer_ready'},
         ],

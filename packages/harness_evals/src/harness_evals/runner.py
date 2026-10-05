@@ -47,7 +47,7 @@ def _run_case(make_agent: AgentFactory, case: EvalCase) -> RunResult:
         # Recorded, not raised: one bad case must not kill the batch.
         recorder.on_error(f'subject.crashed {type(e).__name__}: {e}')
 
-    return RunResult(final=final, messages=list(agent.messages), meta=recorder.meta)
+    return RunResult(final=final, messages=list(agent.messages), meta=recorder.meta, model=agent.model or '')
 
 
 def _grade(grader: Grader, case: EvalCase, run: RunResult) -> Score:
