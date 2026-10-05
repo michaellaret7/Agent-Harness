@@ -1,6 +1,7 @@
 """Web search via the Parallel Search API (GA v1).
 
-Posts to https://api.parallel.ai/v1/search and returns ranked URLs with
+Calls /v1/search through the official `parallel-web` SDK (which retries
+429/5xx/connection errors once with backoff) and returns ranked URLs with
 extended excerpts, formatted as plain text for direct LLM consumption.
 Pair with `WebExtract` when an excerpt isn't enough and the model needs
 the full page.
@@ -11,14 +12,15 @@ import os
 import uuid
 from typing import Annotated, Literal
 
-import httpx
+from parallel import APIConnectionError, APIStatusError, APITimeoutError, Parallel
+from parallel.types import AdvancedSearchSettingsParam, WebSearchResult
+from parallel.types.shared_params import SourcePolicy
 
 from agent_harness.tooling.decorator import Param, agent_tool
 from agent_harness.tooling.result import ToolResult
 
-ENDPOINT = 'https://api.parallel.ai/v1/search'
-CLIENT_MODEL = 'claude-opus-4-7'
-DEFAULT_TIMEOUT = 90  # Reason: 'advanced' mode can take 15-60s end-to-end.
+DEFAULT_TIMEOUT = 90  # Reason: 'advanced' mode can take 15-60s end-to-end. Applies per attempt.
+MAX_RETRIES = 1  # Reason: absorbs a transient 429/5xx; the model retries anything beyond that.
 MAX_OUTPUT_CHARS = 16000
 
 
@@ -32,6 +34,7 @@ def search(
     include_domains: Annotated[list[str] | None, Param(description='Optional allowlist of apex domains (e.g. ["arxiv.org", "nature.com"]) or wildcard TLDs (".gov", ".edu"). Restrictive — use only when single-publisher or compliance scope is required.')] = None,
     exclude_domains: Annotated[list[str] | None, Param(description='Optional blocklist of apex domains. Combined with include_domains, total must be <= 200.')] = None,
     after_date: Annotated[str | None, Param(description='Recency filter; YYYY-MM-DD. Only results published on or after this date.')] = None,
+    _client_model: str | None = None,
 ) -> ToolResult:
     """
     Web search via the Parallel Search API. Returns ranked URLs with extended
@@ -46,12 +49,12 @@ def search(
     if not api_key:
         return ToolResult('error: PARALLEL_API_KEY not set', status='error')
 
-    advanced: dict = {
+    advanced: AdvancedSearchSettingsParam = {
         'excerpt_settings': {'max_chars_per_result': max_chars_per_result},
         'max_results': max_results,
     }
 
-    source_policy: dict = {}
+    source_policy: SourcePolicy = {}
 
     if include_domains:
         source_policy['include_domains'] = include_domains
@@ -65,51 +68,46 @@ def search(
     if source_policy:
         advanced['source_policy'] = source_policy
 
-    payload = {
-        'objective': objective,
-        'search_queries': search_queries,
-        'mode': mode,
-        'client_model': CLIENT_MODEL,
-        'session_id': uuid.uuid4().hex,
-        'advanced_settings': advanced,
-    }
-    headers = {
-        'x-api-key': api_key,
-        'Content-Type': 'application/json',
-    }
-
     try:
-        response = httpx.post(ENDPOINT, json=payload, headers=headers, timeout=DEFAULT_TIMEOUT)
-        response.raise_for_status()
+        with Parallel(api_key=api_key, timeout=DEFAULT_TIMEOUT, max_retries=MAX_RETRIES) as client:
+            response = client.search(
+                objective=objective,
+                search_queries=search_queries,
+                mode=mode,
+                session_id=uuid.uuid4().hex,
+                advanced_settings=advanced,
+                # Injected by Agent via bind_tool; None when the model is unresolved (vLLM).
+                client_model=_client_model,
+            )
 
-    except httpx.TimeoutException:
-        return ToolResult(f'error: Parallel Search timed out after {DEFAULT_TIMEOUT}s', status='error')
+    # Reason: APITimeoutError subclasses APIConnectionError, so it must be caught first.
+    except APITimeoutError:
+        return ToolResult(f'error: Parallel Search timed out ({DEFAULT_TIMEOUT}s per attempt, retries exhausted)', status='error')
 
-    except httpx.HTTPStatusError as e:
-        return ToolResult(f'error: Parallel Search returned HTTP {e.response.status_code}: {e.response.text[:500]}', status='error')
+    except APIStatusError as e:
+        return ToolResult(f'error: Parallel Search returned HTTP {e.status_code}: {e.response.text[:500]}', status='error')
 
-    except httpx.RequestError as e:
+    except APIConnectionError as e:
         return ToolResult(f'error: Parallel Search request failed: {type(e).__name__}: {e}', status='error')
 
-    data = response.json()
-    results = data.get('results') or []
+    results = response.results
 
     if not results:
-        warnings = data.get('warnings') or []
+        warnings = [w.message for w in response.warnings or []]
         suffix = f'  warnings: {warnings}' if warnings else ''
         return ToolResult(f'[no results]{suffix}', status='ok')
 
     return ToolResult(_format_results(results), status='ok')
 
 
-def _format_results(results: list[dict]) -> str:
+def _format_results(results: list[WebSearchResult]) -> str:
     blocks: list[str] = []
 
     for i, r in enumerate(results, 1):
-        title = r.get('title') or '(untitled)'
-        url = r.get('url') or '(no url)'
-        publish_date = r.get('publish_date') or 'n/a'
-        excerpts = r.get('excerpts') or []
+        title = r.title or '(untitled)'
+        url = r.url or '(no url)'
+        publish_date = r.publish_date or 'n/a'
+        excerpts = r.excerpts or []
 
         header = f'[{i}] {title}\n{url}  (published: {publish_date})'
 

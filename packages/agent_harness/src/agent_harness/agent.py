@@ -95,8 +95,9 @@ class Agent:
             self.system_prompt += '\n\n<domain>\n' + system.strip() + '\n</domain>'
 
         # ---- Register base tools ---- #
-        self.add_tool(search)
-        self.add_tool(extract)
+        # Parallel tailors results to the consuming model (`client_model`).
+        self.add_tool(bind_tool(search, _client_model=self.model))
+        self.add_tool(bind_tool(extract, _client_model=self.model))
         self.add_tool(bind_tool(load_tool, _deferred_tools=self.deferred_tools, _api_tools=self.tools))
         self.add_tool(bind_tool(plan, _plan=self.plan))
 
