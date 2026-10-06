@@ -5,6 +5,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
+from agent_harness.sinks import Sink
+
 
 @dataclass
 class Message:
@@ -18,3 +20,4 @@ class Message:
 class Member:
     agent: Any
     role: str
+    sink: Sink  # presentation sink for every delivery; Langfuse is composed on top by the engine

@@ -1,15 +1,17 @@
 """Organization: an agent registry plus a FIFO message bus that delivers by calling `agent.run`."""
 from __future__ import annotations
 
+import os
 import uuid
 from abc import ABC
 from collections import deque
 from typing import Any
 
+from agent_harness.sinks import LogSink
 from agent_harness.tooling.decorator import bind_tool
 
 from architectures.organization.models import Member, Message
-from architectures.organization.tools import get_org_info, list_org_members, send_message
+from architectures.organization.tools import get_org_info, send_message
 
 
 #     ================================
@@ -28,7 +30,7 @@ class Organization(ABC):
         self.message_bus: deque[Message] = deque()
         self.agents: dict[uuid.UUID, Member] = {}  # UUID -> agent instance + role
 
-    # --- registration ---
+    # --- register an agent with the organization ---
     def register_agent(self, role: str, agent: Any) -> uuid.UUID:
         """Assign an ID, record the role, attach this member's org tools, and add the org prompt.
 
@@ -38,6 +40,11 @@ class Organization(ABC):
 
         if any(member.agent is agent for member in self.agents.values()):
             raise ValueError("Agent already registered in this org")
+
+        # Langfuse is the engine's ambient sink, composed into every run when this key is set.
+        # Fail fast so no member ever runs untraced.
+        if not os.environ.get('LANGFUSE_PUBLIC_KEY'):
+            raise RuntimeError('register_agent: LANGFUSE_PUBLIC_KEY is not set; org members must be traced')
 
         agent_id = uuid.uuid4()
 
@@ -49,11 +56,14 @@ class Organization(ABC):
             '</organization>'
         )
 
-        self.agents[agent_id] = Member(agent=agent, role=role)
+        self.agents[agent_id] = Member(
+            agent=agent, 
+            role=role, 
+            sink=LogSink(f'{self.name}_{role}')
+        )
 
         # Org tools are bound to this member, so the model never passes its own id
-        agent.add_tool(bind_tool(list_org_members, _org=self, _self_id=agent_id))
-        agent.add_tool(bind_tool(get_org_info, _org=self))
+        agent.add_tool(bind_tool(get_org_info, _org=self, _self_id=agent_id))
         agent.add_tool(bind_tool(send_message, _org=self, _self_id=agent_id))
 
         return agent_id
@@ -99,6 +109,6 @@ class Organization(ABC):
             prompt = f'[Message from {self._sender_label(message.sender_id)}]\n{message.content}'
 
             print(f'\n[bus] -> {recipient.role}')
-            recipient.agent.run(prompt)
+            recipient.agent.run(prompt, sink=recipient.sink)
 
             deliveries += 1

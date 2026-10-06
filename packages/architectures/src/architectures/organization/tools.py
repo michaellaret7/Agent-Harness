@@ -15,28 +15,24 @@ from architectures.organization.models import Message
 #     ================================
 
 
-@agent_tool(name='ListOrgMembers')
-def list_org_members(_org: Any, _self_id: uuid.UUID) -> ToolResult:
-    """List every member of your organization as `role: uuid`, marking yourself."""
-    lines = [
-        f"{member.role}: {agent_id}{' (you)' if agent_id == _self_id else ''}"
+@agent_tool(name='GetOrgInfo')
+def get_org_info(_org: Any, _self_id: uuid.UUID) -> ToolResult:
+    """Return your organization's name, config variables (e.g. aum, sector), and every member as `role: uuid`, marking yourself."""
+    config = [f'{key}: {value}' for key, value in _org.config.items()]
+
+    members = [
+        f"- {member.role}: {agent_id}{' (you)' if agent_id == _self_id else ''}"
         for agent_id, member in _org.agents.items()
     ]
 
-    return ToolResult('\n'.join(lines), 'ok')
-
-
-@agent_tool(name='GetOrgInfo')
-def get_org_info(_org: Any) -> ToolResult:
-    """Return your organization's name and its config variables (e.g. aum, sector)."""
-    lines = [f'name: {_org.name}'] + [f'{key}: {value}' for key, value in _org.config.items()]
+    lines = [f'name: {_org.name}', *config, 'members:', *members]
 
     return ToolResult('\n'.join(lines), 'ok')
 
 
 @agent_tool(name='SendMessage')
 def send_message(
-    recipient_id: Annotated[str, Param(description='UUID of the recipient agent (see ListOrgMembers).')],
+    recipient_id: Annotated[str, Param(description='UUID of the recipient agent (see GetOrgInfo).')],
     content: Annotated[str, Param(description='The message to deliver.')],
     _org: Any,
     _self_id: uuid.UUID,
@@ -53,7 +49,7 @@ def send_message(
         return ToolResult(f'Invalid UUID: {recipient_id!r}', 'error')
 
     if not _org.has_agent(target):
-        return ToolResult(f'No member with id {target}. Call ListOrgMembers.', 'error')
+        return ToolResult(f'No member with id {target}. Call GetOrgInfo.', 'error')
 
     _org.post(Message(sender_id=_self_id, recipient_id=target, content=content))
 
