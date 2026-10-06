@@ -1,0 +1,18 @@
+[project]
+name = "architectures"
+version = "0.1.0"
+description = "Multi-agent architectures (e.g. organizations with a message bus) built on agent-harness."
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "agent-harness",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv.sources]
+agent-harness = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/architectures"]

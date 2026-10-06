@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-This repo is a **uv workspace** of two library packages (see Architecture). Install the whole workspace into one shared venv with `uv sync --all-packages` — a plain `uv sync` only syncs the virtual root (which depends on nothing) and leaves the members uninstalled.
+This repo is a **uv workspace** of library packages (see Architecture). Install the whole workspace into one shared venv with `uv sync --all-packages` — a plain `uv sync` only syncs the virtual root (which depends on nothing) and leaves the members uninstalled.
 
 Entry points:
 - `uv run --package agent-harness python -m agent_harness` — a headless development REPL: base tools + `ExecuteCode`. Used as a sanity check that the streaming loop and sandbox work end-to-end.
@@ -14,7 +14,7 @@ Application-specific agents live in other repos and import the engine. To use th
 
 Supports Python 3.12–3.13 (`>=3.12,<3.14` in `pyproject.toml`); `.python-version` keeps this repo's own venv on 3.12. uv will refuse to sync on a 3.14 interpreter.
 
-Tests live in root `tests/`. `uv run --all-packages pytest` runs the offline behavior contracts (scripted HTTP responses through the real SDK, loop, and tools — no credentials needed; see `docs/testing/contracts.md`). `test_code_execution.py`, `test_subagent_tools.py`, and `test_code_screen.py` are excluded from collection by `conftest.py` and run as scripts with `uv run --package agent-harness python tests/<file>.py`; the screening checks need live OpenRouter credentials. No linter is configured. The two library packages build as wheels via hatchling (`uv build --all-packages`).
+Tests live in root `tests/`. `uv run --all-packages pytest` runs the offline behavior contracts (scripted HTTP responses through the real SDK, loop, and tools — no credentials needed; see `docs/testing/contracts.md`). `test_code_execution.py`, `test_subagent_tools.py`, and `test_code_screen.py` are excluded from collection by `conftest.py` and run as scripts with `uv run --package agent-harness python tests/<file>.py`; the screening checks need live OpenRouter credentials. No linter is configured. The library packages build as wheels via hatchling (`uv build --all-packages`).
 
 ## Response Type 
 - Please be clear, concise, and to the point in your responses and do your best to avoid unecessary verbosity
@@ -27,10 +27,11 @@ Tests live in root `tests/`. `uv run --all-packages pytest` runs the offline beh
 
 ### Workspace layout
 
-The repo is a **uv workspace** with a virtual root (`pyproject.toml` at the repo root holds the workspace members, pytest config and dev dependencies, `package = false`). Two members:
+The repo is a **uv workspace** with a virtual root (`pyproject.toml` at the repo root holds the workspace members, pytest config and dev dependencies, `package = false`). Members:
 
 - `packages/agent_harness/` — the `agent-harness` distributable (import `agent_harness`). The base `Agent` class, streaming loop, tooling (`tooling/`: decorator, handler, result), hooks, gates, subagents, sinks, and base tools (`base_tools/`: WebSearch, WebExtract, Plan, LoadTool, DeploySubagent, and `code_execution/` for ExecuteCode). Domain-agnostic. Treat it as the shared package: no domain logic leaks in, and the dependency direction is one-way (frontend/domains → `agent_harness`, never the reverse). It **reads** configuration (`os.getenv`) but never **loads** it — applications (the entry points) own bootstrap, including `load_dotenv()`. Core deps are `openai`/`httpx`/`pydantic`/`langfuse`/`parallel-web` (WebSearch/WebExtract) — the LangfuseSink ships with the engine and auto-registers when `LANGFUSE_PUBLIC_KEY` is present (its import in `sinks/__init__.py` is lazy, gated on that env var, so the package is pulled but only loaded when tracing is on). Built with hatchling under `src/` layout.
 - `packages/tui/` — the `tui` distributable (import `tui`). prompt_toolkit + Rich frontend; depends on `agent-harness`. Generic — no domain knowledge. `prompt_toolkit`/`rich` live here, not in the engine, so headless consumers of `agent_harness` never pull terminal-UI deps.
+- `packages/architectures/` — the `architectures` distributable (import `architectures`). Multi-agent architectures built on `agent-harness`. `organization/` holds `Organization`: an agent registry plus a FIFO message bus. `register_agent(role, agent)` binds the org tools (`ListOrgMembers`, `GetOrgInfo`, `SendMessage`) to that member's id and appends an `<organization>` block (name, role, id, goal) to its system prompt via `Agent.extend_system_prompt` — so the agent must not have run yet. `run_until_idle()` delivers queued messages serially by calling `agent.run` on the recipient; replies travel only via `SendMessage`.
 
 Root-level support folders: `examples/` (runnable demos), `tests/` (contracts + standalone scripts), `docs/` (technical docs by topic, e.g. `docs/tools/code_execution.md`). `dist/` holds built wheels and is gitignored.
 
@@ -42,9 +43,10 @@ Agent(system=, tools=, subagents=, output_model=)
   ├─ hooks.py / gates.py   observe / allow-deny-rewrite
   └─ sinks/       Sink Protocol · StdoutSink · LogSink · LangfuseSink · HookSink
 packages/tui/   TUISink + TUIApp (optional frontend)
+packages/architectures/   Organization (registry + message bus + org tools)
 ```
 
-**On distribution & backwards-compat:** the two library packages are meant to be consumed by domains in *other* repos (via Git dependency, e.g. `agent-harness @ git+…#subdirectory=packages/agent_harness`). Because external systems pin a version, `agent_harness`'s public API warrants SemVer discipline — the "No backwards-compatibility shims / update every caller" Hard Rule below applies cleanly *within* this workspace, but a breaking change to the engine's public surface is a real major-version event for outside consumers.
+**On distribution & backwards-compat:** the library packages are meant to be consumed by domains in *other* repos (via Git dependency, e.g. `agent-harness @ git+…#subdirectory=packages/agent_harness`). Because external systems pin a version, `agent_harness`'s public API warrants SemVer discipline — the "No backwards-compatibility shims / update every caller" Hard Rule below applies cleanly *within* this workspace, but a breaking change to the engine's public surface is a real major-version event for outside consumers.
 
 Domains assemble an Agent by passing constructor args: `system`, `tools` (and optionally `task` for batch / one-shot use, `subagents`, `output_model`, `reasoning_effort`). The base ships generic methodology only. The domain appends a `<role>` block via `system=` and registers its tools. No subclassing — just composition through `Agent(...)`. The one exception is `SubAgent` (`sub_agent.py`), an engine-internal `Agent` variant that refuses gates, hooks, and nested subagents.
 

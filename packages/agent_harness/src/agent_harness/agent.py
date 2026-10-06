@@ -55,12 +55,13 @@ class Agent:
         self.max_iters = max_iters
         self.task = task
 
-        if output_model is not None and not (
-            isinstance(output_model, type) and issubclass(output_model, BaseModel)
+        # make sure the output_model is a pydantic BaseModel subclass
+        self.output_model = output_model
+
+        if self.output_model is not None and not (
+            isinstance(self.output_model, type) and issubclass(self.output_model, BaseModel)
         ):
             raise TypeError('output_model must be a pydantic BaseModel subclass or None')
-
-        self.output_model = output_model
 
         # Initialize Message List
         self.messages: list[dict] = []
@@ -325,6 +326,22 @@ class Agent:
         content = '\n\n'.join(parts)
 
         self.messages.append(system_msg(content, cache=True))
+
+    def extend_system_prompt(self, block: str) -> None:
+        """Append `block` to the system prompt and rebuild the system message.
+
+        For callers that assemble an agent in stages (e.g. an org adding its
+        goal at registration). Only allowed before the first run: rewriting
+        the system message mid-conversation would silently change the context
+        earlier turns were produced under.
+        """
+        if len(self.messages) > 1:
+            raise RuntimeError('extend_system_prompt: conversation already started')
+
+        self.system_prompt += '\n\n' + block.strip()
+
+        self.messages.clear()
+        self.build_initial_context()
 
     def run(
         self,
