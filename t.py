@@ -1,4 +1,4 @@
-"""Scratch script: agents in an organization messaging each other over a bus."""
+"""Scratch script: a manager delegates market research to an analyst over the org bus."""
 
 from dotenv import load_dotenv
 
@@ -9,9 +9,9 @@ from architectures import Message, Organization
 load_dotenv()
 
 
-def make_agent() -> Agent:
+def make_agent(role_prompt: str) -> Agent:
     return Agent(
-        system="<role>You are a helpful assistant in a multi-agent organization. Use SendMessage to talk to colleagues.</role>",
+        system=f"<role>{role_prompt} Use SendMessage to talk to colleagues.</role>",
         provider='openrouter',
         model='qwen/qwen3.7-max',
         tools=[execute_code_tool()],  # own sandbox per agent, for research / screening work
@@ -24,14 +24,31 @@ org = Organization(
     aum=1000000,
     sector="Technology",
 )
-a_id = org.register_agent("agent_a", make_agent())
-b_id = org.register_agent("agent_b", make_agent())
+manager_id = org.register_agent("portfolio_manager", make_agent(
+    "You are the portfolio manager. You delegate research to the research_analyst and make the final call."
+))
+analyst_id = org.register_agent("research_analyst", make_agent(
+    "You are the research analyst. When given a research task, use WebSearch / WebExtract to gather current "
+    "data, then send a concise report back to whoever assigned it via SendMessage."
+))
 
-# Kick off: the org (an outside sender) asks agent_a to consult agent_b
+# Kick off: the org (an outside sender) asks the manager to delegate research to the analyst
 org.post(Message(
     sender_id=org.id,
-    recipient_id=a_id,
-    content="Ask agent_b what our org's AUM and sector are. When agent_b replies, just acknowledge it — don't message again.",
+    recipient_id=manager_id,
+    content=(
+        "Delegate a market research task to the research_analyst: the US AI semiconductor market — "
+        "market size and growth, the 3-5 key public players, and which look undervalued vs. peers (P/E, EV/Sales). "
+        "Ask them to report back to you. When their report arrives, reply with a short investment recommendation "
+        "for our AUM and do not send any more messages."
+    ),
 ))
 
 org.run_until_idle()
+
+# The manager's last assistant message is the final recommendation
+print('\n=== Manager recommendation ===')
+print(org.get_agent(manager_id).messages[-1]['content'])
+
+for member in org.agents.values():
+    print(f'{member.role}: {len(member.agent.messages)} messages')
