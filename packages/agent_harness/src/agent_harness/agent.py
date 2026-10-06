@@ -1,21 +1,20 @@
 from __future__ import annotations
 
 import copy
-import os
 import sys
 import threading
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable, cast
 
 from pydantic import BaseModel
 
 from agent_harness.client import build_client
+from agent_harness.context.renderer import ContextRenderer, DynamicContextProvider
 from agent_harness.tooling.decorator import bind_tool
 from agent_harness.gates import Gate
 from agent_harness.hooks import Hook, HookEvent
 from agent_harness.loop import execution_loop
-from agent_harness.messages import system_msg, user_msg
+from agent_harness.messages import user_msg
 from agent_harness.sinks import MultiSink, Sink, StdoutSink, compose_sinks
 from agent_harness.sinks.hooks import HookSink
 from agent_harness.tooling.handler import ToolHandler
@@ -40,6 +39,7 @@ class Agent:
         subagents: list[SubAgentConfig] = [],
         output_model: type[BaseModel] | None = None,
         reasoning_effort: str | None = None,
+        dynamic_context_providers: list[DynamicContextProvider] = [],
     ) -> None:
 
         # Construction is inert: the client is built lazily on first run() so module-level `agent = Agent(...)` 
@@ -114,7 +114,10 @@ class Agent:
 
             self.add_tool(make_deploy_subagent_tool(self.subagents)) # Only add the subagent deploy tool if subagents are passed
 
-        self.build_initial_context()
+        # Owns the model-facing formatting of messages (system message + per-request render)
+        self.context_renderer = ContextRenderer(dynamic_providers=dynamic_context_providers)
+
+        self.messages.append(self.context_renderer.build_system_message(self))
     
     def _parse_output(self, final_text: str) -> BaseModel:
         """One structured completion: map final agent text into output_model."""
@@ -162,6 +165,22 @@ class Agent:
         items['enum'] = [*items.get('enum', []), name]
 
         entry['parameters'] = parameters
+
+    def extend_system_prompt(self, block: str) -> None:
+        """Append `block` to the system prompt and rebuild the system message.
+
+        For callers that assemble an agent in stages (e.g. an org adding its
+        goal at registration). Only allowed before the first run: rewriting
+        the system message mid-conversation would silently change the context
+        earlier turns were produced under.
+        """
+        if len(self.messages) > 1:
+            raise RuntimeError('extend_system_prompt: conversation already started')
+
+        self.system_prompt += '\n\n' + block.strip()
+
+        # Slice-assign to keep the same list object for any held references
+        self.messages[:] = [self.context_renderer.build_system_message(self)]
 
     def add_tool(self, tool: dict[str, Any] | Callable) -> None:
         """Register a tool.
@@ -292,56 +311,6 @@ class Agent:
 
         # Add the name of the gate and the function object to the agents gates list
         self.gates.append((names, fn))
-
-    def build_initial_context(self) -> None:
-        environment = (
-            '<environment>\n'
-            f'- Date: {datetime.now().strftime("%A, %B %d, %Y")}\n'
-            f'- Working directory: {os.getcwd()}\n'
-            '</environment>'
-        )
-
-        parts: list[str] = [self.system_prompt, environment]
-
-        # The deferred-tool registry is Python-side state the model can't see —
-        # its only in-context signal is the ` [deferred]` description marker.
-        # Spell out the protocol here, and only when any deferred tools exist,
-        # so agents without them never read about the mechanism.
-        if self.deferred_tools:
-            names = ', '.join(sorted(self.deferred_tools))
-
-            parts.append(
-                '<deferred_tools>\n'
-                f'Deferred at session start: {names}.\n'
-                'A deferred tool ships as a stub: its description ends with the marker '
-                '` [deferred]` and its parameter schema is empty. Before calling one, call '
-                '`LoadTool(names=[...])` once to fetch its full schema. After loading, the '
-                'marker disappears from the tool list and you call the tool directly for the '
-                'rest of the session — do not call LoadTool for it again.\n'
-                'The tool list is the live source of truth: any tool whose description does '
-                'NOT end with ` [deferred]` is already fully loaded. Never call LoadTool on it.\n'
-                '</deferred_tools>'
-            )
-
-        content = '\n\n'.join(parts)
-
-        self.messages.append(system_msg(content, cache=True))
-
-    def extend_system_prompt(self, block: str) -> None:
-        """Append `block` to the system prompt and rebuild the system message.
-
-        For callers that assemble an agent in stages (e.g. an org adding its
-        goal at registration). Only allowed before the first run: rewriting
-        the system message mid-conversation would silently change the context
-        earlier turns were produced under.
-        """
-        if len(self.messages) > 1:
-            raise RuntimeError('extend_system_prompt: conversation already started')
-
-        self.system_prompt += '\n\n' + block.strip()
-
-        self.messages.clear()
-        self.build_initial_context()
 
     def run(
         self,

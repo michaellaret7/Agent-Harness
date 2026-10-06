@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 from openai import OpenAI
 
-from agent_harness.messages import assistant_msg, cached_text, tool_msg
+from agent_harness.messages import assistant_msg, tool_msg
 from agent_harness.sinks import Sink, StdoutSink
 from agent_harness.sinks.base import ToolOutcome
 from agent_harness.usage import Usage
@@ -122,36 +122,6 @@ def _classify(was_cancelled: bool, tool_calls: list[dict]) -> str:
     return 'tool_calls'
 
 
-def _refresh_rolling_cache_breakpoint(messages: list[dict]) -> None:
-    """Move the rolling cache_control marker to the last assistant/tool message.
-
-    Strips any prior marker first so we stay at exactly 2 breakpoints
-    (system anchor + rolling tail), well under Anthropic's limit of 4.
-    The system message's marker is owned by `build_initial_context` and
-    never touched here — the strip loop filters by role.
-
-    Idempotent: safe to call before every LLM request.
-    """
-    for m in messages:
-        if m['role'] not in ('assistant', 'tool'):
-            continue
-
-        content = m.get('content')
-
-        if isinstance(content, list) and content and 'text' in content[0]:
-            m['content'] = content[0]['text']
-
-    for m in reversed(messages):
-        if m['role'] not in ('assistant', 'tool'):
-            continue
-
-        content = m.get('content')
-
-        if isinstance(content, str) and content:
-            m['content'] = cached_text(content)
-            return
-
-
 #     ================================
 # --> Loop
 #     ================================
@@ -203,10 +173,13 @@ def execution_loop(
         iterations = i
         active_sink.on_iteration_start(i, len(agent.messages))
 
+        # Render an independent request copy of the history; never assigned back to agent.messages
+        rendered_messages = agent.context_renderer.render(agent)
+
         # Call the LLM aka the completions api and stream the response
         content, tool_calls, was_cancelled, usage = call_llm(
             agent.client,
-            agent.messages, # lets build the renderer module to render the messages everytime and give some fine grained control over the rendering process
+            rendered_messages,
             agent.tools,
             model,
             active_sink,
@@ -221,6 +194,7 @@ def execution_loop(
 
         # Bucket the iteration outcome (normal / cancelled / partial_cancelled) so the loop can dispatch and sinks can log it
         action = _classify(was_cancelled, tool_calls)
+        
         # Pull just the tool names from the tool calls for lightweight logging (args/ids are dropped)
         tool_names = [tc['function']['name'] for tc in tool_calls]
         active_sink.on_iteration_end(i, action, content, tool_names)
@@ -268,8 +242,6 @@ def call_llm(
     reasoning_effort: str | None = None,
 ) -> tuple[str, list[dict], bool, Usage | None]:
     """Call the LLM with streaming. Returns (content, tool_calls, was_cancelled, usage)."""
-
-    _refresh_rolling_cache_breakpoint(messages)
 
     content_pieces: list[str] = []
     # Tool calls arrive in fragments keyed by index — id/name appear on the

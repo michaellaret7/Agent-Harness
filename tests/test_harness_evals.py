@@ -196,7 +196,7 @@ def test_llm_judge_reads_transcript_from_sandbox() -> None:
     assert 'Used add' in score.reasoning and '  - no units' in score.reasoning
     assert score.detail == ''
 
-    judge_prompt = api.requests[2]['messages'][-1]['content']
+    judge_prompt = message_text(api.requests[2]['messages'][-1])
     assert '<rubric>\n1. correct sum\n2. units stated' in judge_prompt, 'case criteria first, shared after'
     assert '<task>\nAdd 2 and 3.' in judge_prompt
     assert 'tools.json' in judge_prompt, "the subject's tools reach the judge as a file"
@@ -205,7 +205,7 @@ def test_llm_judge_reads_transcript_from_sandbox() -> None:
     assert 'The sum is 5' not in judge_prompt, 'the transcript must not be inlined into the prompt'
 
     # The structured-output call converts the judge's final text, not anything else.
-    assert api.requests[4]['messages'][-1]['content'].startswith('Verdict: ')
+    assert message_text(api.requests[4]['messages'][-1]).startswith('Verdict: ')
     assert api.requests[4]['response_format']['json_schema']['name'] == 'JudgeVerdict'
 
     # The sandbox really served the file: the judge's code printed the subject's final answer.
@@ -288,7 +288,7 @@ def test_llm_judge_appends_process_criteria_by_default() -> None:
         run_evals(make_agent, [EvalCase('greet', 'Say hello.', criteria=('says hello',))], [grader])
 
     expected = '\n'.join(f'{i}. {c}' for i, c in enumerate(['says hello', *PROCESS_CRITERIA], 1))
-    assert f'<rubric>\n{expected}\n</rubric>' in api.requests[1]['messages'][-1]['content']
+    assert f'<rubric>\n{expected}\n</rubric>' in message_text(api.requests[1]['messages'][-1])
 
 
 def test_llm_judge_rejects_skipped_criterion() -> None:
