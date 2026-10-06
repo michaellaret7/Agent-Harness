@@ -3,7 +3,6 @@ from __future__ import annotations
 import copy
 import sys
 import threading
-from pathlib import Path
 from typing import Any, Callable, Iterable, cast
 
 from pydantic import BaseModel
@@ -90,11 +89,9 @@ class Agent:
         # Initialize Plan
         self.plan: list[dict] = []
 
-        self.system_prompt = (Path(__file__).parent / 'context' / 'system_prompt.md').read_text(encoding='utf-8').strip()
-
-        # If a domain system prompt is passed, append it under a domain header
-        if system:
-            self.system_prompt += '\n\n<domain>\n' + system.strip() + '\n</domain>'
+        # Raw prompt inputs; ContextRenderer assembles them into the system message
+        self.domain_prompt = system
+        self.prompt_extensions: list[str] = []
 
         # ---- Register base tools ---- #
         # Parallel tailors results to the consuming model (`client_model`).
@@ -177,7 +174,7 @@ class Agent:
         if len(self.messages) > 1:
             raise RuntimeError('extend_system_prompt: conversation already started')
 
-        self.system_prompt += '\n\n' + block.strip()
+        self.prompt_extensions.append(block)
 
         # Slice-assign to keep the same list object for any held references
         self.messages[:] = [self.context_renderer.build_system_message(self)]

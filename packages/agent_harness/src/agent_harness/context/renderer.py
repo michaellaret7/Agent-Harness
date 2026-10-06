@@ -1,11 +1,11 @@
 """Context renderer: the boundary between stored agent data and the model request.
 
-`Agent` owns the data (`system_prompt`, `messages`); the renderer owns its
-model-facing presentation; the loop owns execution. Two entry points, because
-they run at different times:
+`Agent` owns the data (`domain_prompt`, `prompt_extensions`, `messages`); the
+renderer owns its model-facing presentation; the loop owns execution. Two entry
+points, because they run at different times:
 
-- `build_system_message(agent)` — once at init: base prompt + environment +
-  deferred-tool protocol, with the system cache anchor.
+- `build_system_message(agent)` — once at init: base prompt + `<domain>` +
+  extensions + environment + deferred-tool protocol, with the system cache anchor.
 - `render(agent)` — before every model call: an independent copy of history
   with the rolling cache marker applied, then a `<dynamic_context>` block from
   the dynamic context providers. Never written back to `agent.messages`.
@@ -15,9 +15,12 @@ from __future__ import annotations
 import os
 from copy import deepcopy
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from agent_harness.messages import cached_text, system_msg, user_msg
+
+BASE_PROMPT = (Path(__file__).parent / 'system_prompt.md').read_text(encoding='utf-8').strip()
 
 ROLLING_ROLES = ('user', 'assistant', 'tool')
 
@@ -28,7 +31,8 @@ DynamicContextProvider = Callable[[], str | None]
 class AgentContext(Protocol):
     """The agent state the renderer reads. `Agent` satisfies it structurally."""
 
-    system_prompt: str
+    domain_prompt: str | None
+    prompt_extensions: list[str]
     deferred_tools: dict[str, dict[str, Any]]
     messages: list[dict]
 
@@ -103,7 +107,16 @@ class ContextRenderer:
         _mark_latest(messages)
 
     def build_system_message(self, agent: AgentContext) -> dict[str, Any]:
-        """Assemble the system message: base prompt, environment, deferred-tool protocol."""
+        """Assemble the system message: base prompt, domain, extensions, environment, deferred-tool protocol."""
+        parts: list[str] = [BASE_PROMPT]
+
+        # If a domain system prompt is passed, append it under a domain header
+        if agent.domain_prompt:
+            parts.append('<domain>\n' + agent.domain_prompt.strip() + '\n</domain>')
+
+        # Blocks added in stages via extend_system_prompt (e.g. an org's <organization>)
+        parts.extend(block.strip() for block in agent.prompt_extensions)
+
         environment = (
             '<environment>\n'
             f'- Date: {datetime.now().strftime("%A, %B %d, %Y")}\n'
@@ -111,7 +124,7 @@ class ContextRenderer:
             '</environment>'
         )
 
-        parts: list[str] = [agent.system_prompt, environment]
+        parts.append(environment)
 
         # The deferred-tool registry is Python-side state the model can't see —
         # its only in-context signal is the ` [deferred]` description marker.

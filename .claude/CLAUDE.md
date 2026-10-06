@@ -111,9 +111,9 @@ A tool module exports a `tool` dict with keys `name`, `description`, `parameters
 
 System prompts live in two places:
 - `agent_harness/context/system_prompt.md` — the always-loaded base methodology (Tools, Planning + generic constraints). Domain-agnostic.
-- The caller's `system=` string — appended to the base inside a `<domain>` block by `Agent.__init__`. Holds the `<role>` and any domain-specific constraints. The caller reads its own prompt file and passes the string; the framework does not auto-discover it.
+- The caller's `system=` string — appended to the base inside a `<domain>` block by `ContextRenderer.build_system_message` (`context/renderer.py`). Holds the `<role>` and any domain-specific constraints. The caller reads its own prompt file and passes the string; the framework does not auto-discover it.
 
-Applications own any memory loading and can include that context in `system`. The base agent has no memory file of its own. The system prompt is assembled at `Agent.__init__` — there is no runtime reload.
+Applications own any memory loading and can include that context in `system`. The base agent has no memory file of its own. The system message is built once at `Agent.__init__` (rebuilt only by a pre-run `extend_system_prompt`) — there is no runtime reload.
 
 ## Development Guidelines
 
