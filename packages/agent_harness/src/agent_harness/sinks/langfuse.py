@@ -2,7 +2,7 @@
 
 One trace per call to `Agent.run`. Structure:
 
-  root span "agent-turn"
+  root span "agent-turn"   (input: full message history + the new task)
    └─ chain "execution_loop"
         ├─ span "iteration_1"
         │    ├─ generation          (auto-captured by langfuse.openai)
@@ -34,6 +34,7 @@ from typing import Any
 
 from langfuse import Langfuse, propagate_attributes
 
+from agent_harness.messages import user_msg
 from agent_harness.sinks.base import BaseSink, ToolOutcome
 
 log = logging.getLogger(__name__)
@@ -76,10 +77,12 @@ class LangfuseSink(BaseSink):
         self,
         session_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        history: list[dict[str, Any]] | None = None,
     ) -> None:
         self._client = Langfuse()
         self._session_id = session_id
         self._base_metadata = metadata or {}
+        self._history = history  # live reference to agent.messages; the turn span's input shows it in full
 
         self._session_cm: Any | None = None
         self._turn_cm: Any | None = None
@@ -121,7 +124,7 @@ class LangfuseSink(BaseSink):
             cm = self._client.start_as_current_observation(
                 as_type='agent',
                 name='agent-turn',
-                input=task,
+                input=self._turn_input(task),
                 metadata=self._base_metadata or None,
             )
             self._turn_span = cm.__enter__()
@@ -129,6 +132,17 @@ class LangfuseSink(BaseSink):
 
         except Exception as e:
             log.warning('langfuse: failed to start turn span: %s', e)
+
+    def _turn_input(self, task: str) -> str | list[dict[str, Any]]:
+        """The full conversation the turn starts from: prior history plus the new task.
+
+        Fires before Agent.run appends the task, so it is added here. A
+        snapshot copy, so later appends never leak into this turn's input.
+        """
+        if self._history is None:
+            return task
+
+        return [*self._history, user_msg(task)]
 
     def on_turn_end(self, result: str) -> None:
         # Defensive: orphan any tool spans that never received on_tool_end.

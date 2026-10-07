@@ -1,8 +1,9 @@
 """Data records shared across the organization architecture."""
 from __future__ import annotations
 
+import queue
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from agent_harness.sinks import Sink
@@ -21,3 +22,8 @@ class Member:
     agent: Any
     role: str
     sink: Sink  # presentation sink for every delivery; Langfuse is composed on top by the engine
+    inbox: queue.Queue[Message | None] = field(default_factory=queue.Queue)  # None = stop sentinel; drained only by this member's worker this is the agent's inbox
+
+
+class MessageLimitReached(RuntimeError):
+    """Raised by `Organization.post` once a run has used its message budget."""

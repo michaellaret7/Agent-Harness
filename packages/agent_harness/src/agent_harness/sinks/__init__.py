@@ -18,7 +18,7 @@ the environment — set the env var and tracing follows every agent. Unset
 it and the framework is silent. The application entry point owns
 `load_dotenv()`; this module only reads the already-populated environment.
 
-The bootstrap is lazy and idempotent. Type-only imports
+The bootstrap is lazy, idempotent, and thread-safe. Type-only imports
 (`from agent_harness.sinks import Sink`) do not trigger it; only consumers that
 actually compose ambient sinks pay the cost.
 
@@ -29,6 +29,7 @@ under the same Langfuse session.
 from __future__ import annotations
 
 import os
+import threading
 import uuid
 from typing import TYPE_CHECKING, Callable, cast
 
@@ -43,6 +44,7 @@ if TYPE_CHECKING:
 _always_on: list[Callable[['Agent'], Sink]] = []
 _SESSION_ID = uuid.uuid4().hex
 _bootstrapped = False
+_bootstrap_lock = threading.Lock()  # concurrent first runs (e.g. Organization workers) must all see the registration
 
 
 def _ensure_bootstrapped() -> None:
@@ -58,23 +60,27 @@ def _ensure_bootstrapped() -> None:
     """
     global _bootstrapped
 
-    if _bootstrapped:
-        return
+    # Held for the whole bootstrap: a second thread waits here until the factory is appended,
+    # instead of seeing `_bootstrapped` set early and composing a run without Langfuse
+    with _bootstrap_lock:
+        if _bootstrapped:
+            return
 
-    _bootstrapped = True
+        _bootstrapped = True
 
-    if not os.environ.get('LANGFUSE_PUBLIC_KEY'):
-        return
+        if not os.environ.get('LANGFUSE_PUBLIC_KEY'):
+            return
 
-    from agent_harness.sinks.langfuse import LangfuseSink
+        from agent_harness.sinks.langfuse import LangfuseSink
 
-    def factory(agent: 'Agent') -> Sink:
-        return LangfuseSink(
-            session_id=_SESSION_ID,
-            metadata={'provider': agent.provider, 'model': agent.model},
-        )
+        def factory(agent: 'Agent') -> Sink:
+            return LangfuseSink(
+                session_id=_SESSION_ID,
+                metadata={'provider': agent.provider, 'model': agent.model},
+            history=agent.messages,
+            )
 
-    _always_on.append(factory)
+        _always_on.append(factory)
 
 
 def register_always_on(factory: Callable[['Agent'], Sink]) -> None:

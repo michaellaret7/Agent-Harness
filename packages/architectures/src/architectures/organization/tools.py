@@ -7,7 +7,7 @@ from typing import Annotated, Any
 from agent_harness.tooling.decorator import Param, agent_tool
 from agent_harness.tooling.result import ToolResult
 
-from architectures.organization.models import Message
+from architectures.organization.models import Message, MessageLimitReached
 
 
 #     ================================
@@ -39,8 +39,8 @@ def send_message(
 ) -> ToolResult:
     """Send a message to another agent in your organization.
 
-    Delivery is asynchronous: the message is queued on the org bus and the
-    recipient handles it once it is free. Any reply arrives later as a new
+    Delivery is asynchronous: the message is queued in the recipient's inbox
+    and the recipient handles it once it is free. Any reply arrives later as a new
     message to you — do not wait for it in this turn.
     """
     try:
@@ -51,6 +51,9 @@ def send_message(
     if not _org.has_agent(target):
         return ToolResult(f'No member with id {target}. Call GetOrgInfo.', 'error')
 
-    _org.post(Message(sender_id=_self_id, recipient_id=target, content=content))
+    try:
+        _org.post(Message(sender_id=_self_id, recipient_id=target, content=content))
+    except MessageLimitReached as exc:
+        return ToolResult(f'{exc}. Finish your current task without sending more messages.', 'error')
 
     return ToolResult(f'Queued for {_org.agents[target].role} ({target}).', 'ok')
