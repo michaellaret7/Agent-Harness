@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import os
 import uuid
-from abc import ABC
 from collections import deque
 from typing import Any
 
@@ -19,8 +18,8 @@ from architectures.organization.tools import get_org_info, send_message
 #     ================================
 
 
-class Organization(ABC):
-    """Abstract base: every org gets a bus, an agent registry, and a shared repo."""
+class Organization:
+    """An agent registry plus a FIFO message bus; members talk via SendMessage."""
 
     def __init__(self, name: str, goal: str, **config: Any):
         self.id = uuid.uuid4()
