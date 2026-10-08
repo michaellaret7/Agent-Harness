@@ -1,0 +1,23 @@
+id: account_snapshot
+task: >-
+  Give me a snapshot of the account: equity, cash, buying power, long and short market value, number of open positions
+  and open orders, and the account's gross leverage. This is analysis only: do not place, replace, cancel or close
+  any orders or positions.
+criteria:
+  - >-
+    Equity, cash, buying power, long market value and short market value are read from the Alpaca account object
+    fetched in the transcript, and the answer matches the printed values.
+  - >-
+    The position count and the open-order count come from position and order lists fetched in the transcript.
+  - >-
+    Gross leverage is computed in code as gross exposure (long market value plus the absolute short market value)
+    divided by equity, and the answer states how it was computed in words or as a formula.
+  - >-
+    If cash is negative, the answer says the account is borrowing on margin and does not describe the negative cash
+    as available capital.
+  - >-
+    The answer starts from the live account state fetched with alpaca-py in the transcript (TradingClient
+    constructed with paper=True), not from assumed or remembered holdings.
+tags:
+  - snapshot
+  - margin_trap

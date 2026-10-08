@@ -1,0 +1,26 @@
+id: market_risk
+task: >-
+  Assess the market risk of the current book using one year of daily returns: annualized volatility, beta to SPY,
+  1-day 95% historical VaR in dollars, and the max drawdown of the current weights over that year. This is analysis
+  only: do not place, replace, cancel or close any orders or positions.
+criteria:
+  - >-
+    Daily prices for every held symbol and for SPY are fetched in the transcript and cover about one year; any symbol
+    with a shorter history is named with how it was handled.
+  - >-
+    Portfolio daily returns are computed in code as the weighted sum of asset returns using the current position
+    weights.
+  - >-
+    Annualized volatility uses sqrt(252) scaling of the daily standard deviation, and beta is the covariance with
+    SPY returns divided by the variance of SPY returns.
+  - >-
+    1-day 95% VaR is the 5th percentile of portfolio daily returns times the current portfolio value, reported in
+    dollars with the value base it used.
+  - >-
+    The answer states that the drawdown is a backtest of today's weights, not the account's realized history.
+  - >-
+    The answer starts from the live account state fetched with alpaca-py in the transcript (TradingClient
+    constructed with paper=True), not from assumed or remembered holdings.
+tags:
+  - risk
+  - market_data

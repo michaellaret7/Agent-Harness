@@ -1,0 +1,96 @@
+id: proposed_trade_mrvl
+# Designed answer: reject as pitched. On one year of daily returns (Oct 2026) the book's beta is
+# ~1.62 before and ~1.98 after (limit 1.80), and Technology goes from 74% to 86% of equity (limit 80%).
+# MRVL's own beta is ~3.0, not the 1.2 the analyst claims. The largest MRVL add that keeps both
+# limits is ~$590k (beta binds first; the sector limit allows ~$600k).
+task: |-
+  An analyst has proposed a trade for the fund. Decide whether to add it to the portfolio.
+
+  The portfolio (use this book, not the live Alpaca account):
+  - Equity: $10,000,000, no margin
+  - Cash: $2,000,000
+  - Positions by market value:
+      NVDA $1,500,000 | AVGO $1,200,000 | AMD  $1,000,000 | MSFT $900,000
+      MU   $800,000   | AMAT $700,000   | AAPL $700,000   | LRCX $600,000
+      JNJ  $300,000   | PG   $200,000   | XOM  $100,000
+
+  Risk limits:
+  - No single position above 15% of equity
+  - No sector above 80% of equity
+  - Portfolio beta to SPY at most 1.80, measured on one year of daily returns
+
+  Analyst pitch:
+  "Buy $1,200,000 of MRVL (Marvell Technology), funded from cash. Custom AI silicon and data-center
+  optics revenue is accelerating and we expect 40% revenue growth next year. It's a low-risk add:
+  MRVL's beta is only about 1.2, and as a networking name it diversifies our GPU-heavy semiconductor
+  exposure. The book has plenty of room for it."
+
+  Show the trade's impact on every limit and on portfolio volatility. If you reject it, tell the
+  analyst what would have to change for it to fit. Do not place any orders.
+criteria:
+  # Decision
+  - >-
+    The answer's first line states the decision: reject the trade as pitched, or approve only a smaller size
+    that keeps every limit. Approving the full $1,200,000 fails this criterion.
+  - >-
+    The decision is justified by the post-trade breaches the PM computed (sector and beta), not by a general
+    view of semiconductors or of MRVL's prospects.
+  # Book construction
+  - >-
+    The book is built exactly from the positions and cash given in the task; positions from the live Alpaca
+    account are not substituted or mixed in.
+  - >-
+    Weights are computed in code against $10,000,000 equity before and after the trade, with the purchase
+    reducing cash from $2,000,000 to $800,000 and leaving equity unchanged.
+  # Sector limit
+  - >-
+    The sector of every holding and of MRVL comes from data fetched in the transcript (for example FMP company
+    profiles), not from memory.
+  - >-
+    The pre-trade weight of the largest sector (Technology, about 74% of equity under FMP's classification) is
+    computed in code and reported as within the 80% limit.
+  - >-
+    The post-trade weight of that sector (about 86%) is computed in code and reported as a breach of the 80%
+    limit, with the excess in percentage points and in dollars.
+  # Single-name limit
+  - >-
+    The single-name limit is checked for every position after the trade; MRVL at 12% and NVDA at 15% are
+    reported as within the 15% limit, and the single-name limit is not cited as a reason to reject.
+  # Beta limit
+  - >-
+    The beta of every holding and of MRVL is computed in code from about one year of daily returns against SPY
+    daily returns, all fetched in the transcript, and the window is stated.
+  - >-
+    Portfolio beta is computed before and after the trade, by weighting the holdings' betas or by regressing
+    portfolio returns on SPY, with the method stated and cash treated as zero beta.
+  - >-
+    The answer reports pre-trade beta as within the 1.80 limit and post-trade beta as above it, giving both
+    numbers.
+  # Volatility
+  - >-
+    Annualized portfolio volatility before and after the trade is computed in code from daily returns and both
+    figures are reported.
+  # Analyst claims
+  - >-
+    The analyst's claim that MRVL's beta is about 1.2 is checked against the beta computed in the transcript,
+    and the answer says the claim is wrong, giving the computed value.
+  - >-
+    The claim that MRVL diversifies the semiconductor exposure is tested with return correlations between MRVL
+    and the existing semiconductor holdings, computed in code, and the answer states what they show.
+  - >-
+    The pitch's fundamental claims (40% revenue growth, accelerating AI revenue) are not repeated as fact
+    unless the PM fetched data that supports them; otherwise they are attributed to the analyst or left out.
+  # What would make it fit
+  - >-
+    The answer gives the largest MRVL position that keeps both the sector and beta limits, computed in code as
+    the smaller of the two size caps, or another concrete change (for example, funding by selling a named
+    high-beta semiconductor) with its post-trade sector weight and beta.
+  # Process
+  - >-
+    The answer starts from the book given in the task, not from the live Alpaca account; any live market data
+    used (prices, bars) is fetched in the transcript.
+tags:
+  - decision
+  - concentration
+  - beta
+  - analyst_claims

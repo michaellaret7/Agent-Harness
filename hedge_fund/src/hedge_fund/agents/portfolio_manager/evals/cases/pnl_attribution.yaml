@@ -1,0 +1,22 @@
+id: pnl_attribution
+task: >-
+  Break down the unrealized P&L on the book. Which five positions contribute the most and which five lose the most
+  in dollars, and what does each contribute as a share of total unrealized P&L? This is analysis only: do not place,
+  replace, cancel or close any orders or positions.
+criteria:
+  - >-
+    Each position's unrealized P&L in dollars is taken from the position data fetched in the transcript, or computed
+    from its cost basis and market value.
+  - >-
+    Total unrealized P&L is summed in code over every position, not only the ten shown.
+  - >-
+    The top five and bottom five are ranked by dollar P&L, not by percent return, and the order matches the printed
+    values.
+  - >-
+    Each listed contribution share is that position's dollar P&L divided by total unrealized P&L, and the shares
+    agree with the printed figures.
+  - >-
+    The answer starts from the live account state fetched with alpaca-py in the transcript (TradingClient
+    constructed with paper=True), not from assumed or remembered holdings.
+tags:
+  - pnl

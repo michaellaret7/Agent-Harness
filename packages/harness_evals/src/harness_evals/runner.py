@@ -1,4 +1,4 @@
-"""run_evals — build a fresh subject agent per case, run it, grade it.
+"""run_evals — build a fresh subject agent per case, run it, grade it, optionally several cases at once.
 
 The subject agent is unaware it is being evaluated: it receives only
 `case.task`. Everything else (`criteria`, graders) stays on this
@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import traceback
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import cast
 
@@ -73,6 +74,15 @@ def _run_case(make_agent: AgentFactory, case: EvalCase) -> RunResult:
     )
 
 
+def _evaluate(make_agent: AgentFactory, case: EvalCase, graders: Sequence[Grader]) -> 'CaseRecord':
+    """Run one case and apply every grader to it."""
+    run = _run_case(make_agent, case)
+
+    scores = tuple(_grade(g, case, run) for g in graders)
+
+    return CaseRecord(case=case, run=run, scores=scores)
+
+
 def _grade(grader: Grader, case: EvalCase, run: RunResult) -> Score:
     """Apply one grader. A raising grader scores 0 with the traceback as detail."""
     try:
@@ -103,15 +113,13 @@ def run_evals(
     make_agent: AgentFactory,
     cases: Sequence[EvalCase],
     graders: Sequence[Grader],
+    max_workers: int = 1,
 ) -> list[CaseRecord]:
-    """Run every case sequentially and return one record per case."""
-    records: list[CaseRecord] = []
+    """Run every case and return one record per case, in case order.
 
-    for case in cases:
-        run = _run_case(make_agent, case)
-
-        scores = tuple(_grade(g, case, run) for g in graders)
-
-        records.append(CaseRecord(case=case, run=run, scores=scores))
-
-    return records
+    `max_workers` cases run at once, each on its own fresh agent; keep it
+    low enough for the subject's data APIs' rate limits. The default runs
+    cases one after another.
+    """
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        return list(pool.map(lambda case: _evaluate(make_agent, case, graders), cases))

@@ -1,0 +1,38 @@
+[project]
+name = "hedge-fund"
+version = "0.1.0"
+description = "Proof-of-concept multi-agent hedge fund built on agent-harness and architectures."
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "agent-harness",
+    "architectures",
+    "harness-evals",
+    "fmpsdk>=20260824.0",
+    "lumibot>=4.6.6",
+    "alpaca-py>=0.44.0",
+    "numpy>=2.4.6",
+    "scipy>=1.18.1",
+    "pandas>=2.3.3",
+    "pyarrow>=25.0.1",
+    "matplotlib>=3.11.2",
+    "yfinance>=1.7.0",
+    "statsmodels>=0.15.0",
+    "scikit-learn>=1.9.1",
+    "arch>=8.0.0",
+    "pyportfolioopt>=1.6.0",
+    "cvxpy>=1.9.3",
+    "quantstats>=0.0.86",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Swap these to git sources (`git = "…", subdirectory = "packages/…"`) when hedge_fund moves to its own repo.
+[tool.uv.sources]
+agent-harness = { workspace = true }
+architectures = { workspace = true }
+harness-evals = { workspace = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hedge_fund"]
