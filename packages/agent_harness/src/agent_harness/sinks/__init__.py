@@ -23,8 +23,11 @@ The bootstrap is lazy, idempotent, and thread-safe. Type-only imports
 actually compose ambient sinks pay the cost.
 
 All sinks created by the ambient factory share a single process-level
-`_SESSION_ID`, so every Agent.run within one Python process appears
-under the same Langfuse session.
+`SESSION_ID`, so every Agent.run within one Python process appears
+under the same Langfuse session. A process started with
+`LANGFUSE_SESSION_ID` set (e.g. a code-execution sandbox kernel) joins
+that session instead, so agents built in model code trace alongside
+their parent.
 """
 from __future__ import annotations
 
@@ -42,7 +45,7 @@ if TYPE_CHECKING:
 
 
 _always_on: list[Callable[['Agent'], Sink]] = []
-_SESSION_ID = uuid.uuid4().hex
+SESSION_ID = os.environ.get('LANGFUSE_SESSION_ID') or uuid.uuid4().hex
 _bootstrapped = False
 _bootstrap_lock = threading.Lock()  # concurrent first runs (e.g. Organization workers) must all see the registration
 
@@ -75,7 +78,7 @@ def _ensure_bootstrapped() -> None:
 
         def factory(agent: 'Agent') -> Sink:
             return LangfuseSink(
-                session_id=_SESSION_ID,
+                session_id=SESSION_ID,
                 metadata={'provider': agent.provider, 'model': agent.model},
             history=agent.messages,
             )
@@ -109,6 +112,7 @@ __all__ = [
     'BaseSink',
     'LogSink',
     'MultiSink',
+    'SESSION_ID',
     'Sink',
     'StdoutSink',
     'ToolOutcome',

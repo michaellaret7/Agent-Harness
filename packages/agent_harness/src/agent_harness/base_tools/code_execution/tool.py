@@ -52,7 +52,7 @@ def _packages_note(packages: list[str]) -> str:
 @agent_tool(name='ExecuteCode')
 def execute_code(
     code: Annotated[str, Param(description='Python source to run.')],
-    timeout: Annotated[int, Param(description='Seconds before the run is killed. Default 60.', min_val=1, max_val=600)] = 60,
+    timeout: Annotated[int, Param(description='Seconds before the run is killed. Default 60; raise it for long runs such as a sub-agent.', min_val=1, max_val=1800)] = 60,
     reset: Annotated[bool, Param(description='Restart the kernel first, dropping all variables.')] = False,
     _sandbox: SubprocessSandbox = None,  # type: ignore[assignment] injected via bind_tool
     _j_screen: bool = False,  # injected via bind_tool; the model cannot switch it off

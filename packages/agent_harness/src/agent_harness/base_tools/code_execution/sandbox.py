@@ -29,6 +29,8 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from agent_harness.sinks import SESSION_ID
+
 KERNEL_PATH = Path(__file__).parent / 'kernel.py'
 VENV_CACHE = Path.home() / '.cache' / 'agent-harness' / 'sandbox-venvs'
 
@@ -36,19 +38,39 @@ VENV_CACHE = Path.home() / '.cache' / 'agent-harness' / 'sandbox-venvs'
 # `.env` credentials the application loaded, stays on the host side.
 PASSTHROUGH_ENV = ('PATH', 'SYSTEMROOT', 'TEMP', 'TMP', 'HOME', 'USERPROFILE', 'LANG')
 
+# When the host traces to Langfuse, these follow into the kernel so any Agent
+# that model code builds there is traced too, under the host's session.
+TRACING_ENV = ('LANGFUSE_PUBLIC_KEY', 'LANGFUSE_SECRET_KEY', 'LANGFUSE_BASE_URL')
+
+# How many sandboxes deep this process runs: 0 on the host, 1 in a host agent's
+# kernel, 2 in the kernel of an agent built there, and so on. Agents may be built
+# up to MAX_AGENT_DEPTH, so a sub-agent built in code can execute code itself but
+# cannot build agents of its own. A guardrail against runaway recursion, not a
+# security boundary: model code can still edit its own environment.
+SANDBOX_DEPTH_ENV = 'AGENT_HARNESS_SANDBOX_DEPTH'
+SANDBOX_DEPTH = int(os.environ.get(SANDBOX_DEPTH_ENV, '0'))
+MAX_AGENT_DEPTH = 1
+
 #     ================================
 # --> Helper funcs
 #     ================================
 
 
 def _scrubbed_env(extra: dict[str, str]) -> dict[str, str]:
-    """Build the kernel's environment: the allowlist, Python settings, then caller extras."""
+    """Build the kernel's environment: the allowlist, Langfuse tracing, Python settings, then caller extras."""
     env = {key: os.environ[key] for key in PASSTHROUGH_ENV if key in os.environ}
+
+    if os.environ.get('LANGFUSE_PUBLIC_KEY'):
+        env.update({key: os.environ[key] for key in TRACING_ENV if key in os.environ})
+        env['LANGFUSE_SESSION_ID'] = SESSION_ID
 
     env['PYTHONIOENCODING'] = 'utf-8'
     env['PYTHONDONTWRITEBYTECODE'] = '1'
 
     env.update(extra)
+
+    # Set after caller extras so `env=` cannot reset the depth
+    env[SANDBOX_DEPTH_ENV] = str(SANDBOX_DEPTH + 1)
 
     return env
 

@@ -23,6 +23,7 @@ from agent_harness.base_tools.load_tool import load_tool
 from agent_harness.base_tools.plan import plan
 from agent_harness.base_tools.search import search
 from agent_harness.base_tools.deploy_subagent import make_deploy_subagent_tool
+from agent_harness.base_tools.code_execution.sandbox import MAX_AGENT_DEPTH, SANDBOX_DEPTH
 from agent_harness.subagent_config import SubAgentConfig
 
 
@@ -40,6 +41,13 @@ class Agent:
         reasoning_effort: str | None = None,
         dynamic_context_providers: list[DynamicContextProvider] = [],
     ) -> None:
+
+        # Agents built in model code may not recurse: refuse inside a nested sandbox
+        if SANDBOX_DEPTH > MAX_AGENT_DEPTH:
+            raise RuntimeError(
+                f'Agent cannot be built at sandbox depth {SANDBOX_DEPTH}: agents created inside '
+                'ExecuteCode may run code but may not create further agents'
+            )
 
         # Construction is inert: the client is built lazily on first run() so module-level `agent = Agent(...)` 
         # stays import-safe (no `.env` needed to construct).

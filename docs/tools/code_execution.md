@@ -57,8 +57,23 @@ Subprocess only. It contains a buggy or runaway script, not a hostile one:
 - Scrubbed environment: only `PASSTHROUGH_ENV` variables reach the kernel, so `.env` credentials are not in model code's environment. Expose specific secrets with `execute_code_tool(env={'FMP_API_KEY': key})`.
 - Own working directory, wall-clock timeout per call, each output stream trimmed to its first and last 10k bytes inside the kernel.
 - A timeout or kernel crash kills the process and starts a fresh kernel. State is lost and the tool says so.
+- Per-call `timeout` defaults to 60s, max 1800s, so a call can run a whole sub-agent.
 
 No filesystem, network, or resource limits: the kernel runs as the host user and can read or write anything that user can, including `.env` files on disk. For real containment, run the whole agent in a container.
+
+## Agents built in model code
+
+The kernel runs on the host's Python, so model code can `from agent_harness import Agent`, define `@agent_tool` functions, build an agent and `print(agent.run(task))`. Pass the provider credentials (e.g. `OPENROUTER_API_KEY`, `OPENROUTER_API_URL`) through `env=`. Langfuse keys and the host's `LANGFUSE_SESSION_ID` are forwarded automatically, so these agents trace into the parent's session as sibling traces.
+
+Recursion stops after one level. Each sandbox sets `AGENT_HARNESS_SANDBOX_DEPTH` to its parent's depth + 1 (after caller `env`, so it cannot be overridden), and `Agent.__init__` refuses above `MAX_AGENT_DEPTH` (1):
+
+| Process | Depth | May build an Agent |
+|---|---|---|
+| Host | 0 | yes |
+| Host agent's kernel | 1 | yes (sub-agents, which may have ExecuteCode) |
+| Sub-agent's kernel | 2 | no — `RuntimeError` |
+
+This is a guardrail against runaway recursion, not a security boundary.
 
 ## Code screen
 
