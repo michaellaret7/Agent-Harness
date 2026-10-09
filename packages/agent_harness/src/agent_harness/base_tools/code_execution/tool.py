@@ -6,8 +6,9 @@ import os
 from pathlib import Path
 from typing import Annotated, Any
 
-from agent_harness.base_tools.code_execution.sandbox import SubprocessSandbox
+from agent_harness.base_tools.code_execution.sandbox import MAX_AGENT_DEPTH, SANDBOX_DEPTH, SubprocessSandbox
 from agent_harness.base_tools.code_execution.screening import screen_code
+from agent_harness.client import HOSTED_PROVIDER_ENV
 from agent_harness.tooling.decorator import Param, agent_tool, bind_tool
 from agent_harness.tooling.result import ToolResult
 
@@ -27,6 +28,47 @@ def _credentials_note(env: dict[str, str]) -> str:
         f'Credentials available in os.environ: {names}. These are the only ones you have. '
         'Read them with os.environ, never print their values, and do not search files or the system for others.'
     )
+
+
+def _subagents_note(env: dict[str, str]) -> str:
+    """Teach the model to build sub-agents in code, when this sandbox may and can.
+
+    Empty unless the kernel is within the agent depth limit and `env` holds a
+    hosted provider's API key, so a sub-agent's own ExecuteCode never offers it.
+    """
+    providers = [name for name, (key_var, _) in HOSTED_PROVIDER_ENV.items() if key_var in env]
+
+    if SANDBOX_DEPTH + 1 > MAX_AGENT_DEPTH or not providers:
+        return ''
+
+    return f'''
+Sub-agents: the `agent_harness` library is installed here, so code can also build and run another agent,
+for work worth delegating (e.g. one sub-agent per ticker or per document). Define its tools, build it, print its answer:
+
+```python
+from agent_harness import Agent
+from agent_harness.tooling.decorator import agent_tool
+from agent_harness.tooling.result import ToolResult
+from agent_harness.base_tools.code_execution.tool import execute_code_tool
+
+@agent_tool
+def my_tool(x: int) -> ToolResult:
+    """One-line description the sub-agent sees."""
+    return ToolResult(str(x * 2), status='ok')  # status is required: 'ok' or 'error'
+
+sub = Agent(system='<role>...</role>', provider='{providers[0]}', model='<model id>', tools=[my_tool, execute_code_tool()])
+print(sub.run('task for the sub-agent'))
+```
+
+You do not have to do this in one call. Kernel state persists, so you can build a sub-agent in steps:
+write a tool in one call, test it by calling it directly, fix it, write the system prompt as a variable,
+then build and run the agent in a later call. Its tools run in this kernel, so they can use any variable
+or file you already have (e.g. a DataFrame you loaded); pass data into the task string or system prompt as needed.
+A timeout or crash restarts the kernel and drops these definitions, so save expensive data to files.
+
+Only what you print comes back. A sub-agent can take many minutes, so pass a generous `timeout`.
+Sub-agents may execute code but cannot build agents of their own. For more detail, read the source
+(e.g. `inspect.getsource(Agent)`).'''
 
 
 def _packages_note(packages: list[str]) -> str:
@@ -58,7 +100,10 @@ def execute_code(
     _j_screen: bool = False,  # injected via bind_tool; the model cannot switch it off
 ) -> ToolResult:
     """
-    Execute Python code in a persistent sandbox kernel. Variables, imports and
+    Execute Python code in a persistent sandbox kernel. Use this for anything
+    that involves code: calculations, data analysis, simulations, API calls,
+    reading or writing files. Never do arithmetic or data work in your head
+    when code can do it. Variables, imports and
     functions defined in one call are available in later calls. A bare
     expression on the last line is echoed like a REPL. Files written land in
     the sandbox workspace. A timeout restarts the kernel and loses all state.
@@ -121,7 +166,7 @@ def execute_code_tool(
     tool['description'] = (
         f'{tool["description"]}\n\nWorking directory: {sandbox.workspace}\n'
         'Save every file here with a relative path (e.g. "defs.parquet"). Writes to absolute paths such as /tmp are blocked.\n'
-        f'{_credentials_note(env or {})}\n{_packages_note(packages or [])}'
+        f'{_credentials_note(env or {})}\n{_packages_note(packages or [])}{_subagents_note(env or {})}'
     )
 
     return tool

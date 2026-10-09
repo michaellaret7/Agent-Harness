@@ -31,8 +31,12 @@ class SlowLangfuseModule(types.ModuleType):
 
 
 class FakeAgent:
-    provider = 'openrouter'
-    model = 'test-model'
+    """The Agent attributes the Langfuse factory reads."""
+
+    def __init__(self) -> None:
+        self.provider = 'openrouter'
+        self.model = 'test-model'
+        self.messages: list[dict[str, Any]] = []
 
 
 #     ================================
