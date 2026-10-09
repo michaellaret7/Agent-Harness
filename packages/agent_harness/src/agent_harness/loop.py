@@ -5,6 +5,10 @@ asks for tools, assembles the tool_call fragments across chunks, executes
 each tool, appends the results to `messages`, and calls again. Repeats
 until the model returns plain content (or a safety ceiling is hit).
 
+Validated termination: when the agent has an `output_model`, plain content
+does not end the run. The loop nudges the model to call SubmitResult and
+ends only once a submission is accepted (see `base_tools/submit_result.py`).
+
 Cancellation: `cancel_event` (threading.Event) is checked at iteration
 boundaries AND inside the chunk loop. On cancel: the active stream is
 abandoned, partial state is fixed up so `messages` stays well-formed, and
@@ -17,13 +21,19 @@ from typing import TYPE_CHECKING
 
 from openai import OpenAI
 
-from agent_harness.messages import assistant_msg, tool_msg
+from agent_harness.base_tools.submit_result import SUBMIT_RESULT
+from agent_harness.messages import assistant_msg, tool_msg, user_msg
 from agent_harness.sinks import Sink, StdoutSink
 from agent_harness.sinks.base import ToolOutcome
 from agent_harness.usage import Usage
 
 if TYPE_CHECKING:
     from agent_harness.agent import Agent
+
+# Consecutive plain-text replies tolerated from an output_model agent before the run fails
+MAX_SUBMIT_NUDGES = 3
+
+SUBMIT_NUDGE = f'Not done yet: the task only ends when you call {SUBMIT_RESULT} and it is accepted.'
 
 #     ================================
 # --> Helper funcs: These are internal helper functions used by the loop.
@@ -158,6 +168,7 @@ def execution_loop(
 
     last_content = ''
     iterations = 0
+    nudges = 0
 
     # Activate langfuse loop span to track the loop iterations and tool calls
     active_sink.on_loop_start(model, max_iters, [t['function']['name'] for t in agent.tools]) 
@@ -214,12 +225,36 @@ def execution_loop(
             break
 
         if action == 'answer_ready':
-            active_sink.on_loop_end('answer_ready', i)
-            return content
+            # If there is no output model set there is no submit result tool so we return the content and end the run
+            if agent.output_model is None:
+                active_sink.on_loop_end('answer_ready', i)
+                return content
+
+            # Validated termination: plain content is not a finish, so nudge toward SubmitResult
+            # The agent is expected to call SubmitResult to finish the run in this case it did not 
+            # call the submit result tool so we need to nudge the agent to call it
+            nudges += 1
+
+            if nudges > MAX_SUBMIT_NUDGES:
+                raise RuntimeError(
+                    f'model replied {nudges} times in a row without calling {SUBMIT_RESULT}'
+                )
+
+            # Append the submit nudge message to the agents state as a user message
+            agent.messages.append(user_msg(SUBMIT_NUDGE))
+
+            continue
+
+        nudges = 0
 
         # Add the output results of the tool calls to the agents state as tool output messages
         # The tool handler class executes the tool calls and returns the output results as tool output messages
         agent.messages.extend(agent.tool_handler.execute(tool_calls, active_sink, active_cancel))
+
+        # An accepted SubmitResult ends the run; its JSON is the turn's final text for sinks
+        if agent.submission is not None:
+            active_sink.on_loop_end('answer_ready', i)
+            return agent.submission.model_dump_json()
 
     stop_reason = 'cancelled' if active_cancel.is_set() else 'max_iterations'
     active_sink.on_loop_end(stop_reason, iterations)

@@ -12,7 +12,6 @@ points, because they run at different times:
 """
 from __future__ import annotations
 
-import os
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -120,7 +119,6 @@ class ContextRenderer:
         environment = (
             '<environment>\n'
             f'- Date: {datetime.now().strftime("%A, %B %d, %Y")}\n'
-            f'- Working directory: {os.getcwd()}\n'
             '</environment>'
         )
 

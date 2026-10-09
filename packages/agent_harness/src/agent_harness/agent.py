@@ -23,6 +23,7 @@ from agent_harness.base_tools.load_tool import load_tool
 from agent_harness.base_tools.plan import plan
 from agent_harness.base_tools.search import search
 from agent_harness.base_tools.deploy_subagent import make_deploy_subagent_tool
+from agent_harness.base_tools.submit_result import SUBMIT_RESULT, Verifier, make_submit_result_tool
 from agent_harness.base_tools.code_execution.sandbox import MAX_AGENT_DEPTH, SANDBOX_DEPTH
 from agent_harness.subagent_config import SubAgentConfig
 
@@ -38,6 +39,7 @@ class Agent:
         max_iters: int = 100,
         subagents: list[SubAgentConfig] = [],
         output_model: type[BaseModel] | None = None,
+        verifier: Verifier | None = None,
         reasoning_effort: str | None = None,
         dynamic_context_providers: list[DynamicContextProvider] = [],
     ) -> None:
@@ -69,6 +71,11 @@ class Agent:
             isinstance(self.output_model, type) and issubclass(self.output_model, BaseModel)
         ):
             raise TypeError('output_model must be a pydantic BaseModel subclass or None')
+
+        # Validated termination: with output_model set, the run only ends through an
+        # accepted SubmitResult call, which stores the validated object here.
+        self.verifier = verifier
+        self.submission: BaseModel | None = None
 
         # Initialize Message List
         self.messages: list[dict] = []
@@ -123,37 +130,6 @@ class Agent:
         self.context_renderer = ContextRenderer(dynamic_providers=dynamic_context_providers)
 
         self.messages.append(self.context_renderer.build_system_message(self))
-    
-    def _parse_output(self, final_text: str) -> BaseModel:
-        """One structured completion: map final agent text into output_model."""
-        if self.client is None or self.model is None or self.output_model is None:
-            raise RuntimeError(
-                '_parse_output requires client, model, and output_model to be set'
-            )
-
-        completion = self.client.chat.completions.parse(
-            model=self.model,
-            messages=[
-                {
-                    'role': 'system',
-                    'content': (
-                        'Convert the agent result into the required structured output. '
-                        'Use only facts present in the input. Do not invent fields.'
-                    ),
-                },
-                {'role': 'user', 'content': final_text or '(empty)'},
-            ],
-            response_format=self.output_model,
-        )
-
-        parsed = completion.choices[0].message.parsed
-
-        if parsed is None:
-            refusal = completion.choices[0].message.refusal
-
-            raise RuntimeError(f'structured output refused or empty: {refusal!r}')
-
-        return parsed
     
     def _offer_for_loading(self, name: str) -> None:
         """Add a deferred tool's name to LoadTool's `names` enum.
@@ -350,6 +326,14 @@ class Agent:
 
         self.messages.append(user_msg(task))
 
+        # Registered here rather than in __init__ so an output_model assigned after
+        # construction still gets its SubmitResult tool. add_tool is a no-op on repeat runs.
+        if self.output_model is not None and SUBMIT_RESULT not in self.tool_functions:
+            self.add_tool(make_submit_result_tool(self))
+
+        # Each run must earn its own accepted submission
+        self.submission = None
+
         result = ''
 
         try:
@@ -362,7 +346,10 @@ class Agent:
             )
 
             if self.output_model is not None:
-                return self._parse_output(result)
+                if self.submission is None:
+                    raise RuntimeError(f'run ended without an accepted {SUBMIT_RESULT} call')
+
+                return self.submission
 
             return result
 

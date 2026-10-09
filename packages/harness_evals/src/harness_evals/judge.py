@@ -4,8 +4,9 @@ The judge is an ordinary `Grader`: the runner calls it on `(case, run)` like
 `finished()`. Inside, it builds a fresh judge `Agent`, gives it an
 `ExecuteCode` sandbox whose workspace holds the subject's transcript and
 tool schemas as JSON, hands it the case's success criteria plus any shared criteria as one
-numbered rubric, and the task. The judge returns a `JudgeVerdict` through
-`Agent(output_model=...)`, so the shape is guaranteed rather than parsed. The judge marks
+numbered rubric, and the task. The judge hands in a `JudgeVerdict` through the
+SubmitResult tool that `output_model` adds, so the shape is validated before the run
+can end, and a malformed verdict goes back to the judge to fix. The judge marks
 each criterion met or not met, by rubric number; the overall score is the
 fraction met. A verdict that skips or invents a rubric number is rejected,
 so a dropped criterion can never inflate the score.
@@ -17,9 +18,6 @@ judge loads, filters and counts them with code and reads only what the rubric ne
 The judge sees content only. Tokens, cost, duration and stop reason stay
 with the deterministic graders so the judge scores what was said, not how
 expensive it was to say it.
-
-Structured output costs one extra small model call per case: the engine
-maps the judge's final text into `JudgeVerdict` after the judge finishes.
 """
 from __future__ import annotations
 

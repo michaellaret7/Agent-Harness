@@ -5,7 +5,6 @@ import json
 import tempfile
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
@@ -30,48 +29,24 @@ from harness_evals.runner import AgentFactory
 #     ================================
 
 
-@dataclass(frozen=True)
-class Completion:
-    """A non-streamed reply: what the structured-output parse call receives."""
+def submit(verdict: str, call_id: str = 'verdict') -> dict:
+    """The judge handing in its verdict JSON through the SubmitResult tool."""
 
-    content: str
-
-
-def completion_response(content: str) -> httpx.Response:
-    return httpx.Response(200, json={
-        'id': 'completion-test', 'object': 'chat.completion', 'created': 0, 'model': 'contract-model',
-        'choices': [{'index': 0, 'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': content}}],
-    })
+    return tool_delta(tool_call('SubmitResult', json.loads(verdict), call_id))
 
 
 @contextmanager
 def scripted_factory(
-    responses: Sequence[Sequence[StreamItem] | Completion],
+    responses: Sequence[Sequence[StreamItem]],
     tools: Sequence | None = None,
 ) -> Iterator[tuple[AgentFactory, ScriptedProvider]]:
-    """Yield a factory that builds fresh agents sharing one in-memory provider.
-
-    Streamed calls consume the next stream script; a non-streamed call (the
-    judge's structured-output parse) consumes the next `Completion`.
-    """
-    provider = ScriptedProvider(responses)  # type: ignore[arg-type]
-
-    def respond(request: httpx.Request) -> httpx.Response:
-        body = json.loads(request.content)
-
-        if body.get('stream'):
-            return provider.respond(request)
-
-        provider.requests.append(body)
-        item = responses[len(provider.requests) - 1]
-        assert isinstance(item, Completion), 'a non-streamed request needs a scripted Completion'
-
-        return completion_response(item.content)
+    """Yield a factory that builds fresh agents sharing one in-memory provider."""
+    provider = ScriptedProvider(responses)
 
     with pytest.MonkeyPatch.context() as environment:
         environment.setenv('LANGFUSE_PUBLIC_KEY', '')
 
-        with httpx.Client(transport=httpx.MockTransport(respond)) as http_client:
+        with httpx.Client(transport=httpx.MockTransport(provider.respond)) as http_client:
             with OpenAI(api_key='test-only', base_url='https://harness.invalid/v1',
                         http_client=http_client, max_retries=0) as client:
 
@@ -181,8 +156,8 @@ def test_llm_judge_reads_transcript_from_sandbox() -> None:
     responses = [
         [tool_delta(tool_call('add', {'a': 2, 'b': 3}, 'sum'))], [{'content': 'The sum is 5'}],   # subject
         [tool_delta(tool_call('ExecuteCode', {'code': read_final}, 'read'))],                     # judge inspects
-        [{'content': 'Verdict: ' + verdict}],                                                     # judge answers
-        Completion(verdict),                                                                      # parse into JudgeVerdict
+        [{'content': 'Verdict ready.'}],                                                          # judge stops talking
+        [submit(verdict)],                                                                        # nudged, it submits
     ]
     case = EvalCase('add_case', 'Add 2 and 3.', criteria=('correct sum',))
 
@@ -204,9 +179,11 @@ def test_llm_judge_reads_transcript_from_sandbox() -> None:
     assert 'transcript.json' in judge_prompt and 'judge_add_case_' in judge_prompt, 'absolute path into the temp folder'
     assert 'The sum is 5' not in judge_prompt, 'the transcript must not be inlined into the prompt'
 
-    # The structured-output call converts the judge's final text, not anything else.
-    assert message_text(api.requests[4]['messages'][-1]).startswith('Verdict: ')
-    assert api.requests[4]['response_format']['json_schema']['name'] == 'JudgeVerdict'
+    # Plain text did not end the judge's run: it was nudged to submit, and the tool's schema is JudgeVerdict.
+    assert 'SubmitResult' in message_text(api.requests[4]['messages'][-1])
+    submit_tool = next(t['function'] for t in api.requests[4]['tools'] if t['function']['name'] == 'SubmitResult')
+    assert submit_tool['parameters']['title'] == 'JudgeVerdict'
+    assert len(api.requests) == 5, 'no extra structured-output call after the verdict'
 
     # The sandbox really served the file: the judge's code printed the subject's final answer.
     sandbox_result = api.requests[3]['messages'][-1]
@@ -267,21 +244,26 @@ def test_write_tools_keeps_full_schemas(tmp_path: Path) -> None:
 
 
 def test_llm_judge_malformed_reply_scores_zero() -> None:
-    """A verdict that fails the JudgeVerdict schema is a grader failure: zero score, traceback in reasoning."""
-    responses = [[{'content': 'hello'}], [{'content': 'I cannot decide.'}], Completion('{"reasoning": "unsure"}')]
+    """A verdict that fails the JudgeVerdict schema is sent back; a judge that never fixes it scores zero."""
+    undecided = [[{'content': 'I cannot decide.'}]] * 4   # one more plain-text reply than the nudge limit
+    responses = [[{'content': 'hello'}], [submit('{"reasoning": "unsure"}')], *undecided]
 
-    with scripted_factory(responses) as (make_agent, _):
+    with scripted_factory(responses) as (make_agent, api):
         grader = llm_judge('contract-model', shared_criteria=['any criterion'], process_criteria=(), make_judge=make_agent)
         (record,) = run_evals(make_agent, [EvalCase('greet', 'Say hello.')], [grader])
 
     (score,) = record.scores
     assert score.value == 0.0
-    assert 'grader raised' in score.reasoning and 'criteria' in score.reasoning
+    assert 'grader raised' in score.reasoning and 'without calling SubmitResult' in score.reasoning
+
+    # The malformed submission came back to the judge as a schema error naming the missing field.
+    rejection = api.requests[2]['messages'][-1]
+    assert rejection['role'] == 'tool' and 'criteria' in message_text(rejection)
 
 
 def test_llm_judge_appends_process_criteria_by_default() -> None:
     """With no process_criteria argument, the rubric is the case's criteria followed by PROCESS_CRITERIA."""
-    responses = [[{'content': 'hello'}], [{'content': 'I cannot decide.'}], Completion('{"reasoning": "unsure"}')]
+    responses = [[{'content': 'hello'}], [{'content': 'I cannot decide.'}]]
 
     with scripted_factory(responses) as (make_agent, api):
         grader = llm_judge('contract-model', make_judge=make_agent)
@@ -294,7 +276,7 @@ def test_llm_judge_appends_process_criteria_by_default() -> None:
 def test_llm_judge_rejects_skipped_criterion() -> None:
     """A verdict that skips a rubric number cannot inflate the score: it is a grader failure that scores zero."""
     verdict = '{"criteria": [{"number": 1, "met": true, "evidence": "says hello"}], "reasoning": "Fine.", "failures": []}'
-    responses = [[{'content': 'hello'}], [{'content': verdict}], Completion(verdict)]
+    responses = [[{'content': 'hello'}], [submit(verdict)]]
     case = EvalCase('greet', 'Say hello.', criteria=('says hello', 'names the user'))
 
     with scripted_factory(responses) as (make_agent, _):
@@ -323,8 +305,7 @@ def test_report_shows_marks_and_judge_reasoning(tmp_path: Path, capsys: pytest.C
                ' "reasoning": "Answered 5 but gave no units.", "failures": ["no units"]}')
     responses = [
         [{'content': 'The sum is 5'}],                                                        # subject
-        [tool_delta(tool_call('ExecuteCode', {'code': 'print(1)'}, 'read'))], [{'content': verdict}],   # judge
-        Completion(verdict),                                                                             # parse
+        [tool_delta(tool_call('ExecuteCode', {'code': 'print(1)'}, 'read'))], [submit(verdict)],        # judge
     ]
     graders = [finished(), max_iterations(1)]
 
