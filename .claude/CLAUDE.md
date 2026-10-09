@@ -271,3 +271,5 @@ Before writing or planning: assess whether the approach is under-engineered, opt
 ### Branching
 
 `main` (production) · `dev` (integration) · `feature/*` · `fix/*` · `refactor/*` · `docs/*` · `test/*`
+
+**Never create a new branch unless the user explicitly asks for one.** Work on the current branch by default.
