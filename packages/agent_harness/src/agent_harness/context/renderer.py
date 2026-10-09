@@ -12,6 +12,7 @@ points, because they run at different times:
 """
 from __future__ import annotations
 
+import sys
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -59,6 +60,24 @@ def _strip_rolling_markers(messages: list[dict[str, Any]]) -> None:
                 part.pop('cache_control', None)
 
 
+def _call_provider(provider: DynamicContextProvider) -> str | None:
+    """Run one provider; a raised error becomes an inline block instead of crashing the run.
+
+    A provider reads live outside state (a store, an API), so it can fail
+    mid-run. Showing the error keeps the agent working and tells the model
+    that block's data is missing rather than silently dropping it.
+    """
+    try:
+        return provider()
+
+    except Exception as e:
+        name = getattr(provider, '__name__', type(provider).__name__)
+
+        print(f'[CONTEXT ERROR] provider {name} raised: {e!r}', file=sys.stderr)
+
+        return f'<context_error provider="{name}">{type(e).__name__}: {e}</context_error>'
+
+
 def _mark_latest(messages: list[dict[str, Any]]) -> None:
     """Put the rolling cache marker on the latest non-empty non-system text."""
     for message in reversed(messages):
@@ -98,7 +117,7 @@ class ContextRenderer:
     
     def _dynamic_context(self) -> str | None:
         """Join every non-empty provider block into one `<dynamic_context>` block."""
-        blocks = [block for provider in self.dynamic_providers if (block := provider())]
+        blocks = [block for provider in self.dynamic_providers if (block := _call_provider(provider))]
 
         if not blocks:
             return None

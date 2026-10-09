@@ -187,3 +187,21 @@ def test_dynamic_context_never_accumulates_across_iterations() -> None:
         assert api.requests[1]['messages'][-2]['role'] == 'tool'
         assert cache_marked(api.requests[1]['messages'][-2])
         assert '<dynamic_context>' not in json.dumps(agent.messages)
+
+
+def test_failing_provider_renders_its_error_and_the_run_continues() -> None:
+    """A provider that raises shows its error inline; the other providers and the run are unaffected."""
+    def broken_memory() -> str:
+        raise ConnectionError('memory store unreachable')
+
+    with scripted_agent([[{'content': 'still here'}]]) as (agent, api, sink):
+        agent.context_renderer.dynamic_providers.extend([broken_memory, lambda: '<inbox>2 unread</inbox>'])
+
+        assert agent.run('Hi.', sink=sink) == 'still here'
+
+    assert api.requests[0]['messages'][-1]['content'] == (
+        '<dynamic_context>\n'
+        '<context_error provider="broken_memory">ConnectionError: memory store unreachable</context_error>\n\n'
+        '<inbox>2 unread</inbox>\n'
+        '</dynamic_context>'
+    )
