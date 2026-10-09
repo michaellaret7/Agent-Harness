@@ -92,6 +92,10 @@ class ContextRenderer:
     def __init__(self, dynamic_providers: list[DynamicContextProvider]) -> None:
         # Own copy: the caller's list may be a shared mutable default (Agent's `= []`)
         self.dynamic_providers = list(dynamic_providers)
+
+    def _apply_cache_control(self, messages: list[dict[str, Any]]) -> None:
+        _strip_rolling_markers(messages)
+        _mark_latest(messages)
     
     def _dynamic_context(self) -> str | None:
         """Join every non-empty provider block into one `<dynamic_context>` block."""
@@ -101,10 +105,6 @@ class ContextRenderer:
             return None
 
         return '<dynamic_context>\n' + '\n\n'.join(blocks) + '\n</dynamic_context>'
-
-    def _apply_cache_control(self, messages: list[dict[str, Any]]) -> None:
-        _strip_rolling_markers(messages)
-        _mark_latest(messages)
 
     def build_system_message(self, agent: AgentContext) -> dict[str, Any]:
         """Assemble the system message: base prompt, domain, extensions, environment, deferred-tool protocol."""
