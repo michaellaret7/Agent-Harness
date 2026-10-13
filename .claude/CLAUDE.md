@@ -103,7 +103,7 @@ A tool module exports a `tool` dict with keys `name`, `description`, `parameters
 
 ### Agent workspace (`workspace/`)
 
-`AgentWorkspace(name, env=, packages=, j_screen=)` is one agent's persistent folder at `~/.agent_harness/workspaces/<name>/` (base overridable via `AGENT_HARNESS_HOME`; never inside the repo): a sandbox (`<root>/sandbox`, the ExecuteCode workspace) with a two-tier skill library: `sandbox/skills/curated/` (human-reviewed, re-copied from `curated_skills=` on every attach, so agent edits never persist) and `sandbox/skills/learned/` (the agent's own). `workspace.attach(agent)` (before the first run) syncs curated skills and adds ExecuteCode, the skills protocol to the system prompt, and a tier-tagged `<skills>` index as a dynamic context provider. Agents read and write skills with ExecuteCode; the index flags malformed files. One-way dependency: `workspace/` imports the engine, never the reverse. Full reference: `docs/agents/agent_workspace.md`.
+`AgentWorkspace(name, curated_skills=, env=, packages=, j_screen=, memory=False, embedder=None)` is one agent's persistent folder at `~/.agent_harness/workspaces/<name>/` (base overridable via `AGENT_HARNESS_HOME`; never inside the repo): a sandbox (`<root>/sandbox`, the ExecuteCode workspace) with a two-tier skill library: `sandbox/skills/curated/` (human-reviewed, re-copied from `curated_skills=` on every attach, so agent edits never persist) and `sandbox/skills/learned/` (the agent's own), plus opt-in long-term memory (`memory=True`) at `~/.agent_harness/memory/<name>.sqlite` (SQLite: records + FTS5 keyword index + `memory_vectors` for semantic search when `embedder=ApiEmbedder()` is passed; kept apart from the sandbox, reached only through `Remember`/`Recall`/`Forget`). `workspace.attach(agent)` (before the first run) syncs curated skills and adds ExecuteCode and the memory tools, the skills and memory protocols to the system prompt, and the tier-tagged `<skills>` index as a dynamic context provider. Memory reaches the model only through `Recall` (no automatic injection yet). Agents read and write skills with ExecuteCode; the index flags malformed files. One-way dependency: `workspace/` imports the engine, never the reverse. Full reference: `docs/agents/agent_workspace.md`.
 
 ### Code execution (`base_tools/code_execution/`)
 
@@ -117,7 +117,7 @@ System prompts live in two places:
 - `agent_harness/context/system_prompt.md` — the always-loaded base methodology (Tools, Planning + generic constraints). Domain-agnostic.
 - The caller's `system=` string — appended to the base inside a `<domain>` block by `ContextRenderer.build_system_message` (`context/renderer.py`). Holds the `<role>` and any domain-specific constraints. The caller reads its own prompt file and passes the string; the framework does not auto-discover it.
 
-Applications own any memory loading and can include that context in `system`. The base agent has no memory file of its own. The system message is built once at `Agent.__init__` (rebuilt only by a pre-run `extend_system_prompt`) — there is no runtime reload.
+The base agent has no memory of its own; long-term memory comes only from attaching an `AgentWorkspace`. The system message is built once at `Agent.__init__` (rebuilt only by a pre-run `extend_system_prompt`) — there is no runtime reload.
 
 ## Development Guidelines
 

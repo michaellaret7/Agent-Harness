@@ -192,9 +192,9 @@ def _resolve_type(tp: Any) -> tuple[str, dict[str, Any]]:
     """Resolve a Python type to (json_type, extra_schema_fields).
 
     Handles: primitives, Optional[T] (both `Optional[T]` and PEP 604 `T | None`
-    spellings), list[T], Literal['a','b'], and TypedDict objects (emitting
-    nested `properties`/`required`). Falls back to ("string", {}) for anything
-    unrecognized.
+    spellings), list[T], dict[K, V], Literal['a','b'], and TypedDict objects
+    (emitting nested `properties`/`required`). Raises TypeError for anything
+    else, so a wrong schema never reaches the model silently.
     """
     origin = get_origin(tp)
     args = get_args(tp)
@@ -218,12 +218,20 @@ def _resolve_type(tp: Any) -> tuple[str, dict[str, Any]]:
 
         return 'array', {}
 
+    # JSON object keys are always strings, so only the value type shapes the schema
+    if origin is dict:
+        if len(args) == 2:
+            value_type, value_extra = _resolve_type(args[1])
+            return 'object', {'additionalProperties': {'type': value_type, **value_extra}}
+
+        return 'object', {}
+
     json_type = _TYPE_MAP.get(tp)
 
     if json_type:
         return json_type, {}
 
-    return 'string', {}
+    raise TypeError(f'unsupported annotation {tp!r}; use a primitive, list, dict, Literal, TypedDict or Optional of one')
 
 
 def _build_param_schema(
@@ -288,13 +296,18 @@ def _build_tool_dict(
     for param_name, param in sig.parameters.items():
         tp = hints.get(param_name, str)
 
-        prop = _build_param_schema(
-            param_name,
-            tp,
-            param.default,
-            param.kind,
-            docstring_params.get(param_name),
-        )
+        # Fail at decoration time, naming the tool and parameter, rather than shipping a wrong schema
+        try:
+            prop = _build_param_schema(
+                param_name,
+                tp,
+                param.default,
+                param.kind,
+                docstring_params.get(param_name),
+            )
+
+        except TypeError as e:
+            raise TypeError(f'@agent_tool {tool_name!r}, parameter {param_name!r}: {e}') from None
 
         if prop is None:
             continue

@@ -24,9 +24,10 @@ def _maybe_enable_langfuse_instrumentation() -> None:
     if os.getenv('LANGFUSE_PUBLIC_KEY'):
         import langfuse.openai  # noqa: F401  (import-for-side-effect)
 
-# provider -> (api_key env var, base_url env var)
-HOSTED_PROVIDER_ENV: dict[str, tuple[str, str]] = {
-    'openrouter': ('OPENROUTER_API_KEY', 'OPENROUTER_API_URL'),
+# provider -> (api_key env var, base_url env var, default base_url)
+# The default matters: with base_url=None the OpenAI SDK falls back to api.openai.com
+HOSTED_PROVIDER_ENV: dict[str, tuple[str, str, str]] = {
+    'openrouter': ('OPENROUTER_API_KEY', 'OPENROUTER_API_URL', 'https://openrouter.ai/api/v1'),
 }
 
 def build_client(provider: str = 'openrouter', model: str | None = None) -> tuple[OpenAI, str]:
@@ -61,10 +62,10 @@ def build_client(provider: str = 'openrouter', model: str | None = None) -> tupl
     if not model:
         raise ValueError(f"model is required for provider {provider!r}")
 
-    key_var, url_var = HOSTED_PROVIDER_ENV[provider]
+    key_var, url_var, default_url = HOSTED_PROVIDER_ENV[provider]
     api_key = os.getenv(key_var)
 
     if not api_key:
         raise RuntimeError(f'missing env var {key_var} for provider {provider!r}')
 
-    return OpenAI(api_key=api_key, base_url=os.getenv(url_var)), model
+    return OpenAI(api_key=api_key, base_url=os.getenv(url_var) or default_url), model

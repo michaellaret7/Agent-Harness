@@ -36,7 +36,7 @@ def _subagents_note(env: dict[str, str]) -> str:
     Empty unless the kernel is within the agent depth limit and `env` holds a
     hosted provider's API key, so a sub-agent's own ExecuteCode never offers it.
     """
-    providers = [name for name, (key_var, _) in HOSTED_PROVIDER_ENV.items() if key_var in env]
+    providers = [name for name, (key_var, _, _) in HOSTED_PROVIDER_ENV.items() if key_var in env]
 
     if SANDBOX_DEPTH + 1 > MAX_AGENT_DEPTH or not providers:
         return ''

@@ -48,9 +48,9 @@ def test_system_message_keeps_anchor_and_deferred_protocol() -> None:
     deferred_text = deferred.messages[0]['content'][0]['text']
 
     assert plain_text.count('<role>Tester</role>') == 1
-    # Plan is a deferred base tool, so every agent carries the protocol block.
-    assert 'Deferred at session start: Plan.' in plain_text
-    assert 'Deferred at session start: Plan, lookup.' in deferred_text
+    # No base tool is deferred, so only agents with a deferred tool carry the protocol block.
+    assert '<deferred_tools>' not in plain_text
+    assert 'Deferred at session start: lookup.' in deferred_text
 
     plain.extend_system_prompt('<organization>Acme</organization>')
 

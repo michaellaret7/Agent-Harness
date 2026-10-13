@@ -135,6 +135,7 @@ class ContextRenderer:
         # Blocks added in stages via extend_system_prompt (e.g. an org's <organization>)
         parts.extend(block.strip() for block in agent.prompt_extensions)
 
+        # append live environment state to the model in the system message
         environment = (
             '<environment>\n'
             f'- Date: {datetime.now().strftime("%A, %B %d, %Y")}\n'

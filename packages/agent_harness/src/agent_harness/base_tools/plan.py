@@ -120,7 +120,7 @@ def _validate(items: list) -> str | None:
 #     ================================
 
 
-@agent_tool(name='Plan', deferred=True)
+@agent_tool(name='Plan')
 def plan(
     items: Annotated[
         list[PlanItem],

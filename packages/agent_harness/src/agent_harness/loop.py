@@ -67,7 +67,7 @@ def _stream_error(chunk) -> str | None:
 def _extract_reasoning(obj) -> str:
     """Pull reasoning text from any of the provider shapes: `reasoning`,
     `reasoning_content`, or structured `reasoning_details[].text`."""
-    text = getattr(obj, 'reasoning_content', None) or getattr(obj, 'reason', None)
+    text = getattr(obj, 'reasoning_content', None) or getattr(obj, 'reasoning', None)
 
     if text:
         return text

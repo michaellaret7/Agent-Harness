@@ -191,6 +191,13 @@ class ToolHandler:
             # Raise an error if the arguments are bad
             return f'error: bad arguments JSON: {e}', 'error'
 
+        # Underscore params are bound by the application (bind_tool) and hidden from the schema;
+        # a model-supplied value would override the bound one, so the model may never set them
+        hidden = sorted(key for key in kwargs if str(key).startswith('_'))
+
+        if hidden:
+            return f'error: unknown arguments {hidden}', 'error'
+
         # Run the call past the gates: returns the (possibly rewritten) kwargs
         # and a deny reason if any gate blocked it (None means nothing is blocking the tool call)
         kwargs, deny_reason = self._apply_gates(name, tool_call_id, kwargs)

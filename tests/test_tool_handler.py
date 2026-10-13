@@ -201,6 +201,8 @@ def test_load_tool_enum_lists_only_deferred_tools() -> None:
 
         return entry['parameters']['properties']['names']['items']['enum']
 
-    assert load_enum(with_lookup) == ['Plan', 'Lookup']
-    assert load_enum(without_lookup) == ['Plan'], "one agent's deferred tools must not leak into another's LoadTool schema"
+    entry = next(t['function'] for t in without_lookup.tools if t['function']['name'] == 'LoadTool')
+
+    assert load_enum(with_lookup) == ['Lookup']
+    assert 'enum' not in entry['parameters']['properties']['names']['items'], "one agent's deferred tools must not leak into another's LoadTool schema"
     assert 'enum' not in load_tool.tool['parameters']['properties']['names']['items'], 'the shared decorator dict stays untouched'

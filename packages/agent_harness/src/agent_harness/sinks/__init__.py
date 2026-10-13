@@ -102,9 +102,8 @@ def compose_sinks(agent: 'Agent', sink: Sink) -> Sink:
 
     parts: list[Sink] = [sink] + [f(agent) for f in _always_on]
 
-    if len(parts) == 1:
-        return parts[0]
-
+    # Always wrapped, even with one sink: MultiSink isolates a raising sink, and that
+    # isolation must not depend on whether tracing or hooks happen to be enabled
     return cast(Sink, MultiSink(parts))
 
 

@@ -65,5 +65,5 @@ def test_concurrent_first_compose_both_include_the_ambient_sink(monkeypatch: pyt
 
     # Each run is presentation sink + Langfuse; a lost race returns the bare presentation sink
     assert len(composed) == 2
-    assert all(isinstance(sink, MultiSink) for sink in composed)
+    assert all(isinstance(sink, MultiSink) and len(sink.sinks) == 2 for sink in composed)
     assert len(sinks._always_on) == 1
