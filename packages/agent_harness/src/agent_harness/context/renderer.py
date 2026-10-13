@@ -152,13 +152,13 @@ class ContextRenderer:
 
             parts.append(
                 '<deferred_tools>\n'
-                f'Deferred at session start: {names}.\n'
-                'A deferred tool ships as a stub: its description ends with the marker '
-                '` [deferred]` and its parameter schema is empty. Before calling one, call '
-                '`LoadTool(names=[...])` once to fetch its full schema. After loading, the '
-                'marker disappears from the tool list and you call the tool directly for the '
-                'rest of the session — do not call LoadTool for it again.\n'
-                'The tool list is the live source of truth: any tool whose description does '
+                f'Deferred at session start: {names}.\n\n'
+                '- A deferred tool ships as a stub: its description ends with the marker '
+                '` [deferred]` and its parameter schema is empty.\n'
+                '- Before calling one, call `LoadTool(names=[...])` once to fetch its full schema.\n'
+                '- After loading, the marker disappears from the tool list and you call the tool '
+                'directly for the rest of the session — do not call LoadTool for it again.\n'
+                '- The tool list is the live source of truth: any tool whose description does '
                 'NOT end with ` [deferred]` is already fully loaded. Never call LoadTool on it.\n'
                 '</deferred_tools>'
             )

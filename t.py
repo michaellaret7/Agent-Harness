@@ -1,50 +1,67 @@
-"""Scratch script: an agent with an output model (validated termination).
+"""Scratch script: an agent with a persistent workspace runs a DCF on live FMP data.
 
-The agent can only finish by calling SubmitResult with a valid `StockReport`.
+The workspace gives the agent a sandbox (FMP key + analysis libraries) and a
+two-tier skill library: the human-reviewed DCF method from `examples/skills/`
+(curated, read-only) and whatever the agent learns along the way (learned).
 """
 
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
 
-from agent_harness import Agent
-from agent_harness.base_tools.code_execution.tool import execute_code_tool
+from agent_harness import Agent, AgentWorkspace
 
 load_dotenv()
 
+# Anchored to this file so the script works from any working directory
+CURATED_SKILLS = Path(__file__).parent / 'examples' / 'skills'
 
-#     ================================
-# --> Output model
-#     ================================
-
-
-class StockQuote(BaseModel):
-    ticker: str
-    price: float = Field(description='Latest price in USD.')
-    pe_ratio: float | None = Field(description='Trailing P/E, or null if not available.')
-
-
-class StockReport(BaseModel):
-    quotes: list[StockQuote]
-    cheapest_by_pe: str = Field(description='Ticker with the lowest P/E among the quotes.')
-    evidence: str = Field(description='Which API calls you made and what they returned.')
-
-
-#     ================================
-# --> Run
-#     ================================
-
-
-agent = Agent(
-    system='<role>You are a market data analyst. Use ExecuteCode with the FMP API for all numbers.</role>',
-    provider='openrouter',
-    model='openai/gpt-6-sol',
-    tools=[execute_code_tool(env={'FMP_API_KEY': os.environ['FMP_API_KEY']}, packages=['pandas'])],
-    # output_model=StockReport,
+workspace = AgentWorkspace(
+    'analyst',
+    curated_skills=CURATED_SKILLS,
+    env={'FMP_API_KEY': os.environ['FMP_API_KEY']},
+    packages=['pandas', 'numpy', 'scipy', 'requests', 'matplotlib'],
 )
 
-report = agent.run('Get the latest price and trailing P/E for AAPL, MSFT and NVDA, and tell me which is cheapest by P/E.')
-# assert isinstance(report, StockReport)   # with output_model set, run() returns the validated object
+agent = Agent(
+    system=(
+        '<role>\n'
+        'You are an equity analyst. Use ExecuteCode with the FMP API '
+        '(https://financialmodelingprep.com/stable/...) for every number. Never estimate data you can fetch.\n'
+        '</role>\n\n'
+        '<constraints>\n'
+        '- Fetch FMP data fresh on every run straight into Python variables (e.g. pandas DataFrames) '
+        'and work on those in the kernel.\n'
+        '- Do not save API responses to files and do not reuse data files from earlier runs: market data goes stale.\n'
+        '</constraints>'
+    ),
+    provider='openrouter',
+    model='openai/gpt-6-sol',
+)
 
-print(report)
+workspace.attach(agent)
+
+answer = agent.run(
+    'Run a DCF valuation of MSFT following the dcf-valuation skill, and save a chart of projected '
+    'free cash flow as dcf_msft.png.'
+)
+
+print('\n=== Final answer ===')
+print(answer)
+
+print('\n=== Workspace ===')
+
+print(workspace.root)
+
+for path in sorted(workspace.sandbox_dir.rglob('*')):
+    if path.is_file():
+        print(' ', path.relative_to(workspace.root))
+
+print('\n=== Skills index the agent will see next run ===')
+print(workspace.skills())
+
+# Learned skills are the agent's drafts: review them, and copy good ones into examples/skills/ to promote them
+for skill in sorted((workspace.skills_dir / 'learned').glob('*/SKILL.md')):
+    print(f'\n=== Learned skill to review: {skill.parent.name} ===')
+    print(skill.read_text(encoding='utf-8'))

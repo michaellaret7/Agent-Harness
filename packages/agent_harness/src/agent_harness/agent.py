@@ -162,6 +162,16 @@ class Agent:
 
         # Slice-assign to keep the same list object for any held references
         self.messages[:] = [self.context_renderer.build_system_message(self)]
+    
+    def add_dynamic_provider(self, provider: DynamicContextProvider) -> None:
+        """Register a dynamic context provider after construction.
+
+        Same contract as `Agent(dynamic_context_providers=...)`: a zero-arg
+        callable re-run before every model call, whose block lands in the
+        trailing `<dynamic_context>` message. For add-ons that plug into a
+        built agent, e.g. `AgentWorkspace.attach`.
+        """
+        self.context_renderer.dynamic_providers.append(provider)
 
     def add_tool(self, tool: dict[str, Any] | Callable) -> None:
         """Register a tool.
