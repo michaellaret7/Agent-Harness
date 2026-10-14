@@ -33,7 +33,7 @@ from agent_harness.base_tools.code_execution.tool import execute_code_tool
 from agent_harness.workspace.memory import (
     MEMORY_CONTEXT_PROMPT, MEMORY_PROMPT, ApiEmbedder, Embedder, DynamicMemoryContext, MemoryStore, memory_tools,
 )
-from agent_harness.workspace.skills import CURATED, LEARNED, SKILLS_PROMPT, SLUG, SkillsIndex
+from agent_harness.workspace.skills import CURATED, LEARNED, SLUG, SkillsIndex, skills_prompt
 
 if TYPE_CHECKING:
     from agent_harness.agent import Agent
@@ -110,7 +110,7 @@ class AgentWorkspace:
         if auto_memory_recall and not memory:
             raise ValueError('AgentWorkspace: auto_memory_recall needs memory=True')
 
-        # Fail at construction, not at attach, when the curated source is missing
+        # if curated skills are passed but theres no folder raise an error 
         if curated_skills is not None and not Path(curated_skills).is_dir():
             raise ValueError(f'AgentWorkspace: curated_skills folder not found: {curated_skills}')
 
@@ -143,11 +143,12 @@ class AgentWorkspace:
         keep that sandbox instead of this one) or has already run (the system
         prompt can no longer be extended).
         """
+
         if 'ExecuteCode' in agent.tool_functions:
             raise ValueError('attach: agent already has an ExecuteCode tool; the workspace provides its own')
 
         # First, so an agent that already ran fails before anything is registered
-        agent.extend_system_prompt(SKILLS_PROMPT)
+        agent.extend_system_prompt(skills_prompt(curated=self.curated_source is not None))
 
         if self.memory is not None:
             agent.extend_system_prompt(MEMORY_PROMPT)

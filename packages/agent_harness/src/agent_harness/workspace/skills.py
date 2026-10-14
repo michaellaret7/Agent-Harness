@@ -6,7 +6,7 @@ Skills live in two tiers under `skills/` in the sandbox workspace:
     skills/learned/<name>/SKILL.md   the agent's own; created and edited freely, never touched by the harness
 
 The agent reads and writes skills with ExecuteCode like any other file; there
-is no skill tool. The format is set by `SKILLS_PROMPT`, and `SkillsIndex`
+is no skill tool. The format is set by `skills_prompt`, and `SkillsIndex`
 enforces it softly: at attach it lists each skill with its tier and
 description in the system prompt, and flags a file that breaks the format.
 """
@@ -28,11 +28,7 @@ The `<skills>` block lists them as of the start of this session, each tagged wit
 Skills you write now are not listed until the next session. Read and write them with ExecuteCode.
 
 Tiers:
-- `skills/curated/<name>/SKILL.md`: reviewed by a human. Follow them. Never edit them: changes are discarded.
-- `skills/learned/<name>/SKILL.md`: yours. Create and improve them freely.
-- When a curated and a learned skill conflict, the curated one wins.
-- If a curated skill seems wrong or incomplete, write a learned skill named `<curated-name>-notes`
-  explaining what you found, so a human can review it.
+{tiers}
 
 Every SKILL.md must use exactly this format:
 
@@ -61,10 +57,23 @@ Rules:
 </skills_protocol>
 """
 
+CURATED_TIER = """- `skills/curated/<name>/SKILL.md`: reviewed by a human. Follow them. Never edit them: changes are discarded.
+- `skills/learned/<name>/SKILL.md`: yours. Create and improve them freely.
+- When a curated and a learned skill conflict, the curated one wins.
+- If a curated skill seems wrong or incomplete, write a learned skill named `<curated-name>-notes`
+  explaining what you found, so a human can review it."""
+
+LEARNED_ONLY_TIER = '- `skills/learned/<name>/SKILL.md`: yours. Create and improve them freely.'
+
 
 #     ================================
 # --> Helper funcs
 #     ================================
+
+
+def skills_prompt(curated: bool) -> str:
+    """The skills protocol, describing the curated tier only when a curated source exists."""
+    return SKILLS_PROMPT.format(tiers=CURATED_TIER if curated else LEARNED_ONLY_TIER)
 
 
 def _frontmatter(text: str) -> dict[str, str] | None:
