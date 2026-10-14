@@ -9,16 +9,20 @@ preference or event, tagged with an importance level. Three tables:
 
 Search ranks candidates from both indexes by
 
-    score = relevance + 0.5 x recency + 0.5 x importance      (each 0..1)
+    score = relevance x (1 + 0.5 x recency + 0.5 x importance)      (each 0..1)
     relevance = 0.7 x semantic + 0.3 x keyword
 
-where keyword is the BM25 match as a fraction of the best match, semantic is
-cosine similarity (candidates below the embedder's `min_similarity` are dropped), recency is a sigmoid of an ACT-R style activation from how
-often and how lately a memory was used, and importance is the agent's level
-divided by the top level. Nothing is min-max scaled across candidates: that
-would turn a near-tie in relevance into a 1-vs-0 gap importance could never
-overcome. Only a Recall counts as a use; a search with `touch=False`
-(inspection, tests) leaves rankings alone.
+where keyword is the BM25 match as a fraction of the best match, times the
+share of the query's words the memory contains; semantic is cosine similarity
+rescaled so the embedder's `min_similarity` floor maps to 0 (candidates below
+it are dropped); recency is a sigmoid of an ACT-R style activation from how
+often and how lately a memory was used; and importance is the agent's level
+divided by the top level. Recency and importance multiply relevance rather than
+add to it, so they reorder relevant memories but never lift an unrelated one
+over a real match. Nothing is min-max scaled across candidates: that would turn
+a near-tie in relevance into a 1-vs-0 gap importance could never overcome. Only
+a Recall counts as a use; a search with `touch=False` (inspection, tests) leaves
+rankings alone.
 
 Vectors are derived data. If embedding fails when a memory is saved, the memory
 is still stored and keyword-searchable, and the vector is backfilled the next
@@ -47,6 +51,9 @@ IMPORTANCE = {'low': 1, 'medium': 2, 'high': 3, 'critical': 4}
 
 # Candidates each index contributes before scoring
 CANDIDATES = 50
+
+# Texts per embedding request: embedding APIs reject oversized batches
+EMBED_BATCH = 128
 
 # Relevance mix when both indexes are available (NOOA's weights)
 SEMANTIC_WEIGHT = 0.7
@@ -100,10 +107,13 @@ class Memory:
 #     ================================
 
 
-def _match_expression(query: str) -> str | None:
-    """Turn free text into an FTS5 OR-query of its meaningful words; None when it has none."""
-    words = {word for word in re.findall(r'[a-z0-9]+', query.lower()) if len(word) > 1 and word not in STOPWORDS}
+def _meaningful_words(text: str) -> set[str]:
+    """Lowercased words of `text` that say something about relevance (no stopwords or single letters)."""
+    return {word for word in re.findall(r'[a-z0-9]+', text.lower()) if len(word) > 1 and word not in STOPWORDS}
 
+
+def _match_expression(words: set[str]) -> str | None:
+    """Turn query words into an FTS5 OR-query; None when there are none."""
     if not words:
         return None
 
@@ -197,25 +207,30 @@ class MemoryStore:
         return self._embed([(row['id'], row['content']) for row in missing])
 
     def _embed(self, items: list[tuple[int, str]]) -> int:
-        """Store vectors for `items`; on any embedding failure, log and leave them for a later backfill."""
-        if not items:
-            return 0
+        """Store vectors for `items` in API-sized batches; on a failure, log and leave the rest for a later backfill."""
+        embedded = 0
 
-        try:
-            vectors = self.embedder.embed([content for _, content in items])
+        for start in range(0, len(items), EMBED_BATCH):
+            batch = items[start:start + EMBED_BATCH]
 
-        except Exception as e:
-            print(f'[MEMORY] embedding failed, keyword search only until backfill: {e!r}', file=sys.stderr)
+            try:
+                vectors = self.embedder.embed([content for _, content in batch])
 
-            return 0
+            except Exception as e:
+                print(f'[MEMORY] embedding failed, keyword search only until backfill: {e!r}', file=sys.stderr)
 
-        with self._connect() as db:
-            db.executemany(
-                'INSERT OR REPLACE INTO memory_vectors (memory_id, model, vector) VALUES (?, ?, ?)',
-                [(memory_id, self.embedder.model, pack(vector)) for (memory_id, _), vector in zip(items, vectors)],
-            )
+                # The API is likely down for every batch, so stop instead of failing each one
+                break
 
-        return len(items)
+            with self._connect() as db:
+                db.executemany(
+                    'INSERT OR REPLACE INTO memory_vectors (memory_id, model, vector) VALUES (?, ?, ?)',
+                    [(memory_id, self.embedder.model, pack(vector)) for (memory_id, _), vector in zip(batch, vectors)],
+                )
+
+            embedded += len(batch)
+
+        return embedded
 
     def forget(self, memory_id: int) -> bool:
         """Delete a memory and its index entries. Returns False when no memory has that id."""
@@ -227,16 +242,17 @@ class MemoryStore:
         return deleted > 0
 
     def _keyword_scores(self, query: str) -> dict[int, float]:
-        """{id: BM25 match as a fraction of the best match} for the top full-text candidates."""
-        
-        match = _match_expression(query)
+        """{id: BM25 match as a fraction of the best match, times the share of query words matched}."""
+
+        words = _meaningful_words(query)
+        match = _match_expression(words)
 
         if match is None:
             return {}
 
         with self._connect() as db:
             rows = db.execute(
-                'SELECT rowid, bm25(memories_fts) AS rank FROM memories_fts '
+                'SELECT rowid, content, bm25(memories_fts) AS rank FROM memories_fts '
                 'WHERE memories_fts MATCH ? ORDER BY rank LIMIT ?',
                 (match, CANDIDATES),
             ).fetchall()
@@ -245,7 +261,12 @@ class MemoryStore:
         scores = {row['rowid']: -row['rank'] for row in rows}
         best = max(scores.values(), default=0.0)
 
-        return {memory_id: (score / best if best > 0 else 1.0) for memory_id, score in scores.items()}
+        # BM25 ÷ best is relative, so the top hit is 1.0 even on one shared word; coverage makes it absolute
+        coverage = {row['rowid']: len(words & _meaningful_words(row['content'])) / len(words) for row in rows}
+
+        return {
+            memory_id: (score / best if best > 0 else 1.0) * coverage[memory_id] for memory_id, score in scores.items()
+        }
 
     def _semantic_scores(self, query: str) -> dict[int, float]:
         """{id: cosine similarity} for the closest memories at or above the embedder's floor."""
@@ -283,17 +304,22 @@ class MemoryStore:
 
         now = time.time()
         top_level = max(IMPORTANCE.values())
+        floor = self.embedder.min_similarity
         scored: list[Memory] = []
 
         for row in rows:
             memory_id = row['id']
+            cosine = semantic.get(memory_id, 0.0)
 
-            relevance = SEMANTIC_WEIGHT * semantic.get(memory_id, 0.0) + KEYWORD_WEIGHT * keyword.get(memory_id, 0.0)
+            # Rescale so the floor maps to 0: no jump from 0 to `floor` at the cutoff, and the full 0..1 range is used
+            closeness = (cosine - floor) / (1 - floor) if cosine else 0.0
+            relevance = SEMANTIC_WEIGHT * closeness + KEYWORD_WEIGHT * keyword.get(memory_id, 0.0)
 
             recency = _recency(row['use_count'], row['last_used_at'], now)
             importance = row['importance'] / top_level
 
-            scored.append(_to_memory(row, relevance + 0.5 * recency + 0.5 * importance, semantic.get(memory_id, 0.0)))
+            # Recency and importance boost relevance; they never stand in for it
+            scored.append(_to_memory(row, relevance * (1 + 0.5 * recency + 0.5 * importance), cosine))
 
         # sort the memories by their score and only return the top limit from the list
         best = sorted(scored, key=lambda memory: memory.score, reverse=True)[:limit]

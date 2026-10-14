@@ -264,6 +264,43 @@ def test_failed_embedding_keeps_the_memory_and_backfills_later(tmp_path: Path) -
     assert healed.search('MSFT leasing', limit=5, touch=False)[0].id == memory_id
 
 
+def test_semantic_match_outranks_one_shared_keyword() -> None:
+    """Importance boosts relevance but cannot replace it: a critical memory sharing one word loses to a real match."""
+    store = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder()).memory
+    store.add('MSFT leases debt.', 'fact', 'low')
+    store.add('Cloud budgets in Paris doubled.', 'lesson', 'critical')
+
+    ranked = [memory.content for memory in store.search('Microsoft cloud', limit=5, touch=False)]
+
+    assert ranked == ['MSFT leases debt.', 'Cloud budgets in Paris doubled.']
+
+
+class BatchLimitedEmbedder(ConceptEmbedder):
+    """An embedding API that rejects requests over its batch limit, as real ones do."""
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        from agent_harness.workspace.memory.store import EMBED_BATCH
+
+        if len(texts) > EMBED_BATCH:
+            raise ValueError(f'batch of {len(texts)} exceeds the API limit')
+
+        return super().embed(texts)
+
+
+def test_backfill_splits_large_stores_into_batches() -> None:
+    """A store bigger than one API batch is still fully embedded on backfill."""
+    from agent_harness.workspace.memory.store import EMBED_BATCH
+
+    down = AgentWorkspace('analyst', memory=True, embedder=DownEmbedder()).memory
+
+    for n in range(EMBED_BATCH * 2 + 1):
+        down.add(f'MSFT lease note {n}.', 'fact', 'low')
+
+    healed = AgentWorkspace('analyst', memory=True, embedder=BatchLimitedEmbedder()).memory
+
+    assert len(vector_models(healed.path)) == EMBED_BATCH * 2 + 1
+
+
 def test_switching_models_re_embeds_without_touching_records() -> None:
     """A new embedding model gets its own vectors; old vectors stay, and Forget removes every one."""
     first = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder('concepts-v1')).memory

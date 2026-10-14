@@ -96,7 +96,7 @@ Memory holds facts, lessons, preferences and events (what is true or what happen
 
 ```
 Remember(content, kind, importance) ──► memories (record) + memories_fts (keywords) + memory_vectors (embedding)
-Recall(query)  ──► keyword candidates ∪ semantic candidates ──► score = relevance + 0.5·recency + 0.5·importance
+Recall(query)  ──► keyword candidates ∪ semantic candidates ──► score = relevance × (1 + 0.5·recency + 0.5·importance)
 Forget(id)     ──► delete from all three tables
 ```
 
@@ -109,12 +109,15 @@ Forget(id)     ──► delete from all three tables
 | Signal | Computed as | Range |
 |---|---|---|
 | relevance | `0.7·semantic + 0.3·keyword` (NOOA's weights) | 0–1 |
-| ↳ keyword | BM25 match as a fraction of the best match | 0–1 |
-| ↳ semantic | Cosine similarity; below the model's floor (0.27 for voyage-4) a memory is not a candidate | 0–1 |
+| ↳ keyword | BM25 match as a fraction of the best match × share of the query's words the memory contains | 0–1 |
+| ↳ semantic | Cosine similarity rescaled `(cos − floor) / (1 − floor)`; below the model's floor (0.27 for voyage-4) a memory is not a candidate | 0–1 |
 | recency | sigmoid of `ln(1 + uses) − 0.5·ln(1 + hours since last use)` (ACT-R style) | 0–1 |
 | importance | level ÷ 4 | 0.25–1 |
 
+- Recency and importance multiply relevance instead of adding to it, so they reorder relevant memories but never lift an unrelated one over a real match. (When they were added, a critical memory sharing one keyword with the query outranked a strong semantic match.)
+- Keyword coverage makes the BM25 score absolute: alone, BM25 ÷ best gives the top hit 1.0 even when it shares just one of the query's words.
 - Nothing is min-max scaled across candidates: that turns a near-tie in relevance into a full 1-vs-0 gap importance can never overcome.
+- Embedding (save and backfill) goes in batches of 128 (`EMBED_BATCH`), since APIs reject oversized requests; a failed batch stops the run and the rest wait for the next backfill.
 - Memory reaches the model through `Recall`, and with `auto_memory_recall=True` also through the `<memories>` block (below). The protocol tells it to Recall at the start of work that may relate to the past.
 - Identical content is stored once; `Remember` returns the existing id.
 - The protocol tells the agent most tasks should save nothing or one or two memories.
@@ -150,7 +153,7 @@ latest user message ──► search(touch=False) ──► keep semantic matche
 |---|---|
 | Searches only when the latest user message changes | It runs every iteration; a long tool loop costs one embedding call |
 | `touch=False` | An injection is not a deliberate use; counting it would keep boosting whatever was injected |
-| Injects only semantic matches (above the embedder's floor), not by `score` | Score adds recency and importance, so an off-topic memory still scores ~0.5; one shared keyword is not enough |
+| Injects only semantic matches (above the embedder's floor), not by `score` | Score also counts keyword hits; one shared keyword is not enough to inject unasked |
 | No cutoff of its own | The floor is measured per model (0.27 for voyage-4); a fixed relevance cutoff tuned on one embedder silently blocked every real voyage-4 match (cosine 0.30–0.40) |
 
 `Recall` stays the deep search: the `<memory_context_protocol>` tells the agent the block is a starting point.

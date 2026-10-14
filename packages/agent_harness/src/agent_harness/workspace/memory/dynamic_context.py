@@ -13,8 +13,8 @@ Three rules keep it cheap and honest:
 - `touch=False`: an injection is not a deliberate use. Counting it would keep
   boosting whatever was injected, a loop that locks the same memories on top.
 - It injects only semantic matches: memories above the embedder's measured
-  similarity floor. Score adds recency and importance, so an off-topic memory
-  still scores well, and one shared keyword is not enough to inject unasked.
+  similarity floor. Score also counts keyword hits, and one shared keyword is
+  not enough to inject unasked.
   The floor is measured per model, so no cutoff here has to be tuned to one.
 """
 from __future__ import annotations
