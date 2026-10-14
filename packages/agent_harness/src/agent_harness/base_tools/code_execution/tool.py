@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from typing import Annotated, Any
 
+from agent_harness.base_tools.code_execution.config import SandboxConfig
 from agent_harness.base_tools.code_execution.sandbox import MAX_AGENT_DEPTH, SANDBOX_DEPTH, SubprocessSandbox
 from agent_harness.base_tools.code_execution.screening import screen_code
 from agent_harness.client import HOSTED_PROVIDER_ENV
@@ -136,37 +137,36 @@ def execute_code(
 
 
 def execute_code_tool(
-    workspace: Path | None = None,
-    env: dict[str, str] | None = None,
-    packages: list[str] | None = None,
-    j_screen: bool = False,
+    config: SandboxConfig = SandboxConfig(),
+    working_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Return a registrable ExecuteCode tool backed by its own sandbox.
 
     The sandbox lives as long as the process and cleans up at exit, so
-    `Agent(tools=[execute_code_tool()])` is all a caller needs. `env` lists
-    the only host secrets model code may see, e.g. `{'FMP_API_KEY': key}`.
-    `packages` adds pip requirements on top of the host environment's
-    libraries, e.g. `['pandas']`. `j_screen` runs every call past the Jev
-    code screen (see `code_execution/screening.py`) before it executes; a blocked
-    call returns an error result and never reaches the kernel. It needs
-    `OPENROUTER_API_KEY` and fails fast here if that is missing.
+    `Agent(tools=[execute_code_tool()])` is all a caller needs. `config`
+    holds the sandbox options (secrets, extra packages, code screen); see
+    `SandboxConfig`. `working_dir` is where the kernel runs: None means a
+    fresh temp dir removed at exit, a caller-supplied dir is never removed.
+    With `config.j_screen`, fails fast here if `OPENROUTER_API_KEY` is missing.
 
-    The workspace path, the names in `env` (never the values) and every
+    The working directory, the names in `env` (never the values) and every
     importable package (host plus `packages`) are appended to the tool description, so the model knows where
     it is, which credentials it has and what it can import, and does not go
     looking for any of them on disk.
     """
-    if j_screen and not os.environ.get('OPENROUTER_API_KEY'):
-        raise RuntimeError('execute_code_tool(j_screen=True): OPENROUTER_API_KEY is not set')
+    if config.j_screen and not os.environ.get('OPENROUTER_API_KEY'):
+        raise RuntimeError('execute_code_tool: SandboxConfig(j_screen=True) needs OPENROUTER_API_KEY, which is not set')
 
-    sandbox = SubprocessSandbox(workspace, env=env, packages=packages)
+    env = dict(config.env)
+    packages = list(config.packages)
 
-    tool = bind_tool(execute_code, _sandbox=sandbox, _j_screen=j_screen)
+    sandbox = SubprocessSandbox(working_dir, env=env, packages=packages)
+
+    tool = bind_tool(execute_code, _sandbox=sandbox, _j_screen=config.j_screen)
     tool['description'] = (
         f'{tool["description"]}\n\nWorking directory: {sandbox.workspace}\n'
         'Save every file here with a relative path (e.g. "defs.parquet"). Writes to absolute paths such as /tmp are blocked.\n'
-        f'{_credentials_note(env or {})}\n{_packages_note(packages or [])}{_subagents_note(env or {})}'
+        f'{_credentials_note(env)}\n{_packages_note(packages)}{_subagents_note(env)}'
     )
 
     return tool

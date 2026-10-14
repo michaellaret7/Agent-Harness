@@ -12,6 +12,7 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from agent_harness.base_tools.code_execution.config import SandboxConfig
 from agent_harness.base_tools.code_execution.tool import execute_code, execute_code_tool
 from agent_harness.base_tools.code_execution import sandbox as sandbox_module
 from agent_harness.base_tools.code_execution.sandbox import SubprocessSandbox
@@ -123,7 +124,7 @@ def check_concurrent_build() -> None:
 
 def check_credentials_note() -> None:
     """The tool description names the credentials in `env`, and never shows their values."""
-    described = execute_code_tool(env={'FMP_API_KEY': 'secret-value', 'DB_KEY': 'other-secret'})['description']
+    described = execute_code_tool(SandboxConfig(env={'FMP_API_KEY': 'secret-value', 'DB_KEY': 'other-secret'}))['description']
 
     assert 'DB_KEY, FMP_API_KEY' in described and 'Working directory: ' in described, described
     assert 'secret-value' not in described and 'other-secret' not in described

@@ -19,6 +19,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from agent_harness.agent import Agent
+from agent_harness.base_tools.code_execution.config import SandboxConfig
 from agent_harness.base_tools.code_execution.tool import execute_code_tool
 from agent_harness.base_tools.code_execution.screening import RULES, ScreenResult, screen_code
 from agent_harness.sinks.base import BaseSink
@@ -290,7 +291,7 @@ def check_fail_closed() -> None:
 
 def check_tool_screen() -> None:
     """With j_screen=True a blocked call returns an error and never reaches the kernel; an allowed one runs."""
-    tool = execute_code_tool(workspace=WORKSPACE, env={'DB_KEY': 'db-secret-value'}, j_screen=True)['function']
+    tool = execute_code_tool(SandboxConfig(env={'DB_KEY': 'db-secret-value'}, j_screen=True), working_dir=WORKSPACE)['function']
 
     blocked = tool(code="import os; print(os.environ['DB_KEY'])")
     assert blocked.status == 'error' and blocked.payload.startswith('blocked by code screen: [secret_exposure'), blocked
@@ -300,20 +301,20 @@ def check_tool_screen() -> None:
     assert allowed.status == 'ok' and allowed.payload == '42', allowed
 
     # Through the real ToolHandler the denial reaches the model as an error result
-    agent = Agent(tools=[execute_code_tool(workspace=WORKSPACE, env={'DB_KEY': 'db-secret-value'}, j_screen=True)])
+    agent = Agent(tools=[execute_code_tool(SandboxConfig(env={'DB_KEY': 'db-secret-value'}, j_screen=True), working_dir=WORKSPACE)])
     call = {'id': 'a', 'function': {'name': 'ExecuteCode', 'arguments': json.dumps({'code': "import os; print(os.environ['DB_KEY'])"})}}
     message = ToolHandler(agent).execute([call], BaseSink(), threading.Event())[0]
     assert message['content'].startswith('blocked by code screen'), message
 
     # j_screen=False leaves the sandbox unscreened
-    assert execute_code_tool(workspace=WORKSPACE, env={'DB_KEY': 'v'})['function'](code="import os; print(os.environ['DB_KEY'])").payload == 'v'
+    assert execute_code_tool(SandboxConfig(env={'DB_KEY': 'v'}), working_dir=WORKSPACE)['function'](code="import os; print(os.environ['DB_KEY'])").payload == 'v'
 
     # The factory fails fast when screening is requested without a key
     key = os.environ.pop('OPENROUTER_API_KEY')
 
     try:
         try:
-            execute_code_tool(j_screen=True)
+            execute_code_tool(SandboxConfig(j_screen=True))
             raise AssertionError('expected RuntimeError')
 
         except RuntimeError:

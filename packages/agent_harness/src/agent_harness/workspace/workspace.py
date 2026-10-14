@@ -28,6 +28,7 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from agent_harness.base_tools.code_execution.config import SandboxConfig
 from agent_harness.base_tools.code_execution.tool import execute_code_tool
 from agent_harness.workspace.memory import (
     MEMORY_CONTEXT_PROMPT, MEMORY_PROMPT, ApiEmbedder, Embedder, DynamicMemoryContext, MemoryStore, memory_tools,
@@ -78,9 +79,8 @@ class AgentWorkspace:
         curated_skills: Folder of human-reviewed skills (`<name>/SKILL.md`), usually
             version-controlled. Copied fresh into `skills/curated/` on every attach,
             so edits the agent makes there never persist. None means learned skills only.
-        env: Secrets the agent's code may read via `os.environ`, e.g. `{'FMP_API_KEY': key}`.
-        packages: Extra pip requirements for the sandbox, e.g. `['pandas']`.
-        j_screen: Run every ExecuteCode call past the code screen first.
+        sandbox: ExecuteCode options (secrets, extra packages, code screen); see
+            `SandboxConfig`. The workspace supplies the working directory.
         memory: Give the agent long-term memory (Remember / Recall / Forget tools and
             the memory protocol). Off by default; when off, no memory file is created.
         embedder: Override the embedder memory uses for semantic search. Defaults to
@@ -94,9 +94,7 @@ class AgentWorkspace:
         self,
         name: str,
         curated_skills: str | Path | None = None, 
-        env: dict[str, str] | None = None, 
-        packages: list[str] | None = None, 
-        j_screen: bool = False, 
+        sandbox: SandboxConfig = SandboxConfig(),
         memory: bool = False, 
         auto_memory_recall: bool = False,
         embedder: Embedder | None = None, 
@@ -128,12 +126,7 @@ class AgentWorkspace:
 
         # A caller-supplied workspace is never deleted, so files outlive the process
         # this gets registered with the agent object
-        self.code_tool = execute_code_tool(
-            workspace=self.sandbox_dir, 
-            env=env, 
-            packages=packages, 
-            j_screen=j_screen
-        )
+        self.code_tool = execute_code_tool(sandbox, working_dir=self.sandbox_dir)
 
         # create the skills index object
         self.skills = SkillsIndex(self.skills_dir)

@@ -22,7 +22,7 @@ This is a probabilistic layer, not a security boundary. Thresholds and
 criteria are tuned against the labelled cases in `tests/test_code_screen.py`;
 rerun it after touching either.
 
-Wiring: `execute_code_tool(j_screen=True)`. The tool calls `screen_code`
+Wiring: `execute_code_tool(SandboxConfig(j_screen=True))`. The tool calls `screen_code`
 with its sandbox's workspace before every exec and returns the denial as an
 error result when the screen blocks.
 """

@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel
 
 from agent_harness.agent import Agent
+from agent_harness.base_tools.code_execution.config import SandboxConfig
 from agent_harness.base_tools.code_execution.tool import execute_code_tool
 from agent_harness.sinks import LogSink
 
@@ -42,11 +43,11 @@ agent = Agent(
     model=MODEL,
     system=SYSTEM,
     tools=[
-        execute_code_tool(
+        execute_code_tool(SandboxConfig(
             env={'FMP_API_KEY': os.environ['FMP_API_KEY']},
             packages=['pandas', 'httpx', 'pyarrow'],
             j_screen=True,
-        )
+        ))
     ]
 )
 

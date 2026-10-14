@@ -24,6 +24,7 @@ import httpx
 import pandas as pd
 
 from agent_harness import Agent
+from agent_harness.base_tools.code_execution.config import SandboxConfig
 from agent_harness.base_tools.code_execution.tool import execute_code_tool
 from agent_harness.tooling.decorator import Param, agent_tool, bind_tool
 from agent_harness.tooling.result import ToolResult
@@ -177,7 +178,7 @@ def make_analyst(model: str, max_iters: int = 30) -> Agent:
         system=ROLE,
         max_iters=max_iters,
         tools=[
-            execute_code_tool(workspace=workspace, packages=['pandas', 'numpy']),
+            execute_code_tool(SandboxConfig(packages=['pandas', 'numpy']), working_dir=workspace),
             bind_tool(financial_statements, _workspace=workspace),
             bind_tool(price_history, _workspace=workspace),
         ],

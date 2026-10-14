@@ -221,10 +221,11 @@ The dependency direction is `tui → agent-harness`. External applications depen
 Code execution and subagent configuration use these imports:
 
 ```python
-from agent_harness import Agent
-from agent_harness.base_tools.code_execution.tool import execute_code_tool
+from agent_harness import Agent, SandboxConfig, execute_code_tool
 from agent_harness.subagent_config import SubAgentConfig
 ```
+
+`execute_code_tool` now takes a `SandboxConfig` (`env`, `packages`, `j_screen`) plus `working_dir=` (formerly `workspace=`), and `AgentWorkspace` takes `sandbox=SandboxConfig(...)` instead of `env=`/`packages=`/`j_screen=`. This is a breaking change for the next engine release.
 
 These replace the former `base_tools.execute_code` and `base_tools.deploy_subagent.SubAgentConfig` import paths. Consumers must update their imports; the removed code-execution modules have no compatibility shims. Treat these path changes as a breaking change when publishing the next engine release.
 

@@ -3,13 +3,15 @@
 An `AgentWorkspace` is one agent's persistent home: a code sandbox, a skill library and, optionally, a long-term memory. Configure it once, then attach it to an agent before its first run.
 
 ```python
-from agent_harness import Agent, AgentWorkspace
+from agent_harness import Agent, AgentWorkspace, SandboxConfig
 
 workspace = AgentWorkspace(
     'analyst',                                         # a name, not a path
     curated_skills='examples/skills',                  # human-reviewed skills (optional)
-    env={'FMP_API_KEY': os.environ['FMP_API_KEY']},   # secrets the agent's code can read
-    packages=['pandas'],                               # extra sandbox libraries
+    sandbox=SandboxConfig(                             # ExecuteCode options, the same object execute_code_tool takes
+        env={'FMP_API_KEY': os.environ['FMP_API_KEY']},   # secrets the agent's code can read
+        packages=['pandas'],                               # extra sandbox libraries
+    ),
     memory=True,                                       # long-term memory with semantic search (off by default)
     auto_memory_recall=True,                                  # also inject matching memories each request (off by default)
 )
@@ -48,7 +50,7 @@ The memory store sits in its own branch, not beside `sandbox/`, so code browsing
 
 | Piece | Through | Effect |
 |---|---|---|
-| `ExecuteCode` | `agent.add_tool` | Sandbox in `sandbox/`, with the workspace's `env`, `packages`, `j_screen` |
+| `ExecuteCode` | `agent.add_tool` | Sandbox in `sandbox/`, configured by the workspace's `sandbox=SandboxConfig(...)` |
 | `<skills_protocol>` | `agent.extend_system_prompt` | The SKILL.md format and rules (cached system prompt) |
 | `<skills>` index | `agent.extend_system_prompt` | Each skill's name and description, a snapshot taken at attach (cached system prompt) |
 | `Remember` / `Recall` / `Forget` | `agent.add_tool` | The agent's only access to its memory store (`memory=True` only) |
@@ -116,7 +118,7 @@ Forget(id)     ──► delete from all three tables
 - Memory reaches the model through `Recall`, and with `auto_memory_recall=True` also through the `<memories>` block (below). The protocol tells it to Recall at the start of work that may relate to the past.
 - Identical content is stored once; `Remember` returns the existing id.
 - The protocol tells the agent most tasks should save nothing or one or two memories.
-- The store's path never appears in any prompt or tool output. With `j_screen=True`, the `memory_store_access` rule blocks code that reads, copies, edits, deletes or searches for it (see `docs/tools/code_execution.md`). This is a guard against accidents, not a security boundary.
+- The store's path never appears in any prompt or tool output. With `SandboxConfig(j_screen=True)`, the `memory_store_access` rule blocks code that reads, copies, edits, deletes or searches for it (see `docs/tools/code_execution.md`). This is a guard against accidents, not a security boundary.
 
 ### Semantic search
 

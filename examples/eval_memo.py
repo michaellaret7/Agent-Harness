@@ -10,6 +10,7 @@ Run: uv run --all-packages python examples/eval_memo.py
 from dotenv import load_dotenv
 
 from agent_harness import Agent
+from agent_harness.base_tools.code_execution.config import SandboxConfig
 from agent_harness.base_tools.code_execution.tool import execute_code_tool
 from harness_evals import (
     EvalCase,
@@ -25,7 +26,7 @@ JUDGE_MODEL = 'anthropic/claude-sonnet-4.5'
 def make_agent() -> Agent:
     return Agent(
         model=SUBJECT_MODEL,
-        tools=[execute_code_tool(packages=['pandas'])],   # a Python sandbox: shell out, compute, parse
+        tools=[execute_code_tool(SandboxConfig(packages=['pandas']))],   # a Python sandbox: shell out, compute, parse
         max_iters=30,
     )
 

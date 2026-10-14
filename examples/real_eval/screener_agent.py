@@ -22,6 +22,7 @@ import tempfile
 from pathlib import Path
 
 from agent_harness import Agent
+from agent_harness.base_tools.code_execution.config import SandboxConfig
 from agent_harness.base_tools.code_execution.tool import execute_code_tool
 from screener_tools import screener_tools
 
@@ -62,7 +63,7 @@ def make_screener_agent(model: str, max_iters: int = 40) -> Agent:
         system=ROLE,
         max_iters=max_iters,
         tools=[
-            execute_code_tool(workspace=workspace, packages=['pandas', 'numpy']),
+            execute_code_tool(SandboxConfig(packages=['pandas', 'numpy']), working_dir=workspace),
             *screener_tools(workspace),
         ],
     )

@@ -7,6 +7,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 
 from agent_harness.subagent_config import SubAgentConfig
+from agent_harness.base_tools.code_execution.config import SandboxConfig
 from agent_harness.base_tools.code_execution.tool import execute_code_tool
 from agent_harness.sub_agent import SubAgent
 
@@ -15,7 +16,7 @@ def main() -> None:
     spec = SubAgentConfig(
         name='analyst',
         description='runs python',
-        make_tools=lambda: [execute_code_tool(env={'ROLE': 'analyst'})],
+        make_tools=lambda: [execute_code_tool(SandboxConfig(env={'ROLE': 'analyst'}))],
     )
 
     workers = [SubAgent.from_spec(spec) for _ in range(3)]

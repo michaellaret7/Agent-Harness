@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from agent_harness.base_tools.code_execution.config import SandboxConfig
 from agent_harness.base_tools.code_execution.tool import execute_code_tool
 
 # Host credentials the sandbox kernel may read; everything else in `.env` stays on the host.
@@ -26,4 +27,4 @@ def fund_sandbox() -> dict[str, Any]:
     """
     env = {name: os.environ[name] for name in SANDBOX_CREDENTIALS}
 
-    return execute_code_tool(env=env, j_screen=True)
+    return execute_code_tool(SandboxConfig(env=env, j_screen=True))

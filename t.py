@@ -1,181 +1,68 @@
-"""Scratch script: watch skills, memory and automatic memory recall work across three runs.
+"""Scratch script: a host agent fans out concurrent sub-agents from inside ExecuteCode.
 
-Run it three times. Each run is a new process with a fresh Agent, so anything
-the agent knows about earlier runs came from its workspace (skills on disk,
-memories in SQLite), never from chat history:
+    host Agent (depth 0)
+      └─ ExecuteCode kernel (depth 1)           one call, a ThreadPoolExecutor
+           ├─ sub-agent AAPL ─┐
+           ├─ sub-agent MSFT ─┼─ run concurrently, each with its own FMP tool
+           ├─ sub-agent NVDA ─┤
+           └─ sub-agent GOOGL ┘
+      └─ host compares the four summaries
 
-    run 1  MSFT data pull   user states preferences   -> agent Remembers them + FMP quirks it hits
-    run 2  MSFT DCF         <memories> shows run 1's preferences, curated dcf-valuation skill applies
-    run 3  AAPL vs MSFT     <memories> shows run 2's MSFT result, learned skills (if any) are listed
-
-Start over by deleting ~/.agent_harness/workspaces/memory-demo and ~/.agent_harness/memory/memory-demo.sqlite.
+The sandbox gets the OpenRouter key through `env=`, which is what makes the
+ExecuteCode prompt teach the sub-agent pattern. Sub-agents built at depth 1
+cannot build agents of their own.
 """
 
 import os
-import sqlite3
 import time
-from datetime import datetime
-from pathlib import Path
-
-import httpx
 
 from dotenv import load_dotenv
 
-from agent_harness import Agent, AgentWorkspace
+from agent_harness import Agent
+from agent_harness.base_tools.code_execution.config import SandboxConfig
+from agent_harness.base_tools.code_execution.tool import execute_code_tool
+from hedge_fund import sandbox
 
 load_dotenv()
 
-# Anchored to this file so the script works from any working directory
-CURATED_SKILLS = Path(__file__).parent / 'examples' / 'skills'
+MODEL = 'openai/gpt-6-sol'
+TICKERS = ['AAPL', 'MSFT', 'NVDA', 'GOOGL']
 
-TASKS = {
-    1: (
-        'Pull MSFT annual revenue, free cash flow and total debt for the last 4 fiscal years from FMP and '
-        'summarize the trend. Some standing preferences of mine for all future work: always show numbers in '
-        'tables (in $B, one decimal), use a 5.0% equity risk premium in any cost-of-equity calculation, and '
-        'end every analysis with a one-line verdict.'
-    ),
-    2: 'Run a DCF valuation of MSFT following the dcf-valuation skill.',
-    3: 'Run the same DCF on AAPL and compare its upside or downside with MSFT.',
-}
+TASK = f"""Compare the last 3 fiscal years of revenue growth, free cash flow margin and net debt for {', '.join(TICKERS)}.
 
+Do the per-ticker work with concurrent sub-agents, all in ONE ExecuteCode call:
+- Define an @agent_tool `fmp_get(path: str, params: dict) -> ToolResult` that calls
+  https://financialmodelingprep.com/stable/<path> with os.environ['FMP_API_KEY'] and returns the JSON text.
+- Build one sub-agent per ticker (provider='openrouter', model='{MODEL}', tools=[fmp_get]) whose task is
+  to fetch that ticker's statements and return a short plain-text summary of the three metrics.
+- Run them with concurrent.futures.ThreadPoolExecutor, passing sink=BaseSink() (from agent_harness.sinks.base)
+  to each run so only the summaries print. Time the whole fan-out and print the elapsed seconds.
+- Pass timeout=900 to ExecuteCode.
 
-#     ================================
-# --> Helper funcs
-#     ================================
-
-
-def next_run_number(root: Path) -> int:
-    """Count runs in a small file in the workspace, so each invocation picks the next task."""
-    counter = root / 'demo_run.txt'
-    run = int(counter.read_text()) + 1 if counter.exists() else 1
-
-    counter.write_text(str(run))
-
-    return run
-
-
-def print_memories(store_path: Path, title: str) -> None:
-    """Dump every stored memory with its ranking signals (scratch-script peek; the agent never does this)."""
-    print(f'\n=== {title} ===')
-
-    if not store_path.exists():
-        print('  (no store yet)')
-        return
-
-    with sqlite3.connect(store_path) as db:
-        rows = db.execute('SELECT id, kind, importance, use_count, content FROM memories ORDER BY id').fetchall()
-
-    if not rows:
-        print('  (empty)')
-
-    for memory_id, kind, importance, use_count, content in rows:
-        print(f'  [{memory_id}] {kind:<10} importance={importance} uses={use_count}  {content}')
-
-
-#     ================================
-# --> Market spot provider
-#     ================================
-
-
-class MarketSpot:
-    """Dynamic context provider: SPY and VIX spot prices from FMP, refetched at most once a minute.
-
-    The renderer calls providers before every model call, so the TTL keeps a
-    long tool loop from hitting FMP on each iteration.
-    """
-
-    URL = 'https://financialmodelingprep.com/stable/batch-quote'
-    TTL_SECONDS = 60
-
-    def __init__(self, api_key: str) -> None:
-        self.api_key = api_key
-        self._fetched_at = 0.0
-        self._block: str | None = None
-
-    def __call__(self) -> str | None:
-        if time.monotonic() - self._fetched_at < self.TTL_SECONDS:
-            return self._block
-
-        response = httpx.get(self.URL, params={'symbols': 'SPY,^VIX', 'apikey': self.api_key}, timeout=10)
-        response.raise_for_status()
-
-        lines = [
-            f'- {quote["symbol"]}: {quote["price"]:.2f} ({quote["changePercentage"]:+.2f}% today)'
-            for quote in response.json()
-        ]
-
-        self._fetched_at = time.monotonic()
-        self._block = f'<market_spot as_of="{datetime.now():%Y-%m-%d %H:%M}">\n' + '\n'.join(lines) + '\n</market_spot>'
-
-        return self._block
-
-
-#     ================================
-# --> Demo
-#     ================================
-
-
-workspace = AgentWorkspace(
-    'memory-demo',
-    curated_skills=CURATED_SKILLS,
-    env={'FMP_API_KEY': os.environ['FMP_API_KEY']},
-    packages=['pandas', 'numpy', 'requests'],
-    memory=True,
-    auto_memory_recall=True,
+Then compare the four companies in one table and end with a one-line verdict."""
+sandbox = sandbox.SandboxConfig(
+    env={
+        'FMP_API_KEY': os.environ['FMP_API_KEY'],
+        'OPENROUTER_API_KEY': os.environ['OPENROUTER_API_KEY'],
+    },
 )
-
-assert workspace.memory is not None
-
-run = next_run_number(workspace.root)
-
-if run not in TASKS:
-    raise SystemExit(f'All {len(TASKS)} demo runs done. Delete the workspace and memory file to start over.')
-
-task = TASKS[run]
+execute_code = execute_code_tool(sandbox)
 
 agent = Agent(
     system=(
         '<role>\n'
-        'You are an equity analyst. Use ExecuteCode with the FMP API '
-        '(https://financialmodelingprep.com/stable/...) for every number. Never estimate data you can fetch.\n'
-        '</role>\n\n'
-        '<constraints>\n'
-        '- Fetch FMP data fresh on every run straight into Python variables and work on those in the kernel.\n'
-        '- Do not save API responses to files: market data goes stale.\n'
-        '</constraints>'
+        'You are a lead equity analyst who delegates per-company research to sub-agents and synthesizes '
+        'their findings. Every number must come from FMP.\n'
+        '</role>'
     ),
+    tools=[execute_code],
     provider='openrouter',
-    model='openai/gpt-6-sol',
+    model=MODEL,
 )
 
-workspace.attach(agent)
-
-# Registered after attach, so its block follows <memories> inside <dynamic_context>
-agent.add_dynamic_provider(MarketSpot(os.environ['FMP_API_KEY']))
-
-print(f'\n######## RUN {run} of {len(TASKS)} ########')
-print(f'Task: {task}')
-
-print_memories(workspace.memory.path, 'Memories before this run')
-
-print('\n=== Skills index in this run\'s system prompt (snapshot taken at attach) ===')
-print(workspace.skills() or '  (no skills)')
-
-answer = agent.run(task)
+started = time.perf_counter()
+answer = agent.run(TASK)
 
 print('\n=== Final answer ===')
 print(answer)
-
-# Both providers cache (per user message / per minute), so this matches what the model saw at the end of the run
-print('\n=== <dynamic_context> message appended to every model call ===')
-print(agent.context_renderer._dynamic_context() or '  (empty)')
-
-print_memories(workspace.memory.path, 'Memories after this run (uses = deliberate Recalls only)')
-
-for skill in sorted((workspace.skills_dir / 'learned').glob('*/SKILL.md')):
-    print(f'\n=== Learned skill (listed in the next run\'s system prompt): {skill.parent.name} ===')
-    print(skill.read_text(encoding='utf-8'))
-
-print(f'\nWorkspace: {workspace.root}')
-print(f'Next: run t.py again for run {run + 1}.' if run < len(TASKS) else '\nDemo complete.')
+print(f'\nTotal run time: {time.perf_counter() - started:.0f}s')

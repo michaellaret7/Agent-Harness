@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 
 from agent_harness import Agent
+from agent_harness.base_tools.code_execution.config import SandboxConfig
 from agent_harness.base_tools.code_execution.tool import execute_code_tool
 
 ALPACA_ENV = ('APCA_API_KEY_ID', 'APCA_API_SECRET_KEY')
@@ -69,5 +70,5 @@ def make_options_agent(model: str, max_iters: int = 40) -> Agent:
         model=model,
         system=ROLE,
         max_iters=max_iters,
-        tools=[execute_code_tool(env=env, packages=['pandas', 'numpy', 'scipy', 'alpaca-py'])],
+        tools=[execute_code_tool(SandboxConfig(env=env, packages=['pandas', 'numpy', 'scipy', 'alpaca-py']))],
     )
