@@ -35,7 +35,7 @@ from typing import Any
 from langfuse import Langfuse, propagate_attributes
 
 from agent_harness.messages import user_msg
-from agent_harness.sinks.base import BaseSink, ToolOutcome
+from agent_harness.sinks.base import BaseSink, CompactionEvent, ToolOutcome
 
 log = logging.getLogger(__name__)
 
@@ -349,6 +349,32 @@ class LangfuseSink(BaseSink):
 
         except Exception as e:
             log.warning('langfuse: failed to end tool span %s: %s', tool_call_id, e)
+
+    #     ================================
+    # --> Compaction
+    #     ================================
+
+    def on_compaction(self, event: CompactionEvent) -> None:
+        if self._turn_span is None:
+            return
+
+        # A point-in-time event under the current iteration; the summary call itself
+        # is already captured as a generation by the langfuse.openai patch.
+        try:
+            self._client.create_event(
+                name='compaction',
+                metadata={
+                    'tokens_before': event.tokens_before,
+                    'tokens_after': event.tokens_after,
+                    'archived_messages': event.archived_messages,
+                    'segment': event.segment,
+                },
+                level='DEFAULT' if event.summarized else 'WARNING',
+                status_message=None if event.summarized else 'summary failed; archive pointer only',
+            )
+
+        except Exception as e:
+            log.warning('langfuse: failed to record compaction event: %s', e)
 
     #     ================================
     # --> Error / interruption flags

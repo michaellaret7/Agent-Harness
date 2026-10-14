@@ -1,18 +1,51 @@
 """Context compaction: keep a long-running agent's history under the model's context window.
 
 When the live history nears `threshold × context_window`, the older span is archived
-to disk, replaced by a rolling summary, and the recent tail is kept word for word.
-Full design: `docs/agents/context_compaction.md`.
+to disk, replaced by a rolling summary, and the recent tail is kept word for word:
 
-This module holds the pure building blocks: the config, a cheap token estimate, and
-the cut-point search that keeps every tool_call/tool_result pair on one side.
+    [system, task, ...old span..., ...tail...]  ->  [system, task, <compacted_history>, ...tail...]
+
+The previous `<compacted_history>` sits inside the next old span, so each summary is
+built from the one before it. Full design: `docs/agents/context_compaction.md`.
 """
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
+
+from openai import APIError, OpenAI
+
+from agent_harness.base_tools.plan import render_plan
+from agent_harness.client import resolve_context_window
+from agent_harness.context.archive import HistoryArchive
+from agent_harness.messages import system_msg, user_msg
+from agent_harness.sinks.base import CompactionEvent, Sink
+from agent_harness.usage import Usage
+
+log = logging.getLogger(__name__)
+
+SUMMARY_PROMPT = (Path(__file__).parent / 'compaction_prompt.md').read_text(encoding='utf-8').strip()
+
+TOOL_RESULT_CLIP = 2_000  # chars of each tool result shown to the summarizer; the archive keeps all
+TOOL_ARGS_CLIP = 300      # chars of each tool call's arguments shown to the summarizer
+
+
+class ContextOverflowError(RuntimeError):
+    """History is still over the threshold after compaction: one message alone is too big."""
+
+
+class CompactionTarget(Protocol):
+    """The agent state compaction reads and rewrites. `Agent` satisfies it structurally."""
+
+    messages: list[dict]
+    client: OpenAI | None
+    provider: str
+    model: str | None
+    plan: list[dict]
+    turn_task: dict | None
 
 
 @dataclass(frozen=True)
@@ -43,6 +76,29 @@ class CompactionConfig:
 
         if self.context_window is not None and self.context_window <= 0:
             raise ValueError(f'CompactionConfig: context_window must be positive, got {self.context_window}')
+
+
+#     ================================
+# --> Helper funcs
+#     ================================
+
+
+def _clip(text: str, limit: int) -> str:
+    """Cut `text` to `limit` chars, saying how much was dropped."""
+    if len(text) <= limit:
+        return text
+
+    return f'{text[:limit]}… [{len(text) - limit:,} more chars in archive]'
+
+
+def _content_text(message: dict[str, Any]) -> str:
+    """A message's text, whether content is a string, a list of parts, or None."""
+    content = message.get('content')
+
+    if isinstance(content, list):
+        return ''.join(part.get('text', '') for part in content if isinstance(part, dict))
+
+    return content or ''
 
 
 def estimate_tokens(messages: list[dict[str, Any]]) -> int:
@@ -79,3 +135,161 @@ def find_cut(messages: list[dict[str, Any]], tail_budget: int) -> int:
         cut += 1
 
     return cut
+
+
+def render_transcript(span: list[dict[str, Any]]) -> str:
+    """Render archived messages as plain text for the summarizer.
+
+    `#n` matches the message's line number in its archive segment, so the summary
+    can cite `(archive #n)`. Tool results and arguments are clipped; the archive
+    keeps them in full.
+    """
+    blocks: list[str] = []
+
+    for n, message in enumerate(span, start=1):
+        text = _content_text(message)
+
+        if message['role'] == 'tool':
+            text = _clip(text, TOOL_RESULT_CLIP)
+
+        lines = [f'[#{n} {message["role"]}] {text}'.rstrip()]
+
+        for call in message.get('tool_calls') or []:
+            function = call['function']
+
+            lines.append(f'  -> {function["name"]}({_clip(function["arguments"], TOOL_ARGS_CLIP)})')
+
+        blocks.append('\n'.join(lines))
+
+    return '\n\n'.join(blocks)
+
+
+def summarize(client: OpenAI, model: str, span: list[dict[str, Any]], max_tokens: int, sink: Sink) -> str | None:
+    """One non-streaming, tool-less call that summarizes `span`. None if the provider fails.
+
+    The span goes in as a text transcript, not as chat messages: that sidesteps
+    tool-pairing rules and keeps the model from continuing the conversation.
+    Only provider errors are caught; anything else is a bug and propagates.
+    """
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[system_msg(SUMMARY_PROMPT), user_msg(render_transcript(span))],
+            max_tokens=max_tokens,
+        )
+
+    except APIError as e:
+        log.warning('compaction: summary call failed, keeping an archive pointer only: %s', e)
+
+        return None
+
+    if response.usage is not None:
+        sink.on_usage(Usage.from_response(response.usage))  # the summary's cost stays visible
+
+    text = response.choices[0].message.content if response.choices else None
+
+    return text.strip() if text and text.strip() else None
+
+
+def render_compacted_block(summary: str | None, plan: list[dict], segment: str | None, archived: int) -> str:
+    """The user message that replaces the archived span in history."""
+    archive_attr = f' archive="{segment}"' if segment else ''
+    lines = [f'<compacted_history archived_messages="{archived}"{archive_attr}>']
+
+    if segment:
+        lines.append(
+            'Earlier messages in this conversation were compacted to save context. The full record '
+            f'is in {segment}: JSON Lines, one chat message per line (line n = #n in the summary). '
+            'Read or search it with ExecuteCode when you need exact details the summary does not hold.'
+        )
+
+    else:
+        lines.append('Earlier messages in this conversation were compacted to save context. No archive was kept.')
+
+    lines.append(f'<summary>\n{summary or "Summary unavailable: the summarizer call failed."}\n</summary>')
+
+    if plan:
+        lines.append(f'<plan>\n{render_plan(plan)}\n</plan>')
+
+    lines.append('</compacted_history>')
+
+    return '\n\n'.join(lines)
+
+
+#     ================================
+# --> Compactor
+#     ================================
+
+
+class Compactor:
+    """Decides when to compact an agent's history, and does it.
+
+    Token accounting: `_counted_tokens` covers `messages[:_counted_len]` plus the
+    request overhead the messages do not show (tool schemas, dynamic context).
+    It comes from the provider's exact usage; anything appended since is estimated.
+    """
+
+    def __init__(self, config: CompactionConfig) -> None:
+        self.config = config
+        self.window: int | None = config.context_window
+        self.archive = HistoryArchive(config.archive_dir) if config.archive_dir is not None else None
+
+        self._counted_tokens = 0
+        self._counted_len = 0
+        self._overhead = 0
+
+    def observe(self, usage: Usage | None, messages: list[dict]) -> None:
+        """Record the provider's count right after the assistant message is appended."""
+        if usage is None:
+            self._counted_tokens, self._counted_len = self._overhead, 0
+            return
+
+        # The request covered every message but the assistant reply just appended
+        self._overhead = max(0, usage.prompt_tokens - estimate_tokens(messages[:-1]))
+        self._counted_tokens = usage.prompt_tokens + usage.completion_tokens
+        self._counted_len = len(messages)
+
+    def current_tokens(self, messages: list[dict]) -> int:
+        """Estimated size of the next request."""
+        return self._counted_tokens + estimate_tokens(messages[self._counted_len:])
+
+    def should_compact(self, agent: CompactionTarget) -> bool:
+        """True once the next request would reach the threshold. Resolves the window on first use."""
+        if self.window is None:
+            assert agent.client is not None and agent.model is not None  # set by Agent.run
+
+            self.window = resolve_context_window(agent.client, agent.provider, agent.model)
+
+        return self.current_tokens(agent.messages) >= self.config.threshold * self.window
+
+    def compact(self, agent: CompactionTarget, sink: Sink) -> None:
+        """Archive the old span, summarize it, and rewrite `agent.messages` in place."""
+        assert self.window is not None and agent.client is not None and agent.model is not None
+
+        messages = agent.messages
+        before = self.current_tokens(messages)
+        cut = find_cut(messages, int(self.config.keep_recent * self.window))
+
+        if cut <= 1:
+            raise ContextOverflowError(f'nothing to compact: the whole history fits the tail but the request is ~{before:,} tokens')
+
+        span = messages[1:cut]
+        segment = self.archive.write(span) if self.archive is not None else None
+        summary = summarize(agent.client, agent.model, span, self.config.summary_max_tokens, sink)
+        block = render_compacted_block(summary, agent.plan, segment, len(span))
+
+        # Pin the turn's task word for word when the cut swallowed it
+        pinned = [agent.turn_task] if agent.turn_task is not None and any(m is agent.turn_task for m in span) else []
+
+        messages[:] = [messages[0], *pinned, user_msg(block), *messages[cut:]]
+
+        self._counted_tokens, self._counted_len = self._overhead, 0
+        after = self.current_tokens(messages)
+
+        sink.on_compaction(CompactionEvent(before, after, len(span), segment, summary is not None))
+
+        if after >= self.config.threshold * self.window:
+            raise ContextOverflowError(
+                f'history is ~{after:,} tokens after compaction, over {self.config.threshold:.0%} of '
+                f'{self.window:,}: a single message is too large'
+            )

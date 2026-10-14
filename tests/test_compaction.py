@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -11,9 +12,15 @@ from openai import OpenAI
 
 from agent_harness.client import resolve_context_window
 from agent_harness.context.archive import HistoryArchive
-from agent_harness.context.compaction import CompactionConfig, estimate_tokens, find_cut
+from agent_harness.context.compaction import (
+    CompactionConfig, Compactor, ContextOverflowError, estimate_tokens, find_cut,
+    render_compacted_block, render_transcript, summarize,
+)
 from agent_harness.messages import assistant_msg, system_msg, tool_msg, user_msg
-from contract_support import tool_call
+from agent_harness.sinks.base import CompactionEvent
+from agent_harness.sinks.stdout import StdoutSink
+from agent_harness.usage import Usage
+from contract_support import RecordingSink, tool_call
 
 
 #     ================================
@@ -40,6 +47,62 @@ def tool_exchange(call_id: str, result: str) -> list[dict[str, Any]]:
         assistant_msg('', [tool_call('add', {'a': 1, 'b': 2}, call_id)]),
         tool_msg(call_id, result),
     ]
+
+
+def completion_client(replies: list[tuple[int, str]], requests: list[dict[str, Any]]) -> OpenAI:
+    """An OpenAI client answering each non-streaming chat call with the next (status, text) reply."""
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        status, text = replies[len(requests) - 1]
+
+        if status != 200:
+            return httpx.Response(status, json={'error': {'message': text}})
+
+        return httpx.Response(200, json={
+            'id': 'summary', 'object': 'chat.completion', 'created': 0, 'model': 'contract-model',
+            'choices': [{'index': 0, 'finish_reason': 'stop', 'message': {'role': 'assistant', 'content': text}}],
+            'usage': {'prompt_tokens': 900, 'completion_tokens': 120, 'total_tokens': 1020},
+        })
+
+    http_client = httpx.Client(transport=httpx.MockTransport(respond))
+
+    return OpenAI(api_key='test-only', base_url='https://harness.invalid/v1',
+                  http_client=http_client, max_retries=0)
+
+
+@dataclass
+class Target:
+    """The agent state compaction reads and rewrites (`CompactionTarget`)."""
+
+    messages: list[dict]
+    client: OpenAI | None
+    provider: str = 'openrouter'
+    model: str | None = 'contract-model'
+    plan: list[dict] = field(default_factory=list)
+    turn_task: dict | None = None
+
+
+class CompactionSink(RecordingSink):
+    """Also records compaction and usage events."""
+
+    def on_compaction(self, event: CompactionEvent) -> None:
+        self.record('compaction', event)
+
+    def on_usage(self, usage: Usage) -> None:
+        self.record('usage', usage)
+
+
+def long_history(exchanges: int = 8, result_chars: int = 800) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """A system message, a task, `exchanges` tool round trips, and a closing reply. Returns (history, task)."""
+    task = user_msg('Price every ticker in the watchlist and flag outliers.')
+    messages = [system_msg('You are a careful analyst.'), task]
+
+    for n in range(exchanges):
+        messages += tool_exchange(f'call_{n}', f'quote {n}: ' + 'p' * result_chars)
+
+    messages.append(assistant_msg('Halfway through the watchlist.'))
+
+    return messages, task
 
 
 #     ================================
@@ -83,7 +146,9 @@ def test_config_rejects_inverted_fractions() -> None:
     """keep_recent must sit below threshold, and both inside (0, 1)."""
     CompactionConfig()
 
-    for bad in ({'keep_recent': 0.9}, {'threshold': 1.0}, {'keep_recent': 0.0}, {'context_window': 0}):
+    bad_configs: list[dict[str, Any]] = [{'keep_recent': 0.9}, {'threshold': 1.0}, {'keep_recent': 0.0}, {'context_window': 0}]
+
+    for bad in bad_configs:
         with pytest.raises(ValueError):
             CompactionConfig(**bad)
 
@@ -149,3 +214,184 @@ def test_archive_sessions_never_share_a_folder(tmp_path: Path) -> None:
     two = HistoryArchive(tmp_path / 'history').write([user_msg('b')])
 
     assert Path(one).parent != Path(two).parent
+
+
+#     ================================
+# --> Sink event
+#     ================================
+
+
+def test_stdout_reports_compaction(capsys: pytest.CaptureFixture[str]) -> None:
+    """The headless sink prints one line with the token drop and whether the summary worked."""
+    StdoutSink().on_compaction(CompactionEvent(9_000, 2_500, 40, 'history/s/segment_001.jsonl', True))
+    StdoutSink().on_compaction(CompactionEvent(9_000, 2_600, 40, None, False))
+
+    lines = capsys.readouterr().out.splitlines()
+
+    assert '[compaction]' in lines[0] and '9,000' in lines[0] and '40 messages' in lines[0]
+    assert 'summary failed' in lines[1]
+
+
+#     ================================
+# --> Summarizer
+#     ================================
+
+
+def test_transcript_numbers_messages_and_clips_tool_output() -> None:
+    """`#n` follows archive line order, tool calls show, and long tool results are clipped."""
+    span = [user_msg('task'), *tool_exchange('a', 'z' * 5_000), assistant_msg('done')]
+
+    transcript = render_transcript(span)
+
+    assert transcript.index('[#1 user] task') < transcript.index('[#2 assistant]') < transcript.index('[#3 tool]')
+    assert '-> add({"a": 1, "b": 2})' in transcript
+    assert 'z' * 5_000 not in transcript and 'more chars in archive' in transcript
+    assert '[#4 assistant] done' in transcript
+
+
+def test_summarize_returns_text_and_reports_usage() -> None:
+    """A good reply comes back stripped; its usage reaches the sink; the request carries no tools."""
+    requests: list[dict[str, Any]] = []
+    sink = CompactionSink()
+    client = completion_client([(200, '  ## Goal\nPrice the watchlist.  ')], requests)
+
+    text = summarize(client, 'contract-model', [user_msg('task')], 500, sink)
+
+    assert text == '## Goal\nPrice the watchlist.'
+    assert sink.values('usage')[0].prompt_tokens == 900
+    assert requests[0]['max_tokens'] == 500
+    assert 'tools' not in requests[0] and requests[0].get('stream') in (None, False)
+    assert '[#1 user] task' in requests[0]['messages'][1]['content']
+
+
+def test_summarize_returns_none_when_the_provider_fails() -> None:
+    """A provider error is absorbed: compaction proceeds on the archive alone."""
+    client = completion_client([(500, 'upstream down')], [])
+
+    assert summarize(client, 'contract-model', [user_msg('task')], 500, CompactionSink()) is None
+
+
+def test_compacted_block_points_at_the_archive_and_carries_the_plan() -> None:
+    """The block names the segment, holds the summary, and renders the plan; failures say so."""
+    plan = [{'text': 'Fetch quotes', 'status': 'completed'}, {'text': 'Flag outliers', 'status': 'in_progress'}]
+
+    block = render_compacted_block('## Goal\nX', plan, 'history/s/segment_002.jsonl', 12)
+    bare = render_compacted_block(None, [], None, 12)
+
+    assert block.startswith('<compacted_history archived_messages="12" archive="history/s/segment_002.jsonl">')
+    assert '## Goal\nX' in block and '[x] Fetch quotes' in block and '[-] Flag outliers' in block
+    assert 'Summary unavailable' in bare and '<plan>' not in bare and 'No archive was kept' in bare
+
+
+#     ================================
+# --> Compactor
+#     ================================
+
+
+def test_should_compact_uses_provider_count_plus_new_messages() -> None:
+    """Below the threshold nothing happens; tool output appended after the last call tips it over."""
+    messages, _ = long_history(exchanges=1)
+    compactor = Compactor(CompactionConfig(context_window=10_000))
+    target = Target(messages, client=None)
+
+    compactor.observe(Usage(prompt_tokens=7_000, completion_tokens=500), messages)
+
+    assert not compactor.should_compact(target)
+
+    messages.append(tool_msg('late', 'r' * 4_000))  # about 1,000 tokens
+
+    assert compactor.should_compact(target)
+
+
+def test_compact_rewrites_history_archives_the_span_and_pins_the_task(tmp_path: Path) -> None:
+    """[system, task, block, tail]; the tail is tool-safe; the archive holds exactly the removed span."""
+    messages, task = long_history()
+    original = list(messages)
+    sink = CompactionSink()
+    target = Target(messages, completion_client([(200, '## Goal\nPrice the watchlist.')], []),
+                    plan=[{'text': 'Fetch quotes', 'status': 'in_progress'}], turn_task=task)
+    window = estimate_tokens(messages) + 500
+    compactor = Compactor(CompactionConfig(context_window=window, archive_dir=tmp_path / 'history'))
+
+    compactor.compact(target, sink)
+
+    event = sink.values('compaction')[0]
+    block = messages[2]['content']
+    tail = messages[3:]
+
+    assert messages[0] is original[0] and messages[1] is task
+    assert block.startswith('<compacted_history') and 'Price the watchlist.' in block and 'Fetch quotes' in block
+    assert tail == original[len(original) - len(tail):] and tail[0]['role'] != 'tool'
+    assert event.summarized and event.archived_messages == len(original) - 1 - len(tail)
+    assert event.tokens_after < event.tokens_before < window
+    assert event.segment is not None and event.segment in block
+
+    archived = [json.loads(line) for line in (tmp_path / event.segment).read_text(encoding='utf-8').splitlines()]
+
+    assert archived == original[1:len(original) - len(tail)]
+
+
+def test_second_compaction_rolls_the_previous_summary_forward(tmp_path: Path) -> None:
+    """The first summary is inside the second span, so the summarizer sees it and it is archived."""
+    messages, task = long_history()
+    requests: list[dict[str, Any]] = []
+    client = completion_client([(200, 'FIRST SUMMARY'), (200, 'SECOND SUMMARY')], requests)
+    target = Target(messages, client, turn_task=task)
+    compactor = Compactor(CompactionConfig(context_window=estimate_tokens(messages) + 500,
+                                           archive_dir=tmp_path / 'history'))
+    sink = CompactionSink()
+
+    compactor.compact(target, sink)
+
+    for n in range(8, 14):
+        messages += tool_exchange(f'call_{n}', f'quote {n}: ' + 'q' * 800)
+
+    compactor.compact(target, sink)
+
+    second = sink.values('compaction')[1]
+
+    assert 'FIRST SUMMARY' in requests[1]['messages'][1]['content']
+    assert 'SECOND SUMMARY' in messages[2]['content'] and 'FIRST SUMMARY' not in messages[2]['content']
+    assert messages[1] is task
+    assert second.segment is not None and second.segment.endswith('segment_002.jsonl')
+    assert 'FIRST SUMMARY' in (tmp_path / second.segment).read_text(encoding='utf-8')
+
+
+def test_failed_summary_still_archives_and_flags_the_event(tmp_path: Path) -> None:
+    """A provider failure leaves an archive pointer and `summarized=False`, and the run can go on."""
+    messages, task = long_history()
+    sink = CompactionSink()
+    target = Target(messages, completion_client([(500, 'down')], []), turn_task=task)
+    compactor = Compactor(CompactionConfig(context_window=estimate_tokens(messages) + 500,
+                                           archive_dir=tmp_path / 'history'))
+
+    compactor.compact(target, sink)
+
+    event = sink.values('compaction')[0]
+
+    assert not event.summarized and event.segment is not None
+    assert 'Summary unavailable' in messages[2]['content'] and event.segment in messages[2]['content']
+    assert (tmp_path / event.segment).exists()
+
+
+def test_oversized_tool_result_is_archived_with_its_call() -> None:
+    """A final tool result bigger than the tail budget leaves an empty tail, never a split pair."""
+    messages, task = long_history(exchanges=1)
+    messages += tool_exchange('huge', 'h' * 40_000)
+    target = Target(messages, completion_client([(200, 'summary')], []), turn_task=task)
+
+    Compactor(CompactionConfig(context_window=20_000)).compact(target, CompactionSink())
+
+    assert [m['role'] for m in messages] == ['system', 'user', 'user']
+    assert messages[1] is task
+
+
+def test_oversized_pinned_task_raises_overflow() -> None:
+    """What cannot be archived (the pinned task) still over the threshold fails fast instead of looping."""
+    messages, _ = long_history(exchanges=2)
+    task = user_msg('Analyze this filing: ' + 'f' * 40_000)
+    messages.insert(2, task)
+    target = Target(messages, completion_client([(200, 'summary')], []), turn_task=task)
+
+    with pytest.raises(ContextOverflowError):
+        Compactor(CompactionConfig(context_window=8_000)).compact(target, CompactionSink())

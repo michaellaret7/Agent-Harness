@@ -58,6 +58,29 @@ class ToolOutcome:
 
 
 #     ================================
+# --> CompactionEvent
+#     ================================
+
+
+@dataclass(frozen=True)
+class CompactionEvent:
+    """One context compaction, carried by `on_compaction`.
+
+    Token counts are the compactor's estimates of the prompt before and after.
+    `segment` is the archive path of the removed span (None without an archive).
+    `summarized` is False when the summary call failed and the history kept
+    only an archive pointer — a degraded but recoverable state, so it rides
+    here instead of `on_error` (which marks the run itself as dead).
+    """
+
+    tokens_before: int
+    tokens_after: int
+    archived_messages: int
+    segment: str | None
+    summarized: bool
+
+
+#     ================================
 # --> Sink Protocol
 #     ================================
 
@@ -77,6 +100,7 @@ class Sink(Protocol):
     def on_tool_end(self, tool_call_id: str, outcome: ToolOutcome) -> None: ...
     def on_plan_update(self, plan: list[dict]) -> None: ...
     def on_usage(self, usage: Usage) -> None: ...
+    def on_compaction(self, event: CompactionEvent) -> None: ...
     def on_error(self, message: str) -> None: ...
     def on_interrupted(self) -> None: ...
 
@@ -109,6 +133,7 @@ class BaseSink:
     def on_tool_end(self, tool_call_id: str, outcome: ToolOutcome) -> None: pass
     def on_plan_update(self, plan: list[dict]) -> None: pass
     def on_usage(self, usage: Usage) -> None: pass
+    def on_compaction(self, event: CompactionEvent) -> None: pass
     def on_error(self, message: str) -> None: pass
     def on_interrupted(self) -> None: pass
 

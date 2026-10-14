@@ -26,7 +26,7 @@ import sys
 import time
 
 from agent_harness.sinks.helpers import format_args_inline, format_tool_summary
-from agent_harness.sinks.base import BaseSink, ToolOutcome
+from agent_harness.sinks.base import BaseSink, CompactionEvent, ToolOutcome
 from agent_harness.usage import Usage
 
 
@@ -202,6 +202,14 @@ class LogSink(BaseSink):
 
     def on_interrupted(self) -> None:
         self.log.warning('interrupted')
+
+    def on_compaction(self, event: CompactionEvent) -> None:
+        # WARNING when the summary failed: the run continues, but on an archive pointer alone
+        level = logging.INFO if event.summarized else logging.WARNING
+
+        self.log.log(level, 'compaction ~%d -> ~%d tokens, %d messages archived to %s, summarized=%s',
+                     event.tokens_before, event.tokens_after, event.archived_messages,
+                     event.segment, event.summarized)
 
     def on_usage(self, usage: Usage) -> None:
         self._turn_usage = self._turn_usage + usage

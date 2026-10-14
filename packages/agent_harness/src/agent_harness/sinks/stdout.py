@@ -8,7 +8,7 @@ paired clusters for readability.
 from __future__ import annotations
 
 from agent_harness.sinks.helpers import format_args_inline, format_tool_summary
-from agent_harness.sinks.base import BaseSink, ToolOutcome
+from agent_harness.sinks.base import BaseSink, CompactionEvent, ToolOutcome
 
 
 #     ================================
@@ -101,6 +101,11 @@ class StdoutSink(BaseSink):
         completed = sum(1 for i in plan if i.get('status') == 'completed')
         total = len(plan)
         print(f'  {_CYAN}[plan]{_RESET} {completed}/{total} completed')
+
+    def on_compaction(self, event: CompactionEvent) -> None:
+        summary = 'summarized' if event.summarized else f'{_RED}summary failed{_RESET}'
+        print(f'  {_CYAN}[compaction]{_RESET} ~{event.tokens_before:,} -> ~{event.tokens_after:,} tokens, '
+              f'{event.archived_messages} messages archived ({summary})')
 
     def on_error(self, message: str) -> None:
         print(f'{_RED}[error] {message}{_RESET}')
