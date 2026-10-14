@@ -30,6 +30,12 @@ HOSTED_PROVIDER_ENV: dict[str, tuple[str, str, str]] = {
     'openrouter': ('OPENROUTER_API_KEY', 'OPENROUTER_API_URL', 'https://openrouter.ai/api/v1'),
 }
 
+# provider -> the `/models` field holding the model's maximum context length
+CONTEXT_WINDOW_FIELD: dict[str, str] = {
+    'openrouter': 'context_length',
+    'vllm': 'max_model_len',
+}
+
 def build_client(provider: str = 'openrouter', model: str | None = None) -> tuple[OpenAI, str]:
     """Return (client, model). provider defaults to 'openrouter'; 'vllm' is opt-in.
 
@@ -69,3 +75,25 @@ def build_client(provider: str = 'openrouter', model: str | None = None) -> tupl
         raise RuntimeError(f'missing env var {key_var} for provider {provider!r}')
 
     return OpenAI(api_key=api_key, base_url=os.getenv(url_var) or default_url), model
+
+
+def resolve_context_window(client: OpenAI, provider: str, model: str) -> int:
+    """Return the model's maximum context length in tokens, as the provider reports it.
+
+    OpenRouter lists it as `context_length` on `/models`; vLLM as `max_model_len`
+    on `/v1/models`. Both are non-standard fields the SDK keeps as extras.
+    Raises when the provider does not list the model, so callers can fall back
+    to an explicit `CompactionConfig(context_window=...)`.
+    """
+    field = CONTEXT_WINDOW_FIELD[provider.lower()]
+
+    for entry in client.models.list():
+        value = getattr(entry, field, None)
+
+        if entry.id == model and value:
+            return int(value)
+
+    raise RuntimeError(
+        f'context window unknown for model {model!r} on provider {provider!r}; '
+        'pass CompactionConfig(context_window=...)'
+    )
