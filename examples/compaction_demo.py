@@ -1,11 +1,12 @@
-"""Live check of context compaction: preload a long history, shrink the window, watch it compact.
+"""Live check of context compaction on a realistic long job.
 
-The agent starts with 150 quote lookups already in its history (~27k estimated
-tokens) and a context window of 30k, so the first model call compacts. The window
-must leave room for what compaction cannot shrink: the tool schemas (~5.6k tokens
-with a workspace attached) plus the system prompt. The task then asks for a number
-only the archive holds verbatim, so a good run shows the agent reading
-`history/<session>/segment_001.jsonl` with ExecuteCode.
+The agent gets one task (fetch 60 quotes, then answer from them) and fills its own
+context with tool results until compaction fires mid-run. Afterwards the history
+reads [system, task (pinned), <compacted_history>, ...tail], and the final answer
+needs a value that only the archive holds verbatim.
+
+The 20k window leaves room for what compaction cannot shrink: the tool schemas
+(~5.6k tokens with a workspace attached) plus the system prompt.
 
 Setup: uv sync --all-packages
 Run:   uv run --package agent-harness python examples/compaction_demo.py
@@ -17,16 +18,16 @@ import json
 from dotenv import load_dotenv
 
 from agent_harness import Agent, AgentWorkspace, CompactionConfig
-from agent_harness.context.compaction import estimate_tokens
-from agent_harness.messages import assistant_msg, tool_msg, user_msg
+from agent_harness.sinks.base import CompactionEvent
+from agent_harness.sinks.stdout import StdoutSink
 from agent_harness.tooling.decorator import agent_tool
 from agent_harness.tooling.result import ToolResult
 
 load_dotenv()
 
 MODEL = 'qwen/qwen3.7-max'
-TICKERS = [f'T{n:03d}' for n in range(150)]
-WINDOW = 30_000
+WINDOW = 20_000
+TICKERS = [f'T{n:03d}' for n in range(60)]
 
 SYSTEM = '''
 <role>
@@ -35,8 +36,9 @@ You are an equity data assistant. Quote lookups go through fetch_quote.
 '''
 
 TASK = (
-    'Fetch the quote for T150. Then tell me the 17th value (index 16) of `closes_30d` in the '
-    'T005 quote you fetched earlier, exactly as recorded. Give both answers in one short final message.'
+    f'Fetch the quote for every ticker from {TICKERS[0]} to {TICKERS[-1]} with fetch_quote, '
+    'ten tickers per message (ten parallel calls), in order. When all 60 are fetched, reply with: '
+    '(1) the ticker with the highest price, and (2) the exact `audit_code` of T007.'
 )
 
 
@@ -59,38 +61,39 @@ def quote_payload(ticker: str) -> str:
     })
 
 
-def preloaded_history() -> list[dict]:
-    """The earlier part of a job: one task, then a fetch_quote round trip per ticker."""
-    messages = [user_msg('Fetch quotes for every ticker in the watchlist, one at a time.')]
-
-    for ticker in TICKERS:
-        call = {'id': f'call_{ticker}', 'type': 'function',
-                'function': {'name': 'fetch_quote', 'arguments': json.dumps({'ticker': ticker})}}
-
-        messages += [assistant_msg('', [call]), tool_msg(call['id'], quote_payload(ticker))]
-
-    messages.append(assistant_msg(f'Fetched {len(TICKERS)} quotes so far.'))
-
-    return messages
-
-
 @agent_tool
 def fetch_quote(ticker: str) -> ToolResult:
     """Fetch the latest quote record for one ticker."""
     return ToolResult(quote_payload(ticker), status='ok')
 
 
-def print_history(agent: Agent) -> None:
+class DemoSink(StdoutSink):
+    """StdoutSink that also snapshots the history shape right after each compaction."""
+
+    def __init__(self, agent: Agent) -> None:
+        super().__init__()
+        self.agent = agent
+
+    def on_compaction(self, event: CompactionEvent) -> None:
+        super().on_compaction(event)
+        print_history(self.agent, title=f'history right after compaction ({len(self.agent.messages)} messages)')
+
+
+def print_history(agent: Agent, title: str) -> None:
     """One line per message: index, role, and the start of its text."""
-    print('\n=== agent.messages after the run ===')
+    print(f'\n=== {title} ===')
 
     for i, message in enumerate(agent.messages):
         content = message.get('content')
         text = content if isinstance(content, str) else (content[0]['text'] if content else '')
-        calls = [c['function']['name'] for c in message.get('tool_calls') or []]
-        preview = ' '.join(text.split())[:90] or f'-> {calls}'
+        calls = [json.loads(c['function']['arguments']).get('ticker', c['function']['name'])
+                 for c in message.get('tool_calls') or []]
+        preview = ' '.join(text.split())[:90] or f'-> fetch_quote {calls}'
+        pinned = '   ← turn_task (pinned)' if message is agent.turn_task else ''
 
-        print(f'[{i:>2}] {message["role"]:<9} {preview}')
+        print(f'[{i:>2}] {message["role"]:<9} {preview}{pinned}')
+
+    print()
 
 
 #     ================================
@@ -108,17 +111,13 @@ def main() -> None:
 
     AgentWorkspace('compaction-demo').attach(agent)
 
-    # Preload after attach: attach extends the system prompt, which needs an empty history
-    agent.messages.extend(preloaded_history())
+    print(f'Window {WINDOW:,} tokens, compacts at {int(WINDOW * 0.8):,}.\n')
 
-    print(f'Preloaded {len(agent.messages)} messages, ~{estimate_tokens(agent.messages):,} estimated tokens; '
-          f'window {WINDOW:,}, compacts at {int(WINDOW * 0.8):,}.\n')
+    result = agent.run(TASK, sink=DemoSink(agent))
 
-    result = agent.run(TASK)
-
-    print_history(agent)
-    print(f'\n=== final answer ===\n{result}')
-    print(f'\nExpected T005 closes_30d[16]: {json.loads(quote_payload("T005"))["closes_30d"][16]}')
+    print_history(agent, title='history at the end of the run')
+    print(f'=== final answer ===\n{result}')
+    print(f'\nExpected: {TICKERS[-1]} is highest; T007 audit_code {json.loads(quote_payload("T007"))["audit_code"]}')
 
 
 if __name__ == '__main__':

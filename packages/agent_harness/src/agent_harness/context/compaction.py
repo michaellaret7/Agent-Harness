@@ -34,13 +34,14 @@ TOOL_ARGS_CLIP = 300      # chars of each tool call's arguments shown to the sum
 
 
 class ContextOverflowError(RuntimeError):
-    """History is still over the threshold after compaction: one message alone is too big."""
+    """The request is still over the threshold after compaction: what cannot be archived is too big."""
 
 
 class CompactionTarget(Protocol):
     """The agent state compaction reads and rewrites. `Agent` satisfies it structurally."""
 
     messages: list[dict]
+    tools: list[dict[str, Any]]
     client: OpenAI | None
     provider: str
     model: str | None
@@ -227,9 +228,12 @@ def render_compacted_block(summary: str | None, plan: list[dict], segment: str |
 class Compactor:
     """Decides when to compact an agent's history, and does it.
 
-    Token accounting: `_counted_tokens` covers `messages[:_counted_len]` plus the
-    request overhead the messages do not show (tool schemas, dynamic context).
-    It comes from the provider's exact usage; anything appended since is estimated.
+    Token accounting: after each model call, `_counted_tokens` is the provider's exact
+    count for `messages[:_counted_len]`; messages appended since are estimated. The
+    chars/4 estimate drifts by content (JSON numbers cost more tokens per char than
+    prose), so `_ratio` (provider tokens / estimated tokens of the last request, tool
+    schemas included) scales every estimate. When nothing exact applies (no usage
+    yet, or right after a compaction) the whole request is estimated: tools + messages.
     """
 
     def __init__(self, config: CompactionConfig) -> None:
@@ -239,27 +243,34 @@ class Compactor:
 
         self._counted_tokens = 0
         self._counted_len = 0
-        self._overhead = 0
+        self._ratio = 1.0
 
     def attach_archive(self, root: Path) -> None:
         """Archive into `root` unless the config already named a directory. Used by `AgentWorkspace.attach`."""
         if self.archive is None:
             self.archive = HistoryArchive(root)
 
-    def observe(self, usage: Usage | None, messages: list[dict]) -> None:
+    def observe(self, usage: Usage | None, agent: CompactionTarget) -> None:
         """Record the provider's count right after the assistant message is appended."""
         if usage is None:
-            self._counted_tokens, self._counted_len = self._overhead, 0
+            self._counted_len = 0
             return
 
-        # The request covered every message but the assistant reply just appended
-        self._overhead = max(0, usage.prompt_tokens - estimate_tokens(messages[:-1]))
-        self._counted_tokens = usage.prompt_tokens + usage.completion_tokens
-        self._counted_len = len(messages)
+        # The request covered the tool schemas and every message but the reply just appended
+        sent = estimate_tokens(agent.tools) + estimate_tokens(agent.messages[:-1])
 
-    def current_tokens(self, messages: list[dict]) -> int:
+        if sent > 0:
+            self._ratio = usage.prompt_tokens / sent
+
+        self._counted_tokens = usage.prompt_tokens + usage.completion_tokens
+        self._counted_len = len(agent.messages)
+
+    def current_tokens(self, agent: CompactionTarget) -> int:
         """Estimated size of the next request."""
-        return self._counted_tokens + estimate_tokens(messages[self._counted_len:])
+        if self._counted_len == 0:
+            return int(self._ratio * (estimate_tokens(agent.tools) + estimate_tokens(agent.messages)))
+
+        return self._counted_tokens + int(self._ratio * estimate_tokens(agent.messages[self._counted_len:]))
 
     def should_compact(self, agent: CompactionTarget) -> bool:
         """True once the next request would reach the threshold. Resolves the window on first use."""
@@ -268,15 +279,15 @@ class Compactor:
 
             self.window = resolve_context_window(agent.client, agent.provider, agent.model)
 
-        return self.current_tokens(agent.messages) >= self.config.threshold * self.window
+        return self.current_tokens(agent) >= self.config.threshold * self.window
 
     def compact(self, agent: CompactionTarget, sink: Sink) -> None:
         """Archive the old span, summarize it, and rewrite `agent.messages` in place."""
         assert self.window is not None and agent.client is not None and agent.model is not None
 
         messages = agent.messages
-        before = self.current_tokens(messages)
-        cut = find_cut(messages, int(self.config.keep_recent * self.window))
+        before = self.current_tokens(agent)
+        cut = find_cut(messages, int(self.config.keep_recent * self.window / self._ratio))
 
         if cut <= 1:
             raise ContextOverflowError(f'nothing to compact: the whole history fits the tail but the request is ~{before:,} tokens')
@@ -291,17 +302,18 @@ class Compactor:
 
         messages[:] = [messages[0], *pinned, user_msg(block), *messages[cut:]]
 
-        self._counted_tokens, self._counted_len = self._overhead, 0
-        after = self.current_tokens(messages)
+        self._counted_len = 0
+        after = self.current_tokens(agent)
 
         sink.on_compaction(CompactionEvent(before, after, len(span), segment, summary is not None))
 
-        # What compaction cannot shrink: the system message, the pinned task, and the request
-        # overhead outside messages (tool schemas, dynamic context)
+        # What compaction cannot shrink: the tool schemas, the system message, and the pinned task
         if after >= self.config.threshold * self.window:
+            fixed = int(self._ratio * estimate_tokens(agent.tools))
+            head = int(self._ratio * estimate_tokens(messages[:len(pinned) + 2]))
+
             raise ContextOverflowError(
                 f'request is ~{after:,} tokens after compaction, over {self.config.threshold:.0%} of '
-                f'{self.window:,}: ~{self._overhead:,} is tool schemas and dynamic context, '
-                f'~{estimate_tokens(messages[:len(pinned) + 2]):,} the system message and pinned task. '
-                'Raise context_window or shrink what is always sent.'
+                f'{self.window:,}: ~{fixed:,} is tool schemas, ~{head:,} the system message, pinned task '
+                'and summary. Raise context_window or shrink what is always sent.'
             )

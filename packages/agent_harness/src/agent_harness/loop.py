@@ -228,7 +228,7 @@ def execution_loop(
 
         # Record the provider's exact token count for the next compaction check
         if agent.compactor is not None:
-            agent.compactor.observe(usage, agent.messages)
+            agent.compactor.observe(usage, agent)
 
         if action == 'cancelled':
             _settle_interrupted_tool_calls(agent, tool_calls, active_sink)

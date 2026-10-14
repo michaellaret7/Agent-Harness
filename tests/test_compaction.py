@@ -84,6 +84,7 @@ class Target:
     model: str | None = 'contract-model'
     plan: list[dict] = field(default_factory=list)
     turn_task: dict | None = None
+    tools: list[dict[str, Any]] = field(default_factory=list)
 
 
 class CompactionSink(RecordingSink):
@@ -329,7 +330,7 @@ def test_should_compact_uses_provider_count_plus_new_messages() -> None:
     compactor = Compactor(CompactionConfig(context_window=10_000))
     target = Target(messages, client=None)
 
-    compactor.observe(Usage(prompt_tokens=7_000, completion_tokens=500), messages)
+    compactor.observe(Usage(prompt_tokens=7_000, completion_tokens=500), target)
 
     assert not compactor.should_compact(target)
 
@@ -407,6 +408,27 @@ def test_failed_summary_still_archives_and_flags_the_event(tmp_path: Path) -> No
     assert not event.summarized and event.segment is not None
     assert 'Summary unavailable' in messages[2]['content'] and event.segment in messages[2]['content']
     assert (tmp_path / event.segment).exists()
+
+
+def test_estimate_error_leaves_with_the_archived_messages() -> None:
+    """When the provider counts 2x the chars/4 estimate, that error scales with history:
+    after compaction the estimate shrinks with the messages instead of persisting as overhead."""
+    messages, task = long_history()
+    schema = {'type': 'function', 'function': {'name': 'fetch_quote', 'description': 'Fetch a quote.',
+                                               'parameters': {'type': 'object', 'properties': {}}}}
+    target = Target(messages, completion_client([(200, 'summary')], []), turn_task=task, tools=[schema])
+    sink = CompactionSink()
+    sent = estimate_tokens([schema]) + estimate_tokens(messages[:-1])
+    compactor = Compactor(CompactionConfig(context_window=3 * sent))
+
+    compactor.observe(Usage(prompt_tokens=2 * sent, completion_tokens=50), target)
+    compactor.compact(target, sink)
+
+    event = sink.values('compaction')[0]
+
+    assert event.tokens_before >= 2 * sent
+    assert event.tokens_after == int(2.0 * (estimate_tokens([schema]) + estimate_tokens(messages)))
+    assert event.tokens_after < 0.8 * 3 * sent
 
 
 def test_oversized_tool_result_is_archived_with_its_call() -> None:
