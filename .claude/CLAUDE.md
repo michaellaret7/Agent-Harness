@@ -48,7 +48,7 @@ packages/architectures/   Organization (registry + per-member inboxes + org tool
 
 **On distribution & backwards-compat:** the library packages are meant to be consumed by domains in *other* repos (via Git dependency, e.g. `agent-harness @ git+…#subdirectory=packages/agent_harness`). Because external systems pin a version, `agent_harness`'s public API warrants SemVer discipline — the "No backwards-compatibility shims / update every caller" Hard Rule below applies cleanly *within* this workspace, but a breaking change to the engine's public surface is a real major-version event for outside consumers.
 
-Domains assemble an Agent by passing constructor args: `system`, `tools` (and optionally `task` for batch / one-shot use, `subagents`, `output_model`, `verifier`, `reasoning_effort`). The base ships generic methodology only. The domain appends a `<role>` block via `system=` and registers its tools. No subclassing — just composition through `Agent(...)`. The one exception is `SubAgent` (`sub_agent.py`), an engine-internal `Agent` variant that refuses gates, hooks, and nested subagents.
+Domains assemble an Agent by passing constructor args: `system`, `tools` (and optionally `task` for batch / one-shot use, `subagents`, `output_model`, `verifier`, `reasoning_effort`, `compaction`). The base ships generic methodology only. The domain appends a `<role>` block via `system=` and registers its tools. No subclassing — just composition through `Agent(...)`. The one exception is `SubAgent` (`sub_agent.py`), an engine-internal `Agent` variant that refuses gates, hooks, compaction, and nested subagents.
 
 ### Extension points
 
@@ -57,6 +57,7 @@ Domains assemble an Agent by passing constructor args: `system`, `tools` (and op
 | Hook (`hooks.py`) | `agent.add_hook(event, fn, tool=...)` | turn / loop / iteration / tool boundaries | None — observe only, return value ignored |
 | Gate (`gates.py`) | `agent.add_gate(fn, tool=...)` | before tool dispatch | `allow` / `deny` / `rewrite` args |
 | Subagent (`subagent_config.py`) | `Agent(subagents=[SubAgentConfig(...)])` | model calls `DeploySubagent` | fresh `SubAgent` per deployment, isolated history |
+| Compaction (`context/compaction.py`) | `Agent(compaction=CompactionConfig(...))` | iteration start, once the next request nears `threshold × context_window` | archives the old span to JSONL, replaces it with a rolling summary, keeps the task and recent tail verbatim — see `docs/agents/context_compaction.md` |
 | Sink (`sinks/base.py`) | `agent.run(sink=...)` or `register_always_on(factory)` | every lifecycle event | presentation / tracing |
 
 Hooks that append to `agent.messages` must do so only at start boundaries (`turn_start`, `loop_start`, `iteration_start`) where no tool_call awaits its result. Tool-filtered hooks and gates fail fast on an unknown tool name.

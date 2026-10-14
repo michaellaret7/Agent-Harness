@@ -4,12 +4,13 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 import pytest
 from openai import OpenAI
 
+from agent_harness import Agent, AgentWorkspace
 from agent_harness.client import resolve_context_window
 from agent_harness.context.archive import HistoryArchive
 from agent_harness.context.compaction import (
@@ -19,8 +20,11 @@ from agent_harness.context.compaction import (
 from agent_harness.messages import assistant_msg, system_msg, tool_msg, user_msg
 from agent_harness.sinks.base import CompactionEvent
 from agent_harness.sinks.stdout import StdoutSink
+from agent_harness.sub_agent import SubAgent
+from agent_harness.tooling.decorator import agent_tool
+from agent_harness.tooling.result import ToolResult
 from agent_harness.usage import Usage
-from contract_support import RecordingSink, tool_call
+from contract_support import RecordingSink, message_text, scripted_agent, tool_call, tool_delta
 
 
 #     ================================
@@ -103,6 +107,36 @@ def long_history(exchanges: int = 8, result_chars: int = 800) -> tuple[list[dict
     messages.append(assistant_msg('Halfway through the watchlist.'))
 
     return messages, task
+
+
+def quote_tool() -> Callable:
+    """A tool returning a large quote payload, so a few calls fill a small context window."""
+    @agent_tool
+    def fetch_quote(ticker: str) -> ToolResult:
+        """Fetch the full quote record for one ticker."""
+        return ToolResult(f'{ticker}: ' + 'q' * 2_000, status='ok')
+
+    return fetch_quote
+
+
+def tool_pairs_complete(messages: list[dict[str, Any]]) -> bool:
+    """True when every tool result follows its call and every call has a result."""
+    open_calls: set[str] = set()
+
+    for message in messages:
+        if message['role'] == 'tool':
+            if message['tool_call_id'] not in open_calls:
+                return False
+
+            open_calls.discard(message['tool_call_id'])
+            continue
+
+        if open_calls:
+            return False
+
+        open_calls = {call['id'] for call in message.get('tool_calls') or []}
+
+    return not open_calls
 
 
 #     ================================
@@ -280,6 +314,7 @@ def test_compacted_block_points_at_the_archive_and_carries_the_plan() -> None:
 
     assert block.startswith('<compacted_history archived_messages="12" archive="history/s/segment_002.jsonl">')
     assert '## Goal\nX' in block and '[x] Fetch quotes' in block and '[-] Flag outliers' in block
+    assert 'in history/s/, numbered oldest first' in block
     assert 'Summary unavailable' in bare and '<plan>' not in bare and 'No archive was kept' in bare
 
 
@@ -395,3 +430,76 @@ def test_oversized_pinned_task_raises_overflow() -> None:
 
     with pytest.raises(ContextOverflowError):
         Compactor(CompactionConfig(context_window=8_000)).compact(target, CompactionSink())
+
+
+#     ================================
+# --> Wired into the agent
+#     ================================
+
+
+def test_long_run_compacts_and_every_request_stays_valid(tmp_path: Path) -> None:
+    """A real Agent fetching ten large quotes compacts more than once, never sends a broken
+    history, keeps the task pinned, rolls summaries forward, and loses no tool result."""
+    tools: list[dict[str, Any] | Callable] = [quote_tool()]
+    base = estimate_tokens(Agent(model='contract-model', tools=tools).messages)
+    config = CompactionConfig(context_window=int((base + 2_500) / 0.8), archive_dir=tmp_path / 'history')
+    tickers = [f'T{n}' for n in range(10)]
+    responses: list[list[Any]] = [[tool_delta(tool_call('fetch_quote', {'ticker': t}, f'call_{t}'))] for t in tickers]
+    responses.append([{'content': 'All quotes fetched.'}])
+    summaries = [f'SUMMARY {n}' for n in range(1, 11)]
+
+    with scripted_agent(responses, tools=tools, compaction=config, summaries=summaries) as (agent, provider, sink):
+        result = agent.run('Fetch every quote in the watchlist.', sink=sink)
+
+    events = sink.values('compaction')
+    compacted = [r for r in provider.requests
+                 if len(r['messages']) > 2 and message_text(r['messages'][2]).startswith('<compacted_history')]
+
+    assert result == 'All quotes fetched.'
+    assert len(events) >= 2 and all(e.summarized for e in events)
+    assert len(provider.requests) == len(responses)
+
+    for request in provider.requests:
+        assert request['messages'][0]['role'] == 'system'
+        assert tool_pairs_complete(request['messages'])
+
+    for request in compacted:
+        assert message_text(request['messages'][1]) == 'Fetch every quote in the watchlist.'
+
+    assert 'SUMMARY 1' in provider.summary_requests[1]['messages'][1]['content']
+
+    archived = [
+        json.loads(line)
+        for event in events if event.segment is not None
+        for line in (tmp_path / event.segment).read_text(encoding='utf-8').splitlines()
+    ]
+    seen = {message_text(m).split(':')[0] for m in [*archived, *agent.messages] if m['role'] == 'tool'}
+
+    assert seen == set(tickers)
+
+
+def test_workspace_puts_the_archive_in_the_sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Attaching a workspace archives under sandbox/history, unless the config named its own folder."""
+    monkeypatch.setenv('AGENT_HARNESS_HOME', str(tmp_path))
+    workspace = AgentWorkspace('analyst')
+
+    default = Agent(model='contract-model', compaction=CompactionConfig(context_window=10_000))
+    explicit = Agent(model='contract-model', compaction=CompactionConfig(context_window=10_000,
+                                                                         archive_dir=tmp_path / 'mine'))
+    plain = Agent(model='contract-model')
+
+    workspace.attach(default)
+    AgentWorkspace('analyst').attach(explicit)
+    AgentWorkspace('analyst').attach(plain)
+
+    assert default.compactor is not None and default.compactor.archive is not None
+    assert default.compactor.archive.root == workspace.sandbox_dir / 'history'
+    assert explicit.compactor is not None and explicit.compactor.archive is not None
+    assert explicit.compactor.archive.root == tmp_path / 'mine'
+    assert plain.compactor is None
+
+
+def test_subagents_refuse_compaction() -> None:
+    """Compaction belongs to the long-lived parent, not to a short tool-invoked sub-run."""
+    with pytest.raises(NotImplementedError, match='compaction'):
+        SubAgent(model='contract-model', compaction=CompactionConfig())

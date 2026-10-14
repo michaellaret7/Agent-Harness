@@ -162,6 +162,10 @@ class AgentWorkspace:
         # register the code tool with the agent object
         agent.add_tool(self.code_tool)
 
+        # Compacted history goes inside the sandbox if the compactor class exists, so the agent can search it with ExecuteCode
+        if agent.compactor is not None:
+            agent.compactor.attach_archive(self.sandbox_dir / 'history')
+
         # register the memory tools with the agent object
         if self.memory is not None:
             for tool in memory_tools(self.memory):

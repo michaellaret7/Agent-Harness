@@ -184,6 +184,13 @@ def execution_loop(
         iterations = i
         active_sink.on_iteration_start(i, len(agent.messages))
 
+        # Compact at the iteration boundary, where every tool_call already has its result
+        # Check if the compactor object exists and if the agent has hit the compaction threshold
+        # The .should_compact method returns a boolean indicating whether or not the condition is True
+        if agent.compactor is not None and agent.compactor.should_compact(agent):
+            # if true compact the history
+            agent.compactor.compact(agent, active_sink)
+
         # Render an independent request copy of the history; never assigned back to agent.messages
         rendered_messages = agent.context_renderer.render(agent)
 
@@ -218,6 +225,10 @@ def execution_loop(
         # Include the content from the llm response and the tool calls returned from the llm 
         # The tool calls will be executed downstream by the tool handler and then appended to the message history as tool output messages
         agent.messages.append(assistant_msg(content, tool_calls))
+
+        # Record the provider's exact token count for the next compaction check
+        if agent.compactor is not None:
+            agent.compactor.observe(usage, agent.messages)
 
         if action == 'cancelled':
             _settle_interrupted_tool_calls(agent, tool_calls, active_sink)

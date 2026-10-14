@@ -12,7 +12,8 @@ import pytest
 from openai import OpenAI
 
 from agent_harness import Agent
-from agent_harness.sinks.base import BaseSink, ToolOutcome
+from agent_harness.context.compaction import CompactionConfig
+from agent_harness.sinks.base import BaseSink, CompactionEvent, ToolOutcome
 from agent_harness.tooling.decorator import agent_tool
 from agent_harness.tooling.result import ToolResult
 
@@ -69,9 +70,11 @@ def scripted_agent(
     responses: Sequence[Sequence[StreamItem]],
     tools: Sequence[Callable] | None = None,
     max_iters: int = 100,
+    compaction: CompactionConfig | None = None,
+    summaries: Sequence[str] = (),
 ) -> Iterator[tuple[Agent, ScriptedProvider, RecordingSink]]:
     """Run real harness code against an in-memory HTTP provider, without credentials."""
-    provider = ScriptedProvider(responses)
+    provider = ScriptedProvider(responses, summaries)
     sink = RecordingSink()
 
     # Disable automatic remote tracing; the only model transport is in memory.
@@ -81,7 +84,8 @@ def scripted_agent(
         with httpx.Client(transport=httpx.MockTransport(provider.respond)) as http_client:
             with OpenAI(api_key='test-only', base_url='https://harness.invalid/v1',
                         http_client=http_client, max_retries=0) as client:
-                agent = Agent(model='contract-model', tools=list(tools or ()), max_iters=max_iters)
+                agent = Agent(model='contract-model', tools=list(tools or ()), max_iters=max_iters,
+                              compaction=compaction)
                 agent.client = client
 
                 yield agent, provider, sink
@@ -114,22 +118,46 @@ class ScriptedStream(httpx.SyncByteStream):
 
 
 class ScriptedProvider:
-    """Capture serialized requests and return the next scripted SSE response."""
+    """Capture serialized requests and return the next scripted SSE response.
 
-    def __init__(self, responses: Sequence[Sequence[StreamItem]]) -> None:
+    Streaming requests are the loop's model calls and consume `responses`.
+    Non-streaming requests are compaction summaries and consume `summaries`.
+    """
+
+    def __init__(self, responses: Sequence[Sequence[StreamItem]], summaries: Sequence[str] = ()) -> None:
         self.responses = responses
+        self.summaries = summaries
         self.requests: list[dict[str, Any]] = []
+        self.summary_requests: list[dict[str, Any]] = []
         self.streams: list[ScriptedStream] = []
 
     def respond(self, request: httpx.Request) -> httpx.Response:
         """Handle a model request without opening a socket."""
-        self.requests.append(json.loads(request.content))
+        body = json.loads(request.content)
+
+        if not body.get('stream'):
+            return self.summarize(body)
+
+        self.requests.append(body)
         index = len(self.requests) - 1
         assert index < len(self.responses), 'harness made an unexpected extra model request'
         stream = ScriptedStream(self.responses[index])
         self.streams.append(stream)
 
         return httpx.Response(200, headers={'content-type': 'text/event-stream'}, stream=stream)
+
+
+    def summarize(self, body: dict[str, Any]) -> httpx.Response:
+        """Answer a non-streaming summary call with the next scripted summary."""
+        self.summary_requests.append(body)
+        index = len(self.summary_requests) - 1
+        assert index < len(self.summaries), 'harness made an unexpected summary request'
+
+        return httpx.Response(200, json={
+            'id': 'summary-test', 'object': 'chat.completion', 'created': 0, 'model': 'contract-model',
+            'choices': [{'index': 0, 'finish_reason': 'stop',
+                         'message': {'role': 'assistant', 'content': self.summaries[index]}}],
+        })
 
 
 class RecordingSink(BaseSink):
@@ -178,3 +206,7 @@ class RecordingSink(BaseSink):
     def on_turn_end(self, result: str) -> None:
         """Record the completed turn's text."""
         self.record('turn_end', result)
+
+    def on_compaction(self, event: CompactionEvent) -> None:
+        """Record a context compaction."""
+        self.record('compaction', event)

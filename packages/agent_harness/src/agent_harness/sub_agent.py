@@ -6,8 +6,8 @@ A parent registers a roster of `SubAgentConfig` configs at construction
 them by name. Each deployment instantiates a fresh `SubAgent`, so message
 history is isolated per call.
 
-SubAgents are deliberately constrained: no gates, no hooks, no subagents of
-their own. Interception and observation belong to the parent that owns the
+SubAgents are deliberately constrained: no gates, no hooks, no compaction, no
+subagents of their own. Interception and observation belong to the parent that owns the
 run, not to a tool-invoked sub-run.
 """
 from __future__ import annotations
@@ -27,6 +27,10 @@ class SubAgent(Agent):
         # a direct SubAgent(subagents=[...]) construction.
         if kwargs.get('subagents'):
             raise NotImplementedError('SubAgents cannot have subagents of their own.')
+
+        # Subagent runs are short and isolated; compaction belongs to the long-lived parent
+        if kwargs.get('compaction') is not None:
+            raise NotImplementedError('SubAgents do not support compaction.')
 
         super().__init__(*args, **kwargs)
 

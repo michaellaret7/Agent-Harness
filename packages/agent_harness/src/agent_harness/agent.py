@@ -9,6 +9,7 @@ from typing import Any, Callable, Iterable, cast
 from pydantic import BaseModel
 
 from agent_harness.client import build_client
+from agent_harness.context.compaction import CompactionConfig, Compactor
 from agent_harness.context.renderer import ContextRenderer, DynamicContextProvider
 from agent_harness.tooling.context import CONTEXT_PARAM
 from agent_harness.gates import Gate
@@ -43,6 +44,7 @@ class Agent:
         verifier: Verifier | None = None,
         reasoning_effort: str | None = None,
         dynamic_context_providers: list[DynamicContextProvider] = [],
+        compaction: CompactionConfig | None = None,
     ) -> None:
 
         # Agents built in model code may not recurse: refuse inside a nested sandbox
@@ -80,6 +82,12 @@ class Agent:
 
         # Initialize Message List
         self.messages: list[dict] = []
+
+        # The user message that opened the current run; compaction pins it word for word
+        self.turn_task: dict | None = None
+
+        # Keeps long runs under the context window; None leaves history untouched
+        self.compactor = Compactor(compaction) if compaction is not None else None
 
         # Tool registry
         self.tools: list[dict[str, Any]] = []
@@ -340,7 +348,8 @@ class Agent:
 
         sink.on_turn_start(task)
 
-        self.messages.append(user_msg(task))
+        self.turn_task = user_msg(task)
+        self.messages.append(self.turn_task)
 
         # Registered here rather than in __init__ so an output_model assigned after
         # construction still gets its SubmitResult tool. add_tool is a no-op on repeat runs.

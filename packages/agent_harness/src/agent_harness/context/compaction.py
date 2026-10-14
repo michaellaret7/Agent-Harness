@@ -197,10 +197,13 @@ def render_compacted_block(summary: str | None, plan: list[dict], segment: str |
     lines = [f'<compacted_history archived_messages="{archived}"{archive_attr}>']
 
     if segment:
+        folder = segment.rsplit('/', 1)[0]
+
         lines.append(
-            'Earlier messages in this conversation were compacted to save context. The full record '
-            f'is in {segment}: JSON Lines, one chat message per line (line n = #n in the summary). '
-            'Read or search it with ExecuteCode when you need exact details the summary does not hold.'
+            'Earlier messages in this conversation were compacted to save context. The messages this '
+            f'summary covers are in {segment}: JSON Lines, one chat message per line (line n = #n in '
+            f'the summary). Every earlier compaction left its own segment in {folder}/, numbered oldest '
+            'first. Read or search them with ExecuteCode when you need exact details the summary does not hold.'
         )
 
     else:
@@ -237,6 +240,11 @@ class Compactor:
         self._counted_tokens = 0
         self._counted_len = 0
         self._overhead = 0
+
+    def attach_archive(self, root: Path) -> None:
+        """Archive into `root` unless the config already named a directory. Used by `AgentWorkspace.attach`."""
+        if self.archive is None:
+            self.archive = HistoryArchive(root)
 
     def observe(self, usage: Usage | None, messages: list[dict]) -> None:
         """Record the provider's count right after the assistant message is appended."""
