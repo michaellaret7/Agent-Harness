@@ -4,8 +4,9 @@
     Recall(query, limit)                   search; counts as a use of what it returns
     Forget(memory_id)                      delete a memory found to be wrong
 
-Memory reaches the model only when it calls Recall; nothing is injected into
-its context automatically. Nothing here ever shows the store's path, so the
+Memory reaches the model when it calls Recall, and also through the
+`<memories>` dynamic context block when the workspace has `auto_memory_recall=True`
+(see `dynamic_context.py`). Nothing here ever shows the store's path, so the
 agent's code has no reason to look for the file.
 """
 from __future__ import annotations
@@ -26,8 +27,7 @@ You have a long-term memory that persists across tasks. It is separate from skil
 Use only the Remember, Recall and Forget tools. Never look for or open the memory store through code.
 
 Reading:
-- Memories are never shown to you automatically. At the start of a task that may relate to past work,
-  call Recall with the task's key subjects (companies, data sources, methods).
+- At the start of a task that may relate to past work, call Recall with the task's key subjects (companies, data sources, methods, etc.).
 
 Writing:
 - Most tasks should save nothing or one or two memories. Save only what a future task would need and could
@@ -44,7 +44,7 @@ Writing:
 #     ================================
 
 
-def _line(memory: Memory) -> str:
+def memory_line(memory: Memory) -> str:
     """One memory as the model sees it; the id lets it Forget the memory later."""
     return f'- [{memory.id}] {memory.kind}, {memory.importance}: {memory.content}'
 
@@ -89,7 +89,7 @@ def recall(
     if not memories:
         return ToolResult('No matching memories.', status='ok')
 
-    return ToolResult('\n'.join(_line(memory) for memory in memories), status='ok')
+    return ToolResult('\n'.join(memory_line(memory) for memory in memories), status='ok')
 
 
 @agent_tool(name='Forget')

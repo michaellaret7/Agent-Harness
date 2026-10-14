@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 from agent_harness.gates import GateContext
 from agent_harness.messages import tool_msg
+from agent_harness.tooling.context import CONTEXT_PARAM, ToolContext
 from agent_harness.tooling.result import ToolResult
 from agent_harness.sinks.base import Sink, ToolOutcome, ToolStatus
 
@@ -172,8 +173,8 @@ class ToolHandler:
 
         Returns `(payload, status)` so the caller can stamp duration around
         the whole dispatch and build one `ToolOutcome` for the sink. Side
-        effects (file-diff emit, plan-update emit) fire here because they
-        depend on the same status determination.
+        effects a tool has on the run (e.g. Plan's plan-update emit) happen
+        inside the tool, through the ToolContext passed by `_invoke`.
         """
 
         # Unpack the tool call dictionary passed to the tool handler by the agent and assign them to variables
@@ -206,13 +207,10 @@ class ToolHandler:
             return f'denied: {deny_reason}', 'denied'
 
         # Run the actual tool funtion and return the result
-        result = self._invoke(name, kwargs)
+        result = self._invoke(name, kwargs, ToolContext(self.agent, sink, cancel_event))
 
         # Read the explicit tool status independently of its model-facing payload.
         status: ToolStatus = result.status
-
-        if name == 'Plan' and status == 'ok':
-            sink.on_plan_update(self.agent.plan)
 
         return result.payload, status
 
@@ -277,8 +275,12 @@ class ToolHandler:
         # If no gate applied, just pass the kwargs through to the invoke method
         return kwargs, None
 
-    def _invoke(self, name: str, kwargs: dict) -> ToolResult:
-        """Look up the registered function and run it with exception wrapping."""
+    def _invoke(self, name: str, kwargs: dict, ctx: ToolContext) -> ToolResult:
+        """Look up the registered function and run it with exception wrapping.
+
+        Tools that declare `_ctx` receive `ctx`. It is added after the gates
+        ran, so gates only ever see the model's arguments.
+        """
 
         # Check to make sure the deferred tools get loaded before being called if they are deferred
         # (LoadTool pops loaded tools out of the registry, so membership alone means "not yet loaded")
@@ -296,6 +298,10 @@ class ToolHandler:
         # If the tool name is not found in the tool function dictionary, return an error
         if fn is None:
             return ToolResult(f'error: unknown tool {name!r}', status='error')
+
+        # Hand the run's context to tools that asked for it (recorded at add_tool time)
+        if name in self.agent.context_tools:
+            kwargs = {**kwargs, CONTEXT_PARAM: ctx}
 
         try:
             # Run the actual tool function with the keyword arguments 

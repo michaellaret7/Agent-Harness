@@ -21,6 +21,7 @@ from typing import Annotated
 from parallel import APIConnectionError, APIStatusError, APITimeoutError, Parallel
 from parallel.types import AdvancedExtractSettingsParam, ExtractError, ExtractResult
 
+from agent_harness.tooling.context import ToolContext
 from agent_harness.tooling.decorator import Param, agent_tool
 from agent_harness.tooling.result import ToolResult
 
@@ -37,7 +38,7 @@ def extract(
     objective: Annotated[str | None, Param(description='Natural-language description of what you are looking for on these pages. When set, the API returns excerpts focused on this objective (ignored if full_content=True).')] = None,
     full_content: Annotated[bool, Param(description='If True, returns the entire page as markdown instead of focused excerpts. Use when the objective is too broad to pre-filter, or when you need details beyond what excerpts surface. Default False.')] = False,
     max_chars_per_result: Annotated[int, Param(description='Max characters per excerpt block. Values below 1000 are floored to 1000 by the API. Default 4000.')] = 4000,
-    _client_model: str | None = None,
+    _ctx: ToolContext | None = None,
 ) -> ToolResult:
     """
     Fetch and extract URL content via the Parallel Extract API. Returns clean
@@ -70,8 +71,8 @@ def extract(
                 objective=objective,
                 session_id=uuid.uuid4().hex,
                 advanced_settings=advanced,
-                # Injected by Agent via bind_tool; None when the model is unresolved (vLLM).
-                client_model=_client_model,
+                # Parallel tailors results to the consuming model; read at call time, so it is resolved (vLLM too)
+                client_model=_ctx.agent.model if _ctx else None,
             )
 
     # Reason: APITimeoutError subclasses APIConnectionError, so it must be caught first.

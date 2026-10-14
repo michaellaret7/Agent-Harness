@@ -52,7 +52,7 @@ def test_remembered_lesson_is_recalled_in_a_later_task() -> None:
     ]
 
     with scripted_agent(first) as (agent, api, sink):
-        AgentWorkspace('analyst', memory=True).attach(agent)
+        AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder()).attach(agent)
         agent.run('Run a DCF on MSFT.', sink=sink)
 
     assert tool_reply(api.requests[1]) == 'Remembered as [1].'
@@ -61,7 +61,7 @@ def test_remembered_lesson_is_recalled_in_a_later_task() -> None:
     second = [call('Recall', {'query': 'MSFT debt leases'}, 'look'), [{'content': 'done'}]]
 
     with scripted_agent(second) as (agent, api, sink):
-        workspace = AgentWorkspace('analyst', memory=True)
+        workspace = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder())
         workspace.attach(agent)
         agent.run('What is the cost of debt for MSFT?', sink=sink)
 
@@ -74,7 +74,7 @@ def test_remembered_lesson_is_recalled_in_a_later_task() -> None:
 
 def test_ranking_weighs_relevance_and_importance() -> None:
     """The best match on the query's words ranks first; importance breaks near-ties."""
-    store = AgentWorkspace('analyst', memory=True).memory
+    store = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder()).memory
     store.add('NVDA reports earnings in late February.', 'fact', 'low')
     store.add('NVDA earnings beats have preceded falls three quarters running.', 'lesson', 'critical')
     store.add('The user prefers tables over prose for valuations.', 'preference', 'medium')
@@ -92,7 +92,7 @@ def test_duplicates_are_not_stored_twice() -> None:
         call('Remember', {'content': f'  {LEASE_LESSON} ', 'kind': 'fact', 'importance': 'low'}, 'b'),
         [{'content': 'done'}],
     ]) as (agent, api, sink):
-        workspace = AgentWorkspace('analyst', memory=True)
+        workspace = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder())
         workspace.attach(agent)
         agent.run('Save the lease lesson.', sink=sink)
 
@@ -108,7 +108,7 @@ def test_forget_deletes_and_reports_unknown_ids() -> None:
         call('Forget', {'memory_id': 99}, 'c'),
         [{'content': 'done'}],
     ]) as (agent, api, sink):
-        workspace = AgentWorkspace('analyst', memory=True)
+        workspace = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder())
         workspace.attach(agent)
         agent.run('Tidy memory.', sink=sink)
 
@@ -124,7 +124,7 @@ def test_invalid_kind_is_rejected_before_storage() -> None:
         call('Remember', {'content': 'x is y', 'kind': 'rumour', 'importance': 'high'}, 'a'),
         [{'content': 'done'}],
     ]) as (agent, api, sink):
-        workspace = AgentWorkspace('analyst', memory=True)
+        workspace = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder())
         workspace.attach(agent)
         agent.run('Save something.', sink=sink)
 
@@ -139,7 +139,7 @@ def test_store_lives_apart_from_the_sandbox_and_its_path_is_never_shown(tmp_path
         call('Recall', {'query': 'MSFT leases'}, 'b'),
         [{'content': 'done'}],
     ]) as (agent, api, sink):
-        workspace = AgentWorkspace('analyst', memory=True)
+        workspace = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder())
         workspace.attach(agent)
         agent.run('Run a DCF on MSFT.', sink=sink)
 
@@ -229,7 +229,8 @@ def vector_models(workspace_path: Path) -> list[tuple[int, str]]:
 
 def test_semantic_search_finds_what_keywords_miss() -> None:
     """Different words, same meaning: keyword search misses it, the embedder finds it."""
-    keyword_only = AgentWorkspace('analyst', memory=True).memory
+    # With the embedding API down, only keyword search is left
+    keyword_only = AgentWorkspace('analyst', memory=True, embedder=DownEmbedder()).memory
     keyword_only.add(MSFT_LEASES, 'lesson', 'high')
 
     assert keyword_only.search('MSFT leasing', limit=5, touch=False) == []
@@ -294,3 +295,64 @@ def test_api_embedder_needs_a_measured_floor() -> None:
 
     with pytest.raises(ValueError, match='no measured similarity floor'):
         ApiEmbedder('some/new-model')
+
+
+def test_memory_comes_with_semantic_search_by_default() -> None:
+    """memory=True alone gives the voyage-4 embedder; nothing else has to be wired."""
+    from agent_harness.workspace import ApiEmbedder
+
+    store = AgentWorkspace('analyst', memory=True).memory
+
+    assert store is not None
+    assert isinstance(store.embedder, ApiEmbedder)
+    assert store.embedder.model == 'voyageai/voyage-4'
+
+
+#     ================================
+# --> Automatic recall (dynamic context)
+#     ================================
+
+TABLES = 'The user prefers tables over prose for valuations.'
+
+
+def test_auto_recall_injects_matching_memories_once_per_request() -> None:
+    """With auto_memory_recall, matching memories appear in every request's dynamic context, searched once and never counted as a use."""
+    embedder = ConceptEmbedder()
+    workspace = AgentWorkspace('analyst', memory=True, embedder=embedder, auto_memory_recall=True)
+    workspace.memory.add(MSFT_LEASES, 'lesson', 'high')
+    workspace.memory.add(TABLES, 'preference', 'medium')
+    calls_before = embedder.calls
+
+    with scripted_agent([call('Forget', {'memory_id': 99}, 'a'), [{'content': 'done'}]]) as (agent, api, sink):
+        workspace.attach(agent)
+        agent.run('What is the cost of debt for MSFT?', sink=sink)
+
+    assert '<memory_context_protocol>' in message_text(api.requests[0]['messages'][0])
+
+    # Both model calls carry the block; the unrelated preference is left out
+    for request in api.requests:
+        block = message_text(request['messages'][-1])
+        assert f'- [1] lesson, high: {MSFT_LEASES}' in block
+        assert TABLES not in block
+
+    # One query embedding for the whole run, and injection does not boost rankings
+    assert embedder.calls == calls_before + 1
+    assert use_count(workspace, 1) == 0
+
+
+def test_auto_recall_injects_nothing_for_an_unrelated_request() -> None:
+    """No memory clears the relevance bar, so no block is added at all."""
+    workspace = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder(), auto_memory_recall=True)
+    workspace.memory.add(MSFT_LEASES, 'lesson', 'high')
+
+    with scripted_agent([[{'content': 'done'}]]) as (agent, api, sink):
+        workspace.attach(agent)
+        agent.run('Plan a trip to Paris.', sink=sink)
+
+    assert '<memories>' not in json.dumps(api.requests[0]['messages'][1:])
+
+
+def test_auto_recall_without_memory_is_rejected() -> None:
+    """auto_memory_recall reads the memory store, so it fails at construction without one."""
+    with pytest.raises(ValueError, match='auto_memory_recall needs memory=True'):
+        AgentWorkspace('analyst', auto_memory_recall=True)

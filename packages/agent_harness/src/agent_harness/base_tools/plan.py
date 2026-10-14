@@ -9,15 +9,16 @@ state as the tool-result string.
 Validation is hard-fail: invalid `status` values or more than one
 `in_progress` item return an error ToolResult and leave the plan unchanged.
 
-`self.plan` is injected into the hidden `_plan` parameter via `bind_tool`
-at registration time (see `agent.py`), so that underscore-prefixed parameter
-is hidden from the generated JSON Schema and never seen by the LLM.
+The tool reaches `agent.plan` and the run's sink through its hidden `_ctx`
+parameter (see `tooling/context.py`), filled in by the ToolHandler on every
+call. A successful update is pushed to the sink as `on_plan_update`.
 """
 from __future__ import annotations
 
 import json
 from typing import Annotated, Any, Literal, TypedDict
 
+from agent_harness.tooling.context import ToolContext
 from agent_harness.tooling.decorator import Param, agent_tool
 from agent_harness.tooling.result import ToolResult
 
@@ -130,7 +131,7 @@ def plan(
             '"completed"). The list replaces any existing plan.'
         )),
     ],
-    _plan: list[dict] | None = None,
+    _ctx: ToolContext | None = None,
 ) -> ToolResult:
     """Replace the entire plan with the given items.
 
@@ -146,8 +147,8 @@ def plan(
     rendered plan in a ToolResult after the update; returns error status (and leaves
     the plan unchanged) on invalid input.
     """
-    if _plan is None:
-        return ToolResult('error: Plan tool not bound to an agent state', status='error')
+    if _ctx is None:
+        return ToolResult('error: Plan tool called without a run context', status='error')
 
     coerced, err = _coerce(items)
 
@@ -159,7 +160,11 @@ def plan(
     if err is not None:
         return ToolResult(f'error: {err}', status='error')
 
-    _plan.clear()
-    _plan.extend({'text': item['text'], 'status': item['status']} for item in coerced)
+    current = _ctx.agent.plan
 
-    return ToolResult(_render(_plan), status='ok')
+    current.clear()
+    current.extend({'text': item['text'], 'status': item['status']} for item in coerced)
+
+    _ctx.sink.on_plan_update(current)
+
+    return ToolResult(_render(current), status='ok')

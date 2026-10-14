@@ -7,11 +7,10 @@ promotes the stub entry in the API tool list to the full schema in place,
 and returns the full description and parameter schema as text so the
 model can produce correct arguments on the next turn.
 
-The deferred-tool registry is captured at `Agent.__init__` time (it depends
-on which tools have been registered) and injected into the hidden
-`_deferred_tools` / `_api_tools` params via `bind_tool` (see `agent.py`).
-Those underscore-prefixed params are hidden from the generated JSON Schema by
-the decorator's convention, so the LLM never sees them.
+The deferred-tool registry (`agent.deferred_tools`) and the API tool list
+(`agent.tools`) are read off the agent through the hidden `_ctx` parameter
+(see `tooling/context.py`). Underscore-prefixed params are hidden from the
+generated JSON Schema by the decorator's convention, so the LLM never sees them.
 
 Loading pops the tool out of the registry — "still deferred" simply means
 "still in `agent.deferred_tools`"; there is no separate loaded-set.
@@ -19,8 +18,9 @@ Loading pops the tool out of the registry — "still deferred" simply means
 from __future__ import annotations
 
 import json
-from typing import Annotated, Any
+from typing import Annotated
 
+from agent_harness.tooling.context import ToolContext
 from agent_harness.tooling.decorator import Param, agent_tool
 from agent_harness.tooling.result import ToolResult
 
@@ -28,8 +28,7 @@ from agent_harness.tooling.result import ToolResult
 @agent_tool(name='LoadTool')
 def load_tool(
     names: Annotated[list[str], Param(description='Tool names to load full schemas for.')],
-    _deferred_tools: dict[str, dict[str, Any]] | None = None,
-    _api_tools: list[dict[str, Any]] | None = None,
+    _ctx: ToolContext | None = None,
 ) -> ToolResult:
     """
     Load the full schema(s) for one or more deferred tools. Use this whenever
@@ -40,8 +39,11 @@ def load_tool(
     schema is returned, the tool can be called normally for the rest of the
     conversation.
     """
-    registry = _deferred_tools if _deferred_tools is not None else {}
-    api_tools = _api_tools if _api_tools is not None else []
+    if _ctx is None:
+        return ToolResult('error: LoadTool called without a run context', status='error')
+
+    registry = _ctx.agent.deferred_tools
+    api_tools = _ctx.agent.tools
 
     if not names:
         return ToolResult('error: provide at least one tool name', status='error')

@@ -4,15 +4,14 @@ An `AgentWorkspace` is one agent's persistent home: a code sandbox, a skill libr
 
 ```python
 from agent_harness import Agent, AgentWorkspace
-from agent_harness.workspace import ApiEmbedder
 
 workspace = AgentWorkspace(
     'analyst',                                         # a name, not a path
     curated_skills='examples/skills',                  # human-reviewed skills (optional)
     env={'FMP_API_KEY': os.environ['FMP_API_KEY']},   # secrets the agent's code can read
     packages=['pandas'],                               # extra sandbox libraries
-    memory=True,                                       # long-term memory (off by default)
-    embedder=ApiEmbedder(),                            # semantic search (optional; keywords only without)
+    memory=True,                                       # long-term memory with semantic search (off by default)
+    auto_memory_recall=True,                                  # also inject matching memories each request (off by default)
 )
 
 agent = Agent(system='<role>You are an analyst.</role>')
@@ -51,8 +50,9 @@ The memory store sits in its own branch, not beside `sandbox/`, so code browsing
 |---|---|---|
 | `ExecuteCode` | `agent.add_tool` | Sandbox in `sandbox/`, with the workspace's `env`, `packages`, `j_screen` |
 | `<skills_protocol>` | `agent.extend_system_prompt` | The SKILL.md format and rules (cached system prompt) |
-| `<skills>` index | `agent.add_dynamic_provider` | Each skill's name and description, refreshed every turn |
+| `<skills>` index | `agent.extend_system_prompt` | Each skill's name and description, a snapshot taken at attach (cached system prompt) |
 | `Remember` / `Recall` / `Forget` | `agent.add_tool` | The agent's only access to its memory store (`memory=True` only) |
+| `<memory_context_protocol>` + `<memories>` provider | `agent.extend_system_prompt` + `agent.add_dynamic_provider` | Matching memories in the dynamic context (`auto_memory_recall=True` only) |
 | `<memory_protocol>` | `agent.extend_system_prompt` | What to save (sparingly), memory vs skills, Recall at the start of related work, never touch the store through code |
 
 `attach` raises if the agent already has `ExecuteCode` (it would keep that sandbox and ignore the workspace's) or has already run (the system prompt is fixed by then).
@@ -102,28 +102,25 @@ Forget(id)     ──► delete from all three tables
 |---|---|---|
 | `memories` | id, content, kind, importance, created_at, last_used_at, use_count | Source of truth |
 | `memories_fts` | Full-text index of content (FTS5) | Keyword search |
-| `memory_vectors` | (memory_id, model) → unit float32 vector | Semantic search; only with an `embedder` |
-
-```
-```
+| `memory_vectors` | (memory_id, model) → unit float32 vector | Semantic search |
 
 | Signal | Computed as | Range |
 |---|---|---|
-| relevance | `0.7·semantic + 0.3·keyword` with an embedder (NOOA's weights), keyword alone without | 0–1 |
+| relevance | `0.7·semantic + 0.3·keyword` (NOOA's weights) | 0–1 |
 | ↳ keyword | BM25 match as a fraction of the best match | 0–1 |
 | ↳ semantic | Cosine similarity; below the model's floor (0.27 for voyage-4) a memory is not a candidate | 0–1 |
 | recency | sigmoid of `ln(1 + uses) − 0.5·ln(1 + hours since last use)` (ACT-R style) | 0–1 |
 | importance | level ÷ 4 | 0.25–1 |
 
 - Nothing is min-max scaled across candidates: that turns a near-tie in relevance into a full 1-vs-0 gap importance can never overcome.
-- Memory reaches the model only through `Recall`; nothing is injected into its context automatically. The protocol tells it to Recall at the start of work that may relate to the past.
+- Memory reaches the model through `Recall`, and with `auto_memory_recall=True` also through the `<memories>` block (below). The protocol tells it to Recall at the start of work that may relate to the past.
 - Identical content is stored once; `Remember` returns the existing id.
 - The protocol tells the agent most tasks should save nothing or one or two memories.
 - The store's path never appears in any prompt or tool output. With `j_screen=True`, the `memory_store_access` rule blocks code that reads, copies, edits, deletes or searches for it (see `docs/tools/code_execution.md`). This is a guard against accidents, not a security boundary.
 
 ### Semantic search
 
-Pass `embedder=ApiEmbedder()` (OpenRouter `voyageai/voyage-4` by default, chosen in `reports/Embedding models for agent memory.md` for speed and finance-retrieval evidence; any object with `model`, `min_similarity` and `embed(texts)` works). Vectors are derived data:
+Built into `memory=True`: the default embedder is `ApiEmbedder()`, OpenRouter's `voyageai/voyage-4`, chosen in `reports/Embedding models for agent memory.md` for speed and finance-retrieval evidence. Pass `embedder=` only to override it (another model, or an offline fake in tests); any object with `model`, `min_similarity` and `embed(texts)` works. There is no keyword-only mode, but if the embedding API is down, search falls back to keywords on its own. Vectors are derived data:
 
 - **Save never fails because of embeddings.** The record is committed first; if the embedding call fails, the memory is still keyword-searchable and its vector is backfilled the next time a store opens with an embedder.
 - **Switching models** re-embeds into new `memory_vectors` rows keyed by model; records are untouched and vectors from different models are never compared.
@@ -139,7 +136,24 @@ Live comparison on the same five memories:
 | API throttling | nothing | "FMP returns HTTP 429 above ~300 req/min" |
 | NVDA investment spending | nothing | "Nvidia's FY2026 capex tripled" |
 
-Not in v1: automatic recall into the dynamic context, links between memories, background reflection (merge, decay, prune).
+### Automatic recall
+
+Opt-in with `auto_memory_recall=True` (needs `memory=True`). `DynamicMemoryContext` (`memory/dynamic_context.py`) is a dynamic context provider: before every model call it puts the memories matching the latest user message into a `<memories>` block in the trailing `<dynamic_context>` message, after the cached prefix.
+
+```
+latest user message ──► search(touch=False) ──► keep relevance ≥ 0.35 (top 3) ──► <memories>
+```
+
+| Rule | Why |
+|---|---|
+| Searches only when the latest user message changes | It runs every iteration; a long tool loop costs one embedding call |
+| `touch=False` | An injection is not a deliberate use; counting it would keep boosting whatever was injected |
+| Filters on `relevance`, not `score` | Score adds recency and importance, so an off-topic memory still scores ~0.5 |
+| `MIN_RELEVANCE = 0.35` | Keyword relevance tops out at 0.3, so a keyword-only match is never injected unasked |
+
+`Recall` stays the deep search: the `<memory_context_protocol>` tells the agent the block is a starting point.
+
+Not in v1: links between memories, background reflection (merge, decay, prune).
 
 ## Dependency direction
 

@@ -5,12 +5,12 @@ preference or event, tagged with an importance level. Three tables:
 
     memories         the records (source of truth)
     memories_fts     full-text index over content, for keyword search
-    memory_vectors   one embedding per (memory, model), for semantic search; only with an embedder
+    memory_vectors   one embedding per (memory, model), for semantic search
 
 Search ranks candidates from both indexes by
 
     score = relevance + 0.5 x recency + 0.5 x importance      (each 0..1)
-    relevance = 0.7 x semantic + 0.3 x keyword                (keyword alone without an embedder)
+    relevance = 0.7 x semantic + 0.3 x keyword
 
 where keyword is the BM25 match as a fraction of the best match, semantic is
 cosine similarity (candidates below the embedder's `min_similarity` are dropped), recency is a sigmoid of an ACT-R style activation from how
@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS memory_vectors (
 
 @dataclass(frozen=True)
 class Memory:
-    """One stored memory, with the score it ranked at (0 when not from a search)."""
+    """One stored memory, with the score it ranked at and its relevance to the query (0 when not from a search)."""
 
     id: int
     content: str
@@ -89,6 +89,7 @@ class Memory:
     last_used_at: float
     use_count: int
     score: float = 0.0
+    relevance: float = 0.0
 
 
 #     ================================
@@ -120,10 +121,11 @@ def _level(importance: int) -> str:
     return next(word for word, number in IMPORTANCE.items() if number == importance)
 
 
-def _to_memory(row: sqlite3.Row, score: float) -> Memory:
+def _to_memory(row: sqlite3.Row, score: float, relevance: float) -> Memory:
     return Memory(
         id=row['id'], content=row['content'], kind=row['kind'], importance=_level(row['importance']),
         created_at=row['created_at'], last_used_at=row['last_used_at'], use_count=row['use_count'], score=score,
+        relevance=relevance,
     )
 
 
@@ -133,9 +135,9 @@ def _to_memory(row: sqlite3.Row, score: float) -> Memory:
 
 
 class MemoryStore:
-    """Create, search and delete memories in one SQLite file. `embedder` adds semantic search."""
+    """Create, search and delete memories in one SQLite file, with keyword and semantic search."""
 
-    def __init__(self, path: Path, embedder: Embedder | None = None) -> None:
+    def __init__(self, path: Path, embedder: Embedder) -> None:
         self.path = path
         self.embedder = embedder
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -143,8 +145,7 @@ class MemoryStore:
         with self._connect() as db:
             db.executescript(SCHEMA)
 
-        if embedder is not None:
-            self.backfill()
+        self.backfill()
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -183,9 +184,6 @@ class MemoryStore:
 
     def backfill(self) -> int:
         """Embed every memory that has no vector for the current model. Returns how many were embedded."""
-        if self.embedder is None:
-            return 0
-
         with self._connect() as db:
             missing = db.execute(
                 'SELECT id, content FROM memories WHERE id NOT IN '
@@ -197,7 +195,7 @@ class MemoryStore:
 
     def _embed(self, items: list[tuple[int, str]]) -> int:
         """Store vectors for `items`; on any embedding failure, log and leave them for a later backfill."""
-        if self.embedder is None or not items:
+        if not items:
             return 0
 
         try:
@@ -227,6 +225,7 @@ class MemoryStore:
 
     def _keyword_scores(self, query: str) -> dict[int, float]:
         """{id: BM25 match as a fraction of the best match} for the top full-text candidates."""
+        
         match = _match_expression(query)
 
         if match is None:
@@ -247,9 +246,6 @@ class MemoryStore:
 
     def _semantic_scores(self, query: str) -> dict[int, float]:
         """{id: cosine similarity} for the closest memories at or above the embedder's floor."""
-        if self.embedder is None:
-            return {}
-
         try:
             query_vector = unpack(pack(self.embedder.embed([query])[0]))
 
@@ -289,17 +285,14 @@ class MemoryStore:
         for row in rows:
             memory_id = row['id']
 
-            if self.embedder is None:
-                relevance = keyword.get(memory_id, 0.0)
-
-            else:
-                relevance = SEMANTIC_WEIGHT * semantic.get(memory_id, 0.0) + KEYWORD_WEIGHT * keyword.get(memory_id, 0.0)
+            relevance = SEMANTIC_WEIGHT * semantic.get(memory_id, 0.0) + KEYWORD_WEIGHT * keyword.get(memory_id, 0.0)
 
             recency = _recency(row['use_count'], row['last_used_at'], now)
             importance = row['importance'] / top_level
 
-            scored.append(_to_memory(row, relevance + 0.5 * recency + 0.5 * importance))
+            scored.append(_to_memory(row, relevance + 0.5 * recency + 0.5 * importance, relevance))
 
+        # sort the memories by their score and only return the top limit from the list
         best = sorted(scored, key=lambda memory: memory.score, reverse=True)[:limit]
 
         if touch and best:

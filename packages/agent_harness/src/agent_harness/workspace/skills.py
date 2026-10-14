@@ -7,8 +7,8 @@ Skills live in two tiers under `skills/` in the sandbox workspace:
 
 The agent reads and writes skills with ExecuteCode like any other file; there
 is no skill tool. The format is set by `SKILLS_PROMPT`, and `SkillsIndex`
-enforces it softly: every turn it lists each skill with its tier and
-description, and flags a file that breaks the format.
+enforces it softly: at attach it lists each skill with its tier and
+description in the system prompt, and flags a file that breaks the format.
 """
 from __future__ import annotations
 
@@ -21,9 +21,11 @@ SLUG = re.compile(r'[a-z0-9]+(-[a-z0-9]+)*')
 CURATED = 'curated'
 LEARNED = 'learned'
 
-SKILLS_PROMPT = """<skills_protocol>
+SKILLS_PROMPT = """
+<skills_protocol>
 Skills are reusable procedures (how to do something), stored as files in your working directory.
-The current list is in the `<skills>` block, each tagged with its tier. Read and write them with ExecuteCode.
+The `<skills>` block lists them as of the start of this session, each tagged with its tier.
+Skills you write now are not listed until the next session. Read and write them with ExecuteCode.
 
 Tiers:
 - `skills/curated/<name>/SKILL.md`: reviewed by a human. Follow them. Never edit them: changes are discarded.
@@ -56,7 +58,8 @@ Rules:
 - Keep each skill short and focused; split a large one into several.
 - To update a learned skill, rewrite the whole file in the format above.
 - A learned skill marked INVALID in the `<skills>` block must be rewritten in the correct format.
-</skills_protocol>"""
+</skills_protocol>
+"""
 
 
 #     ================================
@@ -115,7 +118,7 @@ def _index_line(skill_file: Path, tier: str) -> str:
 
 
 class SkillsIndex:
-    """Dynamic context provider listing the curated and learned skills under one folder."""
+    """Renders the `<skills>` index of the curated and learned skills under one folder."""
 
     def __init__(self, skills_dir: Path) -> None:
         self.skills_dir = skills_dir

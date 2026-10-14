@@ -16,7 +16,8 @@ browsing the folders around its working directory never comes across it.
 
 `attach(agent)` syncs the curated skills, then plugs the workspace into a built
 agent through the agent's public API: the ExecuteCode and memory tools, the
-skills and memory protocols in the system prompt, and the `<skills>` index as a
+skills and memory protocols in the system prompt, and the `<skills>` index
+appended to the system prompt; with `auto_memory_recall=True`, also the `<memories>`
 dynamic context provider. The engine never imports this
 module; the dependency runs one way, workspace -> engine.
 """
@@ -28,7 +29,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from agent_harness.base_tools.code_execution.tool import execute_code_tool
-from agent_harness.workspace.memory import MEMORY_PROMPT, Embedder, MemoryStore, memory_tools
+from agent_harness.workspace.memory import (
+    MEMORY_CONTEXT_PROMPT, MEMORY_PROMPT, ApiEmbedder, Embedder, DynamicMemoryContext, MemoryStore, memory_tools,
+)
 from agent_harness.workspace.skills import CURATED, LEARNED, SKILLS_PROMPT, SLUG, SkillsIndex
 
 if TYPE_CHECKING:
@@ -80,19 +83,23 @@ class AgentWorkspace:
         j_screen: Run every ExecuteCode call past the code screen first.
         memory: Give the agent long-term memory (Remember / Recall / Forget tools and
             the memory protocol). Off by default; when off, no memory file is created.
-        embedder: Adds semantic search to memory, e.g. `ApiEmbedder()`. Without one,
-            Recall matches keywords only. Requires `memory=True`.
+        embedder: Override the embedder memory uses for semantic search. Defaults to
+            `ApiEmbedder()` (voyage-4 via OpenRouter); pass another `Embedder` to change
+            models or, in tests, to stay offline. Requires `memory=True`.
+        auto_memory_recall: Also show the memories most relevant to the latest request in a
+            `<memories>` dynamic context block (`DynamicMemoryContext`). Requires `memory=True`.
     """
 
     def __init__(
         self,
         name: str,
-        curated_skills: str | Path | None = None,
-        env: dict[str, str] | None = None,
-        packages: list[str] | None = None,
-        j_screen: bool = False,
-        memory: bool = False,
-        embedder: Embedder | None = None,
+        curated_skills: str | Path | None = None, 
+        env: dict[str, str] | None = None, 
+        packages: list[str] | None = None, 
+        j_screen: bool = False, 
+        memory: bool = False, 
+        auto_memory_recall: bool = False,
+        embedder: Embedder | None = None, 
     ) -> None:
 
         # A slug, not a path, so a workspace can only ever live under workspaces_dir()
@@ -102,13 +109,17 @@ class AgentWorkspace:
         if embedder is not None and not memory:
             raise ValueError('AgentWorkspace: embedder needs memory=True')
 
+        if auto_memory_recall and not memory:
+            raise ValueError('AgentWorkspace: auto_memory_recall needs memory=True')
+
         # Fail at construction, not at attach, when the curated source is missing
         if curated_skills is not None and not Path(curated_skills).is_dir():
             raise ValueError(f'AgentWorkspace: curated_skills folder not found: {curated_skills}')
 
+        # name of the workspace
         self.name = name
-        self.curated_source = Path(curated_skills).resolve() if curated_skills is not None else None
         self.root = workspaces_dir() / name
+        self.curated_source = Path(curated_skills).resolve() if curated_skills is not None else None
         self.sandbox_dir = self.root / 'sandbox'
         self.skills_dir = self.sandbox_dir / 'skills'
 
@@ -116,15 +127,21 @@ class AgentWorkspace:
         (self.skills_dir / LEARNED).mkdir(parents=True, exist_ok=True)
 
         # A caller-supplied workspace is never deleted, so files outlive the process
+        # this gets registered with the agent object
         self.code_tool = execute_code_tool(
             workspace=self.sandbox_dir, 
-            env=env, packages=packages, 
+            env=env, 
+            packages=packages, 
             j_screen=j_screen
         )
+
+        # create the skills index object
         self.skills = SkillsIndex(self.skills_dir)
 
         # Named after the workspace, in its own folder: see the module docstring
-        self.memory = MemoryStore(memory_dir() / f'{name}.sqlite', embedder) if memory else None
+        # Semantic search is part of memory, not an extra: the default embedder comes built in
+        self.memory = MemoryStore(memory_dir() / f'{name}.sqlite', embedder or ApiEmbedder()) if memory else None
+        self.auto_memory_recall = auto_memory_recall
 
     def attach(self, agent: Agent) -> None:
         """Plug this workspace into `agent`. Call once, before the agent's first run.
@@ -142,15 +159,31 @@ class AgentWorkspace:
         if self.memory is not None:
             agent.extend_system_prompt(MEMORY_PROMPT)
 
+        if self.auto_memory_recall:
+            agent.extend_system_prompt(MEMORY_CONTEXT_PROMPT)
+
+        # this method syncs the curated skills from the curated source to the skills directory
         self.sync_curated()
 
+        # register the code tool with the agent object
         agent.add_tool(self.code_tool)
 
+        # register the memory tools with the agent object
         if self.memory is not None:
             for tool in memory_tools(self.memory):
                 agent.add_tool(tool)
 
-        agent.add_dynamic_provider(self.skills)
+        # register the dynamic memory context provider with the agent object
+        # add it as a dynamic memory context provider so it gets injected every turn
+        if self.memory is not None and self.auto_memory_recall:
+            agent.add_dynamic_provider(DynamicMemoryContext(self.memory, agent))
+
+        # A snapshot after the sync, kept in the cached system prompt: skills written
+        # during this session are listed from the next attach on
+        index = self.skills()
+
+        if index is not None:
+            agent.extend_system_prompt(index)
 
     def sync_curated(self) -> None:
         """Replace `skills/curated/` with a fresh copy of the curated source.

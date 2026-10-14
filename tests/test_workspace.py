@@ -48,24 +48,27 @@ def harness_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('AGENT_HARNESS_HOME', str(tmp_path))
 
 
-def test_agent_writes_skills_with_code_and_sees_them_indexed(tmp_path: Path) -> None:
-    """Skills written through ExecuteCode land in the workspace and appear in the next request's index."""
+def test_agent_writes_skills_with_code_and_the_next_session_sees_them_indexed(tmp_path: Path) -> None:
+    """Skills written through ExecuteCode land in the workspace and are indexed in the next session's system prompt."""
     responses = [[tool_delta(tool_call('ExecuteCode', {'code': WRITE_SKILLS}, 'write'))], [{'content': 'done'}]]
 
     with scripted_agent(responses) as (agent, api, sink):
-        workspace = AgentWorkspace('analyst')
-        workspace.attach(agent)
+        AgentWorkspace('analyst').attach(agent)
 
         assert agent.run('Save a DCF skill.', sink=sink) == 'done'
 
-    # The protocol is in the cached system prompt, and the first request has no skills yet
+    # The protocol is in the system prompt; no skills existed at attach, so there is no index
     assert '<skills_protocol>' in message_text(api.requests[0]['messages'][0])
-    assert '<skills>' not in message_text(api.requests[0]['messages'][-1])
+    assert '<skills>\n' not in message_text(api.requests[1]['messages'][0])
 
-    # After the code ran, the index lists the valid skill and flags the malformed one
-    index = message_text(api.requests[1]['messages'][-1])
-    assert '- dcf-valuation [learned]: Value a company with a 5-year DCF.' in index
-    assert '- notes [learned]: INVALID (missing --- frontmatter block), rewrite it' in index
+    # The next session's system prompt lists the valid skill and flags the malformed one
+    with scripted_agent([[{'content': 'ok'}]]) as (agent, api, sink):
+        AgentWorkspace('analyst').attach(agent)
+        agent.run('Anything.', sink=sink)
+
+    system = message_text(api.requests[0]['messages'][0])
+    assert '- dcf-valuation [learned]: Value a company with a 5-year DCF.' in system
+    assert '- notes [learned]: INVALID (missing --- frontmatter block), rewrite it' in system
 
     # The files are real and live under the workspace's sandbox
     assert (tmp_path / 'workspaces' / 'analyst' / 'sandbox' / 'skills' / 'learned' / 'dcf-valuation' / 'SKILL.md').exists()

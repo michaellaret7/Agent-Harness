@@ -16,6 +16,7 @@ from parallel import APIConnectionError, APIStatusError, APITimeoutError, Parall
 from parallel.types import AdvancedSearchSettingsParam, WebSearchResult
 from parallel.types.shared_params import SourcePolicy
 
+from agent_harness.tooling.context import ToolContext
 from agent_harness.tooling.decorator import Param, agent_tool
 from agent_harness.tooling.result import ToolResult
 
@@ -34,7 +35,7 @@ def search(
     include_domains: Annotated[list[str] | None, Param(description='Optional allowlist of apex domains (e.g. ["arxiv.org", "nature.com"]) or wildcard TLDs (".gov", ".edu"). Restrictive — use only when single-publisher or compliance scope is required.')] = None,
     exclude_domains: Annotated[list[str] | None, Param(description='Optional blocklist of apex domains. Combined with include_domains, total must be <= 200.')] = None,
     after_date: Annotated[str | None, Param(description='Recency filter; YYYY-MM-DD. Only results published on or after this date.')] = None,
-    _client_model: str | None = None,
+    _ctx: ToolContext | None = None,
 ) -> ToolResult:
     """
     Web search via the Parallel Search API. Returns ranked URLs with extended
@@ -76,8 +77,8 @@ def search(
                 mode=mode,
                 session_id=uuid.uuid4().hex,
                 advanced_settings=advanced,
-                # Injected by Agent via bind_tool; None when the model is unresolved (vLLM).
-                client_model=_client_model,
+                # Parallel tailors results to the consuming model; read at call time, so it is resolved (vLLM too)
+                client_model=_ctx.agent.model if _ctx else None,
             )
 
     # Reason: APITimeoutError subclasses APIConnectionError, so it must be caught first.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import inspect
 import sys
 import threading
 from typing import Any, Callable, Iterable, cast
@@ -9,7 +10,7 @@ from pydantic import BaseModel
 
 from agent_harness.client import build_client
 from agent_harness.context.renderer import ContextRenderer, DynamicContextProvider
-from agent_harness.tooling.decorator import bind_tool
+from agent_harness.tooling.context import CONTEXT_PARAM
 from agent_harness.gates import Gate
 from agent_harness.hooks import Hook, HookEvent
 from agent_harness.loop import execution_loop
@@ -85,6 +86,7 @@ class Agent:
         self.tool_functions: dict[str, Callable[..., ToolResult]] = {}
         self.deferred_tools: dict[str, dict[str, Any]] = {}
         self.parallel_tools: set[str] = set()
+        self.context_tools: set[str] = set()  # tools that declare `_ctx`; ToolHandler fills it per call
 
         # Hook registry: event -> [(tool_filter, callback)]. Driven by HookSink.
         self.hooks: dict[str, list[tuple[frozenset[str] | None, Hook]]] = {}
@@ -109,11 +111,11 @@ class Agent:
         self.prompt_extensions: list[str] = []
 
         # ---- Register base tools ---- #
-        # Parallel tailors results to the consuming model (`client_model`).
-        self.add_tool(bind_tool(search, _client_model=self.model))
-        self.add_tool(bind_tool(extract, _client_model=self.model))
-        self.add_tool(bind_tool(load_tool, _deferred_tools=self.deferred_tools, _api_tools=self.tools))
-        self.add_tool(bind_tool(plan, _plan=self.plan))
+        # Each reads the agent state it needs (model, plan, tool registry) from its `_ctx`.
+        self.add_tool(search)
+        self.add_tool(extract)
+        self.add_tool(plan)
+        self.add_tool(load_tool)
 
         if tools:
             for tool in tools:
@@ -123,7 +125,6 @@ class Agent:
         # agents without subagents never see the tool.
         if subagents:
             self.subagents = {spec.name: spec for spec in subagents}
-
             self.add_tool(make_deploy_subagent_tool(self.subagents)) # Only add the subagent deploy tool if subagents are passed
 
         # Owns the model-facing formatting of messages (system message + per-request render)
@@ -229,6 +230,11 @@ class Agent:
         # may be a functools.partial (bind_tool), which drops the `.tool` attr.
         if tool.get('safe_parallel', False):
             self.parallel_tools.add(name)
+
+        # Read off the signature (inspect follows partials and functools.wraps), so any tool,
+        # decorated or hand-written, receives the run context just by declaring `_ctx`
+        if CONTEXT_PARAM in inspect.signature(tool['function']).parameters:
+            self.context_tools.add(name)
 
     def add_hook(
         self,
