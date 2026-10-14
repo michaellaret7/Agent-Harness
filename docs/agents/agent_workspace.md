@@ -141,15 +141,15 @@ Live comparison on the same five memories:
 Opt-in with `auto_memory_recall=True` (needs `memory=True`). `DynamicMemoryContext` (`memory/dynamic_context.py`) is a dynamic context provider: before every model call it puts the memories matching the latest user message into a `<memories>` block in the trailing `<dynamic_context>` message, after the cached prefix.
 
 ```
-latest user message ──► search(touch=False) ──► keep relevance ≥ 0.35 (top 3) ──► <memories>
+latest user message ──► search(touch=False) ──► keep semantic matches (top 3) ──► <memories>
 ```
 
 | Rule | Why |
 |---|---|
 | Searches only when the latest user message changes | It runs every iteration; a long tool loop costs one embedding call |
 | `touch=False` | An injection is not a deliberate use; counting it would keep boosting whatever was injected |
-| Filters on `relevance`, not `score` | Score adds recency and importance, so an off-topic memory still scores ~0.5 |
-| `MIN_RELEVANCE = 0.35` | Keyword relevance tops out at 0.3, so a keyword-only match is never injected unasked |
+| Injects only semantic matches (above the embedder's floor), not by `score` | Score adds recency and importance, so an off-topic memory still scores ~0.5; one shared keyword is not enough |
+| No cutoff of its own | The floor is measured per model (0.27 for voyage-4); a fixed relevance cutoff tuned on one embedder silently blocked every real voyage-4 match (cosine 0.30–0.40) |
 
 `Recall` stays the deep search: the `<memory_context_protocol>` tells the agent the block is a starting point.
 

@@ -5,21 +5,23 @@ before every model call, and its `<memories>` block lands in the trailing
 `<dynamic_context>` message, after the cached prefix, so it never breaks the
 prompt cache.
 
-    latest user message ──► store.search(touch=False) ──► keep relevance >= MIN_RELEVANCE ──► <memories>
+    latest user message ──► store.search(touch=False) ──► keep semantic matches (top LIMIT) ──► <memories>
 
 Three rules keep it cheap and honest:
 - It searches only when the latest user message changes; every other call
   reuses the cached block, so a long tool loop costs one embedding call.
 - `touch=False`: an injection is not a deliberate use. Counting it would keep
   boosting whatever was injected, a loop that locks the same memories on top.
-- It filters on relevance, not score. Score adds recency and importance, so an
-  off-topic memory still scores well; only relevance says it matches the request.
+- It injects only semantic matches: memories above the embedder's measured
+  similarity floor. Score adds recency and importance, so an off-topic memory
+  still scores well, and one shared keyword is not enough to inject unasked.
+  The floor is measured per model, so no cutoff here has to be tuned to one.
 """
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agent_harness.workspace.memory.store import MemoryStore
+from agent_harness.workspace.memory.store import CANDIDATES, MemoryStore
 from agent_harness.workspace.memory.tools import memory_line
 
 if TYPE_CHECKING:
@@ -34,10 +36,6 @@ It is a starting point, not a full search: call Recall for subjects it does not 
 
 # Kept small: only the clearly relevant few, Recall is there for more
 LIMIT = 3
-
-# Keyword relevance tops out at 0.3 (its weight), so a keyword-only match never clears this:
-# a memory needs real semantic similarity to be injected unasked
-MIN_RELEVANCE = 0.35
 
 
 #     ================================
@@ -89,8 +87,9 @@ class DynamicMemoryContext:
             return None
 
         # search the memory store for relevant context 
-        hits = self.store.search(query, LIMIT, touch=False)
-        relevant = [memory for memory in hits if memory.relevance >= MIN_RELEVANCE]
+        # Rank every candidate, so keyword-only hits never crowd semantic matches out of the top LIMIT
+        hits = self.store.search(query, CANDIDATES, touch=False)
+        relevant = [memory for memory in hits if memory.semantic > 0][:LIMIT]
 
         if not relevant:
             return None

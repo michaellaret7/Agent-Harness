@@ -79,7 +79,10 @@ CREATE TABLE IF NOT EXISTS memory_vectors (
 
 @dataclass(frozen=True)
 class Memory:
-    """One stored memory, with the score it ranked at and its relevance to the query (0 when not from a search)."""
+    """One stored memory, with the score it ranked at and its semantic similarity to the query.
+
+    `semantic` is 0 when the memory was not a semantic match (below the embedder's floor) or not from a search.
+    """
 
     id: int
     content: str
@@ -89,7 +92,7 @@ class Memory:
     last_used_at: float
     use_count: int
     score: float = 0.0
-    relevance: float = 0.0
+    semantic: float = 0.0
 
 
 #     ================================
@@ -121,11 +124,11 @@ def _level(importance: int) -> str:
     return next(word for word, number in IMPORTANCE.items() if number == importance)
 
 
-def _to_memory(row: sqlite3.Row, score: float, relevance: float) -> Memory:
+def _to_memory(row: sqlite3.Row, score: float, semantic: float) -> Memory:
     return Memory(
         id=row['id'], content=row['content'], kind=row['kind'], importance=_level(row['importance']),
         created_at=row['created_at'], last_used_at=row['last_used_at'], use_count=row['use_count'], score=score,
-        relevance=relevance,
+        semantic=semantic,
     )
 
 
@@ -290,7 +293,7 @@ class MemoryStore:
             recency = _recency(row['use_count'], row['last_used_at'], now)
             importance = row['importance'] / top_level
 
-            scored.append(_to_memory(row, relevance + 0.5 * recency + 0.5 * importance, relevance))
+            scored.append(_to_memory(row, relevance + 0.5 * recency + 0.5 * importance, semantic.get(memory_id, 0.0)))
 
         # sort the memories by their score and only return the top limit from the list
         best = sorted(scored, key=lambda memory: memory.score, reverse=True)[:limit]
