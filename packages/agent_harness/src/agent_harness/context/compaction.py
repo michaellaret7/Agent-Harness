@@ -296,8 +296,12 @@ class Compactor:
 
         sink.on_compaction(CompactionEvent(before, after, len(span), segment, summary is not None))
 
+        # What compaction cannot shrink: the system message, the pinned task, and the request
+        # overhead outside messages (tool schemas, dynamic context)
         if after >= self.config.threshold * self.window:
             raise ContextOverflowError(
-                f'history is ~{after:,} tokens after compaction, over {self.config.threshold:.0%} of '
-                f'{self.window:,}: a single message is too large'
+                f'request is ~{after:,} tokens after compaction, over {self.config.threshold:.0%} of '
+                f'{self.window:,}: ~{self._overhead:,} is tool schemas and dynamic context, '
+                f'~{estimate_tokens(messages[:len(pinned) + 2]):,} the system message and pinned task. '
+                'Raise context_window or shrink what is always sent.'
             )

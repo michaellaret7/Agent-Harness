@@ -361,13 +361,14 @@ class LangfuseSink(BaseSink):
         # A point-in-time event under the current iteration; the summary call itself
         # is already captured as a generation by the langfuse.openai patch.
         try:
+            # input/output, not metadata: the Preview tab only renders these two
             self._client.create_event(
                 name='compaction',
-                metadata={
-                    'tokens_before': event.tokens_before,
+                input={'tokens_before': event.tokens_before, 'archived_messages': event.archived_messages},
+                output={
                     'tokens_after': event.tokens_after,
-                    'archived_messages': event.archived_messages,
                     'segment': event.segment,
+                    'summarized': event.summarized,
                 },
                 level='DEFAULT' if event.summarized else 'WARNING',
                 status_message=None if event.summarized else 'summary failed; archive pointer only',
