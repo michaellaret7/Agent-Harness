@@ -1,6 +1,8 @@
 """Context compaction contracts. Run: uv run --all-packages pytest tests/test_compaction.py"""
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -8,6 +10,7 @@ import pytest
 from openai import OpenAI
 
 from agent_harness.client import resolve_context_window
+from agent_harness.context.archive import HistoryArchive
 from agent_harness.context.compaction import CompactionConfig, estimate_tokens, find_cut
 from agent_harness.messages import assistant_msg, system_msg, tool_msg, user_msg
 from contract_support import tool_call
@@ -114,3 +117,35 @@ def test_cut_respects_the_budget_and_spares_the_system_message() -> None:
     budget = estimate_tokens(messages[-1:])
 
     assert find_cut(messages, budget) == len(messages) - 1
+
+
+#     ================================
+# --> Archive
+#     ================================
+
+
+def test_archive_segments_round_trip_and_number_in_order(tmp_path: Path) -> None:
+    """Each write is a new numbered segment whose lines load back to the original messages."""
+    archive = HistoryArchive(tmp_path / 'history')
+    first = [user_msg('task'), *tool_exchange('a', 'résultat ✓')]
+    second = [assistant_msg('more'), user_msg('next')]
+
+    first_path = archive.write(first)
+    second_path = archive.write(second)
+
+    assert first_path.startswith('history/') and first_path.endswith('/segment_001.jsonl')
+    assert second_path.endswith('/segment_002.jsonl')
+    assert Path(first_path).parent == Path(second_path).parent
+
+    for relative, original in ((first_path, first), (second_path, second)):
+        lines = (tmp_path / relative).read_text(encoding='utf-8').splitlines()
+
+        assert [json.loads(line) for line in lines] == original
+
+
+def test_archive_sessions_never_share_a_folder(tmp_path: Path) -> None:
+    """Two archives on the same root, created back to back, write to different sessions."""
+    one = HistoryArchive(tmp_path / 'history').write([user_msg('a')])
+    two = HistoryArchive(tmp_path / 'history').write([user_msg('b')])
+
+    assert Path(one).parent != Path(two).parent
