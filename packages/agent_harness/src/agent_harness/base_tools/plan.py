@@ -43,7 +43,7 @@ class PlanItem(TypedDict):
 #     ================================
 
 
-def _render(plan: list[dict]) -> str:
+def render_plan(plan: list[dict]) -> str:
     """Render the plan as a markdown-ish checklist for the model to read back."""
     if not plan:
         return 'Plan is empty.'
@@ -167,4 +167,4 @@ def plan(
 
     _ctx.sink.on_plan_update(current)
 
-    return ToolResult(_render(current), status='ok')
+    return ToolResult(render_plan(current), status='ok')
