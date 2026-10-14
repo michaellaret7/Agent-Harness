@@ -15,6 +15,7 @@ from pathlib import Path
 from agent_harness.base_tools.code_execution.config import SandboxConfig
 from agent_harness.base_tools.code_execution.tool import execute_code, execute_code_tool
 from agent_harness.base_tools.code_execution import sandbox as sandbox_module
+from agent_harness.base_tools.code_execution import tool as tool_module
 from agent_harness.base_tools.code_execution.sandbox import SubprocessSandbox
 from agent_harness.tooling.decorator import bind_tool
 
@@ -136,6 +137,49 @@ def check_credentials_note() -> None:
     assert 'os.environ' not in execute_code.tool['description']
 
 
+def check_recursive_agents() -> None:
+    """Only the flag passes the OpenRouter key and teaches sub-agents; a key in `env` alone does neither."""
+    real_key = os.environ.get('OPENROUTER_API_KEY')
+    os.environ['OPENROUTER_API_KEY'] = 'sk-test-recursive'
+
+    try:
+        tool = execute_code_tool(SandboxConfig(recursive_agents=True))
+
+        assert 'Sub-agents:' in tool['description'] and 'sk-test-recursive' not in tool['description']
+        assert tool['function'](code="import os; os.environ['OPENROUTER_API_KEY']").payload == "'sk-test-recursive'"
+
+        # Passing the key by hand gives the kernel the key but not the sub-agent pattern
+        manual = execute_code_tool(SandboxConfig(env={'OPENROUTER_API_KEY': 'sk-test-recursive'}))
+        assert 'Sub-agents:' not in manual['description']
+
+        # Inside a host agent's kernel, built agents could not build agents, so the flag is refused
+        tool_module.SANDBOX_DEPTH = 1
+
+        try:
+            execute_code_tool(SandboxConfig(recursive_agents=True))
+            raise AssertionError('recursive_agents at the depth limit should raise')
+
+        except RuntimeError as e:
+            assert 'MAX_AGENT_DEPTH' in str(e), e
+
+        finally:
+            tool_module.SANDBOX_DEPTH = 0
+
+        # Without a host key there is nothing to pass, so it fails at construction
+        del os.environ['OPENROUTER_API_KEY']
+
+        try:
+            execute_code_tool(SandboxConfig(recursive_agents=True))
+            raise AssertionError('recursive_agents without a key should raise')
+
+        except RuntimeError as e:
+            assert 'OPENROUTER_API_KEY' in str(e), e
+
+    finally:
+        if real_key is not None:
+            os.environ['OPENROUTER_API_KEY'] = real_key
+
+
 def main() -> None:
     os.environ['SANDBOX_SECRET'] = 'must-not-leak'
 
@@ -150,6 +194,9 @@ def main() -> None:
 
     check_credentials_note()
     print('credentials note passed')
+
+    check_recursive_agents()
+    print('recursive agents passed')
 
     print('all sandbox checks passed')
 

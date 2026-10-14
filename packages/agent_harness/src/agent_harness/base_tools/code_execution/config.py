@@ -28,8 +28,14 @@ class SandboxConfig:
             (`code_execution/screening.py`) before it executes; a blocked call
             returns an error result and never reaches the kernel. Needs
             `OPENROUTER_API_KEY`; `execute_code_tool` fails fast if it is missing.
+        recursive_agents: Let model code build and run sub-agents with `agent_harness`.
+            Copies the host's OpenRouter credentials into the kernel and teaches
+            the pattern in the tool description. Off by default: model code can
+            then read a billing key. `execute_code_tool` fails fast if the key is
+            missing or the sandbox is already at the agent depth limit.
     """
 
     env: Mapping[str, str] = field(default_factory=dict)
     packages: Sequence[str] = ()
     j_screen: bool = False
+    recursive_agents: bool = False

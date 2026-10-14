@@ -28,6 +28,7 @@ execute_code_tool(
         env={'FMP_API_KEY': key},  # the only host secrets model code can read from its environment
         packages=['pandas'],       # extras on top of the host venv's libraries
         j_screen=True,             # screen every call before it runs (see Code screen)
+        recursive_agents=False,    # let model code build sub-agents (see Agents built in model code)
     ),
     working_dir=Path('out'),       # default is a temp dir removed on exit
 )
@@ -73,7 +74,16 @@ No filesystem, network, or resource limits: the kernel runs as the host user and
 
 ## Agents built in model code
 
-The kernel runs on the host's Python, so model code can `from agent_harness import Agent`, define `@agent_tool` functions, build an agent and `print(agent.run(task))`. Pass the provider credentials (e.g. `OPENROUTER_API_KEY`, `OPENROUTER_API_URL`) through `SandboxConfig(env=...)`. Langfuse keys and the host's `LANGFUSE_SESSION_ID` are forwarded automatically, so these agents trace into the parent's session as sibling traces.
+The kernel runs on the host's Python, so model code can `from agent_harness import Agent`, define `@agent_tool` functions, build an agent and `print(agent.run(task))`. Turn it on with `SandboxConfig(recursive_agents=True)`:
+
+```
+recursive_agents=True
+  ├─ copies OPENROUTER_API_KEY (+ OPENROUTER_API_URL if set) from the host into the kernel's env
+  ├─ adds the sub-agent pattern to the ExecuteCode description
+  └─ raises at construction if the host has no key, or this process is already at the depth limit
+```
+
+The flag is the only switch: a key passed by hand through `env=` reaches the kernel but does not teach the pattern. It is off by default because model code can then read a billing key (and print it into the conversation and traces); the code screen does not watch `os.environ` reads. For a fixed roster of reviewed sub-agents whose key stays on the host, prefer `Agent(subagents=[SubAgentConfig(...)])`. Langfuse keys and the host's `LANGFUSE_SESSION_ID` are forwarded automatically, so these agents trace into the parent's session as sibling traces.
 
 Recursion stops after one level. Each sandbox sets `AGENT_HARNESS_SANDBOX_DEPTH` to its parent's depth + 1 (after caller `env`, so it cannot be overridden), and `Agent.__init__` refuses above `MAX_AGENT_DEPTH` (1):
 

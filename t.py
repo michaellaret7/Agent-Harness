@@ -8,8 +8,8 @@
            └─ sub-agent GOOGL ┘
       └─ host compares the four summaries
 
-The sandbox gets the OpenRouter key through `env=`, which is what makes the
-ExecuteCode prompt teach the sub-agent pattern. Sub-agents built at depth 1
+`SandboxConfig(recursive_agents=True)` passes the host's OpenRouter key into the
+kernel and makes the ExecuteCode prompt teach the sub-agent pattern. Sub-agents built at depth 1
 cannot build agents of their own.
 """
 
@@ -21,7 +21,6 @@ from dotenv import load_dotenv
 from agent_harness import Agent
 from agent_harness.base_tools.code_execution.config import SandboxConfig
 from agent_harness.base_tools.code_execution.tool import execute_code_tool
-from hedge_fund import sandbox
 
 load_dotenv()
 
@@ -40,12 +39,12 @@ Do the per-ticker work with concurrent sub-agents, all in ONE ExecuteCode call:
 - Pass timeout=900 to ExecuteCode.
 
 Then compare the four companies in one table and end with a one-line verdict."""
-sandbox = sandbox.SandboxConfig(
-    env={
-        'FMP_API_KEY': os.environ['FMP_API_KEY'],
-        'OPENROUTER_API_KEY': os.environ['OPENROUTER_API_KEY'],
-    },
+
+sandbox = SandboxConfig(
+    env={'FMP_API_KEY': os.environ['FMP_API_KEY']},
+    recursive_agents=True,
 )
+
 execute_code = execute_code_tool(sandbox)
 
 agent = Agent(
