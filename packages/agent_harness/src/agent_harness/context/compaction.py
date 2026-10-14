@@ -172,6 +172,7 @@ def summarize(client: OpenAI, model: str, span: list[dict[str, Any]], max_tokens
     tool-pairing rules and keeps the model from continuing the conversation.
     Only provider errors are caught; anything else is a bug and propagates.
     """
+    # this is where the actual compaction happens
     try:
         response = client.chat.completions.create(
             model=model,
