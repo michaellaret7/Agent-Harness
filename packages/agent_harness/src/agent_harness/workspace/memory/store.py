@@ -54,6 +54,11 @@ IMPORTANCE = {'low': 1, 'medium': 2, 'high': 3, 'critical': 4}
 # Candidates each index contributes before scoring
 CANDIDATES = 50
 
+# At or above this cosine a new memory is the same fact as a stored one, so it is not stored again.
+# Measured on voyage-4 (2026-10-15): reworded duplicates 0.69-0.97, related-but-distinct facts up to 0.85;
+# the duplicates below this line are left to the curator's judge
+DUPLICATE_SIMILARITY = 0.90
+
 # Texts per embedding request: embedding APIs reject oversized batches
 EMBED_BATCH = 128
 
@@ -212,22 +217,56 @@ class MemoryStore:
                 yield db
 
     def add(self, content: str, kind: str, importance: str) -> tuple[int, bool]:
-        """Store a memory. Returns (id, created); identical content returns the existing id instead."""
+        """Store a memory. Returns (id, created).
+
+        Identical content or a near-duplicate (cosine >= DUPLICATE_SIMILARITY) is not stored again:
+        the existing id comes back, raised to the higher importance of the two.
+        """
         content = content.strip()
         now = time.time()
 
+        # Embedded before the write: a failed embedding skips the duplicate check, never loses the memory
+        vector = self._embed_one(content)
+        twin = self._near_duplicate(vector) if vector is not None else None
+
         with self._connect() as db:
             existing = db.execute('SELECT id FROM memories WHERE content = ?', (content,)).fetchone()
+            twin = existing['id'] if existing is not None else twin
 
-            if existing is not None:
-                return existing['id'], False
+            if twin is not None:
+                db.execute(
+                    'UPDATE memories SET importance = MAX(importance, ?) WHERE id = ?', (IMPORTANCE[importance], twin)
+                )
+
+                return twin, False
 
             memory_id = _insert(db, content, kind, IMPORTANCE[importance], now, now, 0)
 
-        # After the commit: a failed embedding must never lose the memory itself
-        self._embed([(memory_id, content)])
+            # No vector means the API was down; backfill embeds it the next time a store opens
+            if vector is not None:
+                db.execute(
+                    'INSERT INTO memory_vectors (memory_id, model, vector) VALUES (?, ?, ?)',
+                    (memory_id, self.embedder.model, vector.tobytes()),
+                )
 
         return memory_id, True
+
+    def _embed_one(self, content: str) -> array | None:
+        """The unit vector for `content`, or None when the embedding API fails."""
+        try:
+            return unpack(pack(self.embedder.embed([content])[0]))
+
+        except Exception as e:
+            print(f'[MEMORY] embedding failed, saved without a duplicate check: {e!r}', file=sys.stderr)
+
+            return None
+
+    def _near_duplicate(self, vector: array) -> int | None:
+        """Id of the stored memory closest to `vector` when it is at or above DUPLICATE_SIMILARITY."""
+        scores = {memory_id: similarity(vector, other) for memory_id, other in self.vectors().items()}
+        closest = max(scores, key=scores.__getitem__, default=None)
+
+        return closest if closest is not None and scores[closest] >= DUPLICATE_SIMILARITY else None
 
     def backfill(self) -> int:
         """Embed every memory that has no vector for the current model. Returns how many were embedded."""

@@ -75,7 +75,8 @@ def test_remembered_lesson_is_recalled_in_a_later_task() -> None:
 
 def test_ranking_weighs_relevance_and_importance() -> None:
     """The best match on the query's words ranks first; importance breaks near-ties."""
-    store = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder()).memory
+    # Keyword-only: to an embedder both NVDA memories say the same thing, so it would keep just one
+    store = AgentWorkspace('analyst', memory=True, embedder=DownEmbedder()).memory
     store.add('NVDA reports earnings in late February.', 'fact', 'low')
     store.add('NVDA earnings beats have preceded falls three quarters running.', 'lesson', 'critical')
     store.add('The user prefers tables over prose for valuations.', 'preference', 'medium')
@@ -435,7 +436,7 @@ def test_replace_swaps_a_cluster_for_one_memory_with_its_history() -> None:
     """The consolidated memory is searchable, keeps the cluster's history, and the originals are gone."""
     store = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder()).memory
     first, _ = store.add(MSFT_LEASES, 'lesson', 'high')
-    second, _ = store.add('MSFT lease debt matters.', 'fact', 'low')
+    second, _ = store.add('MSFT debt matters.', 'fact', 'low')
     other, _ = store.add(NVDA_RESULTS, 'fact', 'medium')
     set_history(store, first, created_at=100.0, last_used_at=150.0, uses=1)
     set_history(store, second, created_at=200.0, last_used_at=250.0, uses=4)
@@ -460,3 +461,21 @@ def test_delete_many_clears_every_index() -> None:
     assert store.count() == 0
     assert vector_models(store.path) == []
     assert store.search('MSFT NVDA earnings leases', limit=5, touch=False) == []
+
+
+def test_near_duplicates_are_caught_on_save() -> None:
+    """A reworded memory returns the stored one, raised to the higher importance; a related one is still saved."""
+    store = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder()).memory
+    original, _ = store.add(MSFT_LEASES, 'lesson', 'low')
+
+    twin, created = store.add('MSFT leasing counts as debt.', 'fact', 'critical')
+
+    assert (twin, created) == (original, False)
+    assert store.get_many([original])[0].importance == 'critical'
+
+    # Shares two of three concepts (cosine 0.82): related, not the same fact, so it is the judge's call later
+    related, created = store.add('MSFT debt matters.', 'fact', 'low')
+
+    assert created and related != original
+    assert store.count() == 2
+    assert vector_models(store.path) == [(original, 'concepts-v1'), (related, 'concepts-v1')]
