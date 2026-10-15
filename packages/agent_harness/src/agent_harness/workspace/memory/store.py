@@ -136,10 +136,10 @@ def _delete(db: sqlite3.Connection, ids: list[int]) -> int:
     return deleted
 
 
-def _to_memory(row: sqlite3.Row, score: float = 0.0, semantic: float = 0.0) -> Memory:
+def _to_memory(row: sqlite3.Row, rank: float = 0.0, semantic: float = 0.0) -> Memory:
     return Memory(
         id=row['id'], content=row['content'], kind=row['kind'], importance=_level(row['importance']),
-        created_at=row['created_at'], last_used_at=row['last_used_at'], use_count=row['use_count'], score=score,
+        created_at=row['created_at'], last_used_at=row['last_used_at'], use_count=row['use_count'], score=rank,
         semantic=semantic,
     )
 

@@ -102,7 +102,7 @@ def _render(memories: list[Memory]) -> str:
     """One line per memory, oldest first: id, date saved, kind, importance, content."""
     lines = []
 
-    for memory in sorted(memories, key=lambda memory: memory.created_at):
+    for memory in memories:
         saved = time.strftime('%Y-%m-%d', time.localtime(memory.created_at))
         lines.append(f'[{memory.id}] saved {saved} | {memory.kind} | {memory.importance} | {memory.content}')
 

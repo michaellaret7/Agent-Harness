@@ -104,7 +104,25 @@ A tool module exports a `tool` dict with keys `name`, `description`, `parameters
 
 ### Agent workspace (`workspace/`)
 
-`AgentWorkspace(name, curated_skills=, sandbox=SandboxConfig(), memory=False, auto_memory_recall=False, embedder=None)` is one agent's persistent folder at `~/.agent_harness/workspaces/<name>/` (base overridable via `AGENT_HARNESS_HOME`; never inside the repo): a sandbox (`<root>/sandbox`, the ExecuteCode workspace) with a two-tier skill library: `sandbox/skills/curated/` (human-reviewed, re-copied from `curated_skills=` on every attach, so agent edits never persist) and `sandbox/skills/learned/` (the agent's own), plus opt-in long-term memory (`memory=True`) at `~/.agent_harness/memory/<name>.sqlite` (SQLite: records + FTS5 keyword index + `memory_vectors` for semantic search, with voyage-4 via `ApiEmbedder` built in and `embedder=` as an override; kept apart from the sandbox, reached only through `Remember`/`Recall`/`Forget`). `workspace.attach(agent)` (before the first run) syncs curated skills and adds ExecuteCode and the memory tools, the skills and memory protocols to the system prompt, and the tier-tagged `<skills>` index (a snapshot at attach) to the system prompt. Memory reaches the model through `Recall`, and with `auto_memory_recall=True` also through `DynamicMemoryContext`, a dynamic context provider that injects the memories matching the latest user message. Agents read and write skills with ExecuteCode; the index flags malformed files. One-way dependency: `workspace/` imports the engine, never the reverse. Full reference: `docs/agents/agent_workspace.md`.
+`AgentWorkspace(name, curated_skills=, sandbox=SandboxConfig(), memory=False, auto_memory_recall=False, curate_memory=False, embedder=None)` is one agent's persistent folder at `~/.agent_harness/workspaces/<name>/` (base overridable via `AGENT_HARNESS_HOME`; never inside the repo): a sandbox (`<root>/sandbox`, the ExecuteCode workspace) with a two-tier skill library: `sandbox/skills/curated/` (human-reviewed, re-copied from `curated_skills=` on every attach, so agent edits never persist) and `sandbox/skills/learned/` (the agent's own), plus opt-in long-term memory (`memory=True`) at `~/.agent_harness/memory/<name>.sqlite` (SQLite: records + FTS5 keyword index + `memory_vectors` for semantic search, with voyage-4 via `ApiEmbedder` built in and `embedder=` as an override; kept apart from the sandbox, reached only through `Remember`/`Recall`/`Forget`). `workspace.attach(agent)` (before the first run) syncs curated skills and adds ExecuteCode and the memory tools, the skills and memory protocols to the system prompt, and the tier-tagged `<skills>` index (a snapshot at attach) to the system prompt. Memory reaches the model through `Recall`, and with `auto_memory_recall=True` also through `DynamicMemoryContext`, a dynamic context provider that injects the memories matching the latest user message. Agents read and write skills with ExecuteCode; the index flags malformed files. One-way dependency: `workspace/` imports the engine, never the reverse. Full reference: `docs/agents/agent_workspace.md`.
+
+#### Memory curation (`curate_memory=True`)
+
+Keeps the store small and current. Two layers:
+
+```
+Remember ──► cos ≥ 0.90 to a stored memory? ──► store nothing, raise the stored one's importance   (store.add)
+
+agent.run ends ──► loop_end hook ──► MemoryCurator.start_background() ──► non-daemon thread ──► curate()
+  ├─ skip if a pass is already running (non-blocking lock)
+  ├─ reconcile  memories saved since the bookmark (`curation` table) × all, cos ≥ 0.65
+  │             ──► LlmJudge (deepseek/deepseek-v4.1-flash, JSON mode): keep | merge (store.replace) | supersede (store.delete_many)
+  ├─ bookmark   moves to the newest memory covered, so each pair is judged once
+  ├─ prune      older than 30 days, recency < 0.2, importance ≤ medium ──► delete
+  └─ cap        over 500 ──► delete the lowest importance × recency; critical never pruned or evicted
+```
+
+`run()` returns before the pass finishes; a script still waits for it at exit. Cost ceiling: `MAX_JUDGE_CALLS = 10` judge calls per pass, none when nothing is new; clusters past the cap stay new for the next pass. A judge error leaves that cluster unchanged. Thresholds are module constants measured on voyage-4 (duplicates 0.69–0.97, related-but-distinct up to 0.85): `DUPLICATE_SIMILARITY` in `store.py`, the rest in `curator.py`. All SQL stays in `store.py`; search scoring math lives in `ranking.py`. Tests inject a scripted `Judge` (any callable from memories to `Decision`).
 
 ### Code execution (`base_tools/code_execution/`)
 

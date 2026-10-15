@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from agent_harness import AgentWorkspace
-from agent_harness.workspace.memory.store import MemoryStore
+from agent_harness.workspace.memory.store import Memory, MemoryStore
 from contract_support import message_text, scripted_agent, tool_call, tool_delta
 
 LEASE_LESSON = 'FMP totalDebt for MSFT includes about $88B of lease obligations, so interest/debt understates its borrowing cost.'
@@ -486,20 +486,20 @@ def test_near_duplicates_are_caught_on_save() -> None:
 #     ================================
 
 
-def judge_cluster() -> tuple[MemoryStore, list]:
+def judge_cluster() -> list[Memory]:
     """Two stored memories saying the same thing, as the curator would hand them to the judge."""
     store = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder()).memory
     first, _ = store.add(MSFT_LEASES, 'lesson', 'high')
     second, _ = store.add('MSFT debt matters.', 'fact', 'low')
 
-    return store, store.get_many([first, second])
+    return store.get_many([first, second])
 
 
 def test_llm_judge_turns_a_json_answer_into_a_decision() -> None:
     """The judge sends the cluster oldest first in JSON mode and returns the validated merge."""
     from agent_harness.workspace.memory.judge import LlmJudge
 
-    _, cluster = judge_cluster()
+    cluster = judge_cluster()
     answer = {'action': 'merge', 'ids': [1, 2], 'content': 'MSFT lease obligations count as debt.',
               'kind': 'lesson', 'importance': 'high'}
 
@@ -520,7 +520,7 @@ def test_llm_judge_rejects_answers_the_curator_must_not_act_on() -> None:
     """Ids outside the cluster, superseding everything, or a merge with no rewrite all raise instead of reaching the store."""
     from agent_harness.workspace.memory.judge import LlmJudge
 
-    _, cluster = judge_cluster()
+    cluster = judge_cluster()
     bad_answers = [
         {'action': 'supersede', 'ids': [7]},
         {'action': 'supersede', 'ids': None},

@@ -134,7 +134,7 @@ class MemoryCurator:
             return None
 
         try:
-            # find the newly curated memories since the last curation run
+            # find the newly saved memories since the last curation run
             bookmark = self.store.last_curated_at()
             new_ids = self.store.ids_created_after(bookmark)
             new = self.store.get_many(new_ids)
@@ -222,7 +222,7 @@ class MemoryCurator:
         Returns (pruned, evicted). Both are deleted in one transaction.
         """
         now = time.time()
-        everything = self.store.get_many(self.store.ids_created_after(0.0))
+        everything = self.store.get_many(self.store.ids_created_after(0.0))  # 0 = every memory
 
         stale = {memory.id for memory in everything if _stale(memory, now)}
         kept = [memory for memory in everything if memory.id not in stale]
