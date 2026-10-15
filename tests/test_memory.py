@@ -536,3 +536,63 @@ def test_llm_judge_rejects_answers_the_curator_must_not_act_on() -> None:
         for answer in bad_answers:
             with pytest.raises(ValueError):
                 judge(cluster)
+
+
+#     ================================
+# --> Curator
+#     ================================
+
+
+def unused_judge(memories: list) -> None:
+    """A judge for passes that must not need one."""
+    raise AssertionError('the judge was called')
+
+
+def test_each_pass_covers_only_memories_saved_since_the_last() -> None:
+    """The bookmark moves past every memory a pass covered, so the next pass sees only what is new."""
+    from agent_harness.workspace.memory.curator import MemoryCurator
+
+    store = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder()).memory
+    curator = MemoryCurator(store, unused_judge)
+    store.add(MSFT_LEASES, 'lesson', 'high')
+    store.add(NVDA_RESULTS, 'fact', 'medium')
+
+    assert curator.curate().new == 2
+    assert curator.curate().new == 0
+
+    store.add('The user prefers tables over prose for valuations.', 'preference', 'medium')
+
+    assert curator.curate().new == 1
+
+
+def test_a_second_pass_is_skipped_while_one_runs() -> None:
+    """Passes never overlap: a pass started mid-pass returns None at once, and the running one finishes."""
+    import threading
+
+    from agent_harness.workspace.memory.curator import MemoryCurator
+
+    store = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder()).memory
+    store.add(MSFT_LEASES, 'lesson', 'high')
+    curator = MemoryCurator(store, unused_judge)
+
+    # Hold the first pass inside its read until the second one has tried
+    entered, release = threading.Event(), threading.Event()
+    read = store.ids_created_after
+
+    def held_read(timestamp: float) -> list[int]:
+        entered.set()
+        release.wait(timeout=5)
+
+        return read(timestamp)
+
+    store.ids_created_after = held_read
+    first = curator.start_background()
+
+    assert entered.wait(timeout=5)
+    assert curator.curate() is None
+
+    release.set()
+    first.join(timeout=5)
+
+    assert not first.is_alive()
+    assert store.last_curated_at() > 0
