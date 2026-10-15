@@ -740,3 +740,36 @@ def test_cap_evicts_the_lowest_value_and_never_a_critical_memory(monkeypatch: py
 
     assert (report.pruned, report.evicted) == (0, 2)
     assert [memory.id for memory in store.get_many([critical, high, low, medium])] == [critical, high]
+
+
+def test_curate_memory_runs_a_pass_in_the_background_after_each_run() -> None:
+    """With curate_memory, the run returns its answer and a curator pass then judges what it saved."""
+    import threading
+
+    workspace = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder(), curate_memory=True)
+    workspace.memory.add(MSFT_LEASES, 'lesson', 'high')
+    judge = ScriptedJudge({'action': 'keep'})
+    workspace.curator.judge = judge
+
+    responses = [
+        call('Remember', {'content': MSFT_DEBT, 'kind': 'fact', 'importance': 'medium'}, 'save'),
+        [{'content': 'Noted.'}],
+    ]
+
+    with scripted_agent(responses) as (agent, _, sink):
+        workspace.attach(agent)
+        answer = agent.run('Remember that MSFT debt matters.', sink=sink)
+
+    for thread in threading.enumerate():
+        if thread.name == 'memory-curator':
+            thread.join(timeout=5)
+
+    assert answer == 'Noted.'
+    assert judge.clusters == [[MSFT_LEASES, MSFT_DEBT]]
+    assert workspace.memory.last_curated_at() > 0
+
+
+def test_curate_memory_without_memory_is_rejected() -> None:
+    """Curation works on the memory store, so asking for it without one fails at construction."""
+    with pytest.raises(ValueError, match='curate_memory needs memory=True'):
+        AgentWorkspace('analyst', curate_memory=True)

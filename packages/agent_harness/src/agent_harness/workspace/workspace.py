@@ -18,7 +18,8 @@ browsing the folders around its working directory never comes across it.
 agent through the agent's public API: the ExecuteCode and memory tools, the
 skills and memory protocols in the system prompt, and the `<skills>` index
 appended to the system prompt; with `auto_memory_recall=True`, also the `<memories>`
-dynamic context provider. The engine never imports this
+dynamic context provider; with `curate_memory=True`, a `loop_end` hook that runs a
+`MemoryCurator` pass in the background after every run. The engine never imports this
 module; the dependency runs one way, workspace -> engine.
 """
 from __future__ import annotations
@@ -31,7 +32,8 @@ from typing import TYPE_CHECKING
 from agent_harness.base_tools.code_execution.config import SandboxConfig
 from agent_harness.base_tools.code_execution.tool import execute_code_tool
 from agent_harness.workspace.memory import (
-    MEMORY_CONTEXT_PROMPT, MEMORY_PROMPT, ApiEmbedder, Embedder, DynamicMemoryContext, MemoryStore, memory_tools,
+    MEMORY_CONTEXT_PROMPT, MEMORY_PROMPT, ApiEmbedder, Embedder, DynamicMemoryContext, LlmJudge, MemoryCurator,
+    MemoryStore, memory_tools,
 )
 from agent_harness.workspace.skills import CURATED, LEARNED, SLUG, SkillsIndex, skills_prompt
 
@@ -88,6 +90,9 @@ class AgentWorkspace:
             models or, in tests, to stay offline. Requires `memory=True`.
         auto_memory_recall: Also show the memories most relevant to the latest request in a
             `<memories>` dynamic context block (`DynamicMemoryContext`). Requires `memory=True`.
+        curate_memory: After every run, curate memory on a background thread (`MemoryCurator`):
+            an LLM judge merges or retires related memories, then stale ones are pruned and
+            the store is capped. Requires `memory=True`.
     """
 
     def __init__(
@@ -97,6 +102,7 @@ class AgentWorkspace:
         sandbox: SandboxConfig = SandboxConfig(),
         memory: bool = False, 
         auto_memory_recall: bool = False,
+        curate_memory: bool = False,
         embedder: Embedder | None = None, 
     ) -> None:
 
@@ -109,6 +115,9 @@ class AgentWorkspace:
 
         if auto_memory_recall and not memory:
             raise ValueError('AgentWorkspace: auto_memory_recall needs memory=True')
+
+        if curate_memory and not memory:
+            raise ValueError('AgentWorkspace: curate_memory needs memory=True')
 
         # if curated skills are passed but theres no folder raise an error 
         if curated_skills is not None and not Path(curated_skills).is_dir():
@@ -135,6 +144,9 @@ class AgentWorkspace:
         # Semantic search is part of memory, not an extra: the default embedder comes built in
         self.memory = MemoryStore(memory_dir() / f'{name}.sqlite', embedder or ApiEmbedder()) if memory else None
         self.auto_memory_recall = auto_memory_recall
+
+        # The judge's client is built on its first call, so construction needs no credentials
+        self.curator = MemoryCurator(self.memory, LlmJudge()) if self.memory is not None and curate_memory else None
 
     def attach(self, agent: Agent) -> None:
         """Plug this workspace into `agent`. Call once, before the agent's first run.
@@ -175,6 +187,10 @@ class AgentWorkspace:
         # add it as a dynamic memory context provider so it gets injected every turn
         if self.memory is not None and self.auto_memory_recall:
             agent.add_dynamic_provider(DynamicMemoryContext(self.memory, agent))
+
+        # curate in the background after every run, so the run itself never waits on the judge
+        if self.curator is not None:
+            agent.add_hook('loop_end', self.curator.start_background)
 
         # A snapshot after the sync, kept in the cached system prompt: skills written
         # during this session are listed from the next attach on
