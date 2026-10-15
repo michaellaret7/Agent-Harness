@@ -699,3 +699,44 @@ def test_a_failed_judge_leaves_the_cluster_and_the_pass_goes_on() -> None:
 
     assert (report.new, report.reconciled) == (2, 0)
     assert store.count() == 2
+
+
+def test_prune_forgets_only_old_unused_minor_memories() -> None:
+    """Stale means old, rarely recalled and at most medium importance; critical and well-used memories stay."""
+    import time
+
+    from agent_harness.workspace.memory.curator import MemoryCurator
+
+    store = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder()).memory
+    now, day = time.time(), 86_400
+    stale, _ = store.add(MSFT_LEASES, 'fact', 'medium')
+    critical, _ = store.add(NVDA_RESULTS, 'lesson', 'critical')
+    recalled, _ = store.add('Paris office rent doubled.', 'fact', 'low')
+    young, _ = store.add('The user prefers tables over prose for valuations.', 'preference', 'low')
+
+    set_history(store, stale, created_at=now - 60 * day, last_used_at=now - 60 * day, uses=0)
+    set_history(store, critical, created_at=now - 60 * day, last_used_at=now - 60 * day, uses=0)
+    set_history(store, recalled, created_at=now - 60 * day, last_used_at=now - 1 * day, uses=8)
+    set_history(store, young, created_at=now - 5 * day, last_used_at=now - 5 * day, uses=0)
+
+    report = MemoryCurator(store, unused_judge).curate()
+
+    assert (report.pruned, report.evicted) == (1, 0)
+    assert [memory.id for memory in store.get_many([stale, critical, recalled, young])] == [critical, recalled, young]
+
+
+def test_cap_evicts_the_lowest_value_and_never_a_critical_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Over MAX_MEMORIES, the least important, least used go first; critical ones are exempt."""
+    from agent_harness.workspace.memory import curator as curator_module
+
+    monkeypatch.setattr(curator_module, 'MAX_MEMORIES', 2)
+    store = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder()).memory
+    critical, _ = store.add(MSFT_LEASES, 'lesson', 'critical')
+    high, _ = store.add(NVDA_RESULTS, 'fact', 'high')
+    low, _ = store.add('Paris office rent doubled.', 'fact', 'low')
+    medium, _ = store.add('The user prefers tables over prose for valuations.', 'preference', 'medium')
+
+    report = curator_module.MemoryCurator(store, unused_judge).curate()
+
+    assert (report.pruned, report.evicted) == (0, 2)
+    assert [memory.id for memory in store.get_many([critical, high, low, medium])] == [critical, high]

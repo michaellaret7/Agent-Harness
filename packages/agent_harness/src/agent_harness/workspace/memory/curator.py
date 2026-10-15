@@ -10,7 +10,13 @@ saved since its last pass, so a pass costs what is new, not the store's size:
       ├─ skip if a pass is running
       ├─ new = memories since the bookmark
       ├─ reconcile: each new memory + its related neighbours ──► judge: keep | merge | supersede
-      └─ move the bookmark past what was covered
+      ├─ move the bookmark past what was covered
+      ├─ prune: delete memories that are old, rarely used and at most medium importance
+      └─ cap: still over MAX_MEMORIES ──► delete the lowest-value ones
+
+Reconcile looks only at what is new; prune and cap look at the whole store
+every pass, since memories go stale just by ageing. Critical memories are
+never pruned or evicted.
 
 Every store change commits on its own, so a pass cut short leaves a
 consistent store and the next pass picks up where it stopped.
@@ -19,13 +25,15 @@ from __future__ import annotations
 
 import sys
 import threading
+import time
 from array import array
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from agent_harness.workspace.memory.embeddings import similarity
 from agent_harness.workspace.memory.judge import Decision, Judge
-from agent_harness.workspace.memory.store import Memory, MemoryStore
+from agent_harness.workspace.memory.ranking import recency
+from agent_harness.workspace.memory.store import IMPORTANCE, Memory, MemoryStore
 
 if TYPE_CHECKING:
     from agent_harness.hooks import HookContext
@@ -41,6 +49,16 @@ MAX_JUDGE_CALLS = 10
 # Memories per cluster, the new one included: keeps each judge prompt short
 MAX_CLUSTER = 6
 
+# A memory is stale, and pruned, when it is older than this, rarely used and at most medium importance.
+# Recency 0.2 after 30 days idle takes about six uses to stay above; a memory never recalled drops below it within a day
+PRUNE_AFTER_DAYS = 30
+PRUNE_BELOW_RECENCY = 0.2
+
+# Hard ceiling on the store's size, enforced after pruning
+MAX_MEMORIES = 500
+
+DAY = 86_400
+
 
 @dataclass(frozen=True)
 class CurationReport:
@@ -48,6 +66,8 @@ class CurationReport:
 
     new: int
     reconciled: int
+    pruned: int
+    evicted: int
 
 
 #     ================================
@@ -65,6 +85,22 @@ def _neighbours(memory_id: int, vectors: dict[int, array], skip: set[int]) -> li
     related = [other_id for other_id, score in scores.items() if score >= RELATED_SIMILARITY]
 
     return sorted(related, key=lambda other_id: -scores[other_id])[:MAX_CLUSTER - 1]
+
+
+def _stale(memory: Memory, now: float) -> bool:
+    """Old, rarely used and at most medium importance: safe to forget."""
+    old = now - memory.created_at > PRUNE_AFTER_DAYS * DAY
+    unused = recency(memory.use_count, memory.last_used_at, now) < PRUNE_BELOW_RECENCY
+    minor = IMPORTANCE[memory.importance] <= IMPORTANCE['medium']
+
+    return old and unused and minor
+
+
+def _value(memory: Memory, now: float) -> float:
+    """How much a memory is worth keeping (0..1): its importance, lifted by recent use."""
+    importance = IMPORTANCE[memory.importance] / max(IMPORTANCE.values())
+
+    return importance * (0.5 + 0.5 * recency(memory.use_count, memory.last_used_at, now))
 
 
 #     ================================
@@ -111,7 +147,10 @@ class MemoryCurator:
             if covered:
                 self.store.mark_curated(covered[-1].created_at)
 
-            return CurationReport(new=len(covered), reconciled=reconciled)
+            # delete what is stale, then the least valuable while the store is over its size limit
+            pruned, evicted = self._tidy()
+
+            return CurationReport(new=len(covered), reconciled=reconciled, pruned=pruned, evicted=evicted)
 
         finally:
             self._running.release()
@@ -121,6 +160,9 @@ class MemoryCurator:
 
         Returns the new memories covered (stops early at MAX_JUDGE_CALLS) and how many clusters changed.
         """
+        if not new:
+            return [], 0
+
         vectors = self.store.vectors()
         covered: list[Memory] = []
         gone: set[int] = set()
@@ -173,3 +215,22 @@ class MemoryCurator:
             self.store.delete_many(decision.ids)
 
         return set(decision.ids) if decision.action != 'keep' else set()
+
+    def _tidy(self) -> tuple[int, int]:
+        """Prune stale memories, then evict the lowest-value non-critical ones down to MAX_MEMORIES.
+
+        Returns (pruned, evicted). Both are deleted in one transaction.
+        """
+        now = time.time()
+        everything = self.store.get_many(self.store.ids_created_after(0.0))
+
+        stale = {memory.id for memory in everything if _stale(memory, now)}
+        kept = [memory for memory in everything if memory.id not in stale]
+
+        overflow = max(len(kept) - MAX_MEMORIES, 0)
+        evictable = sorted((m for m in kept if m.importance != 'critical'), key=lambda m: _value(m, now))
+        evicted = [memory.id for memory in evictable[:overflow]]
+
+        self.store.delete_many([*stale, *evicted])
+
+        return len(stale), len(evicted)
