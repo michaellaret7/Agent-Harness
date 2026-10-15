@@ -596,3 +596,106 @@ def test_a_second_pass_is_skipped_while_one_runs() -> None:
 
     assert not first.is_alive()
     assert store.last_curated_at() > 0
+
+
+class ScriptedJudge:
+    """A judge that returns scripted decisions and records the clusters it was shown."""
+
+    def __init__(self, *decisions: dict) -> None:
+        self.decisions = list(decisions)
+        self.clusters: list[list[str]] = []
+
+    def __call__(self, memories: list):
+        from agent_harness.workspace.memory.judge import Decision
+
+        self.clusters.append([memory.content for memory in memories])
+        decision = self.decisions.pop(0)
+
+        if isinstance(decision, Exception):
+            raise decision
+
+        return Decision(**decision)
+
+
+# Related to MSFT_LEASES (cosine 0.82): close enough to judge, too far to drop on save
+MSFT_DEBT = 'MSFT debt matters.'
+
+
+def test_judge_merge_replaces_the_cluster_with_one_memory() -> None:
+    """A merge leaves one rewritten memory; each related pair is judged once, not once per member."""
+    from agent_harness.workspace.memory.curator import MemoryCurator
+
+    store = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder()).memory
+    first, _ = store.add(MSFT_LEASES, 'lesson', 'low')
+    second, _ = store.add(MSFT_DEBT, 'fact', 'high')
+    judge = ScriptedJudge({'action': 'merge', 'ids': [first, second], 'content': 'MSFT lease obligations are debt.',
+                           'kind': 'lesson', 'importance': 'high'})
+
+    report = MemoryCurator(store, judge).curate()
+
+    assert judge.clusters == [[MSFT_LEASES, MSFT_DEBT]]
+    assert (report.new, report.reconciled) == (2, 1)
+    assert [(m.content, m.importance) for m in store.search('Microsoft leasing', limit=5, touch=False)] == [
+        ('MSFT lease obligations are debt.', 'high'),
+    ]
+    assert store.count() == 1
+
+
+def test_judge_supersede_deletes_only_the_outdated_memory() -> None:
+    """Superseded ids are deleted; the newer memory stays as it was."""
+    from agent_harness.workspace.memory.curator import MemoryCurator
+
+    store = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder()).memory
+    old, _ = store.add(MSFT_LEASES, 'lesson', 'high')
+    current, _ = store.add(MSFT_DEBT, 'fact', 'high')
+
+    MemoryCurator(store, ScriptedJudge({'action': 'supersede', 'ids': [old]})).curate()
+
+    assert [memory.id for memory in store.get_many([old, current])] == [current]
+
+
+def test_a_kept_cluster_is_never_judged_again() -> None:
+    """Keep changes nothing, and the bookmark stops later passes from paying for the same question."""
+    from agent_harness.workspace.memory.curator import MemoryCurator
+
+    store = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder()).memory
+    store.add(MSFT_LEASES, 'lesson', 'high')
+    store.add(MSFT_DEBT, 'fact', 'high')
+    judge = ScriptedJudge({'action': 'keep'})
+    curator = MemoryCurator(store, judge)
+
+    assert curator.curate().reconciled == 0
+    assert curator.curate().new == 0
+    assert len(judge.clusters) == 1 and store.count() == 2
+
+
+def test_judge_calls_are_capped_and_the_rest_wait_for_the_next_pass(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Past MAX_JUDGE_CALLS a pass stops; the unjudged memories stay new and the next pass judges them."""
+    from agent_harness.workspace.memory import curator as curator_module
+
+    monkeypatch.setattr(curator_module, 'MAX_JUDGE_CALLS', 1)
+    store = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder()).memory
+
+    for content in (MSFT_LEASES, MSFT_DEBT, NVDA_RESULTS, 'NVDA earnings in Paris.'):
+        store.add(content, 'fact', 'medium')
+
+    judge = ScriptedJudge({'action': 'keep'}, {'action': 'keep'})
+    curator = curator_module.MemoryCurator(store, judge)
+
+    assert curator.curate().new == 2
+    assert curator.curate().new == 2
+    assert judge.clusters == [[MSFT_LEASES, MSFT_DEBT], [NVDA_RESULTS, 'NVDA earnings in Paris.']]
+
+
+def test_a_failed_judge_leaves_the_cluster_and_the_pass_goes_on() -> None:
+    """A judge error changes nothing for that cluster; the pass still covers every new memory."""
+    from agent_harness.workspace.memory.curator import MemoryCurator
+
+    store = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder()).memory
+    store.add(MSFT_LEASES, 'lesson', 'high')
+    store.add(MSFT_DEBT, 'fact', 'high')
+
+    report = MemoryCurator(store, ScriptedJudge(ValueError('not json'))).curate()
+
+    assert (report.new, report.reconciled) == (2, 0)
+    assert store.count() == 2
