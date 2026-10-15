@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from agent_harness import AgentWorkspace
+from agent_harness.workspace.memory.store import MemoryStore
 from contract_support import message_text, scripted_agent, tool_call, tool_delta
 
 LEASE_LESSON = 'FMP totalDebt for MSFT includes about $88B of lease obligations, so interest/debt understates its borrowing cost.'
@@ -393,3 +394,69 @@ def test_auto_recall_without_memory_is_rejected() -> None:
     """auto_memory_recall reads the memory store, so it fails at construction without one."""
     with pytest.raises(ValueError, match='auto_memory_recall needs memory=True'):
         AgentWorkspace('analyst', auto_memory_recall=True)
+
+
+#     ================================
+# --> Curation primitives
+#     ================================
+
+NVDA_RESULTS = 'NVDA earnings beat on data center demand.'
+
+
+def set_history(store: MemoryStore, memory_id: int, created_at: float, last_used_at: float, uses: int) -> None:
+    """Backdate a memory, as if it had been saved and used long ago."""
+    with store._connect() as db:
+        db.execute(
+            'UPDATE memories SET created_at = ?, last_used_at = ?, use_count = ? WHERE id = ?',
+            (created_at, last_used_at, uses, memory_id),
+        )
+
+
+def test_curation_reads_cover_only_what_is_new() -> None:
+    """The curator's bookmark persists, and only memories created after it count as new."""
+    store = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder()).memory
+    old, _ = store.add(MSFT_LEASES, 'lesson', 'high')
+    new, _ = store.add(NVDA_RESULTS, 'fact', 'medium')
+    set_history(store, old, created_at=100.0, last_used_at=100.0, uses=0)
+
+    assert store.last_curated_at() == 0.0
+    assert store.ids_created_after(0.0) == [old, new]
+
+    store.mark_curated(100.0)
+    reopened = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder()).memory
+
+    assert reopened.last_curated_at() == 100.0
+    assert reopened.ids_created_after(100.0) == [new]
+    assert set(reopened.vectors()) == {old, new}
+    assert [memory.content for memory in reopened.get_many([new, old, 999])] == [MSFT_LEASES, NVDA_RESULTS]
+
+
+def test_replace_swaps_a_cluster_for_one_memory_with_its_history() -> None:
+    """The consolidated memory is searchable, keeps the cluster's history, and the originals are gone."""
+    store = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder()).memory
+    first, _ = store.add(MSFT_LEASES, 'lesson', 'high')
+    second, _ = store.add('MSFT lease debt matters.', 'fact', 'low')
+    other, _ = store.add(NVDA_RESULTS, 'fact', 'medium')
+    set_history(store, first, created_at=100.0, last_used_at=150.0, uses=1)
+    set_history(store, second, created_at=200.0, last_used_at=250.0, uses=4)
+
+    merged_id = store.replace([first, second], 'MSFT lease obligations count as borrowing.', 'lesson', 'high')
+
+    [merged] = store.get_many([merged_id])
+
+    assert (merged.created_at, merged.last_used_at, merged.use_count) == (100.0, 250.0, 5)
+    assert store.count() == 2
+    assert vector_models(store.path) == [(other, 'concepts-v1'), (merged_id, 'concepts-v1')]
+    assert [memory.id for memory in store.search('Microsoft leasing', limit=5, touch=False)] == [merged_id]
+
+
+def test_delete_many_clears_every_index() -> None:
+    """Deleted memories vanish from records, keyword search and vectors; unknown ids are not counted."""
+    store = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder()).memory
+    first, _ = store.add(MSFT_LEASES, 'lesson', 'high')
+    second, _ = store.add(NVDA_RESULTS, 'fact', 'medium')
+
+    assert store.delete_many([first, second, 999]) == 2
+    assert store.count() == 0
+    assert vector_models(store.path) == []
+    assert store.search('MSFT NVDA earnings leases', limit=5, touch=False) == []

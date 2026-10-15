@@ -1,11 +1,12 @@
 """MemoryStore: one agent's long-term memory, a SQLite file of short records plus search indexes.
 
 Each memory is a sentence or two the agent chose to keep: a fact, lesson,
-preference or event, tagged with an importance level. Three tables:
+preference or event, tagged with an importance level. Four tables:
 
     memories         the records (source of truth)
     memories_fts     full-text index over content, for keyword search
     memory_vectors   one embedding per (memory, model), for semantic search
+    curation         one row: how far the background curator has got (see curator.py)
 
 Search ranks candidates from both indexes by
 
@@ -39,6 +40,7 @@ import re
 import sqlite3
 import sys
 import time
+from array import array
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
@@ -80,6 +82,10 @@ CREATE TABLE IF NOT EXISTS memory_vectors (
     model         TEXT NOT NULL,
     vector        BLOB NOT NULL,
     PRIMARY KEY (memory_id, model)
+);
+CREATE TABLE IF NOT EXISTS curation (
+    id               INTEGER PRIMARY KEY CHECK (id = 1),  -- one row: where the last curation pass stopped
+    last_curated_at  REAL NOT NULL
 );
 """
 
@@ -134,7 +140,43 @@ def _level(importance: int) -> str:
     return next(word for word, number in IMPORTANCE.items() if number == importance)
 
 
-def _to_memory(row: sqlite3.Row, score: float, semantic: float) -> Memory:
+def _insert(
+    db: sqlite3.Connection, 
+    content: str, 
+    kind: str, 
+    importance: int, 
+    created_at: float,
+    last_used_at: float, 
+    use_count: int
+) -> int:
+
+    """Insert one record and its keyword index entry. Returns the new id."""
+
+    cursor = db.execute(
+        'INSERT INTO memories (content, kind, importance, created_at, last_used_at, use_count) '
+        'VALUES (?, ?, ?, ?, ?, ?)',
+        (content, kind, importance, created_at, last_used_at, use_count),
+    )
+
+    memory_id = cursor.lastrowid
+    assert memory_id is not None
+
+    db.execute('INSERT INTO memories_fts (rowid, content) VALUES (?, ?)', (memory_id, content))
+
+    return memory_id
+
+
+def _delete(db: sqlite3.Connection, ids: list[int]) -> int:
+    """Delete records and every index entry for them. Returns how many records existed."""
+    marks = ','.join('?' * len(ids))
+    deleted = db.execute(f'DELETE FROM memories WHERE id IN ({marks})', ids).rowcount
+    db.execute(f'DELETE FROM memories_fts WHERE rowid IN ({marks})', ids)
+    db.execute(f'DELETE FROM memory_vectors WHERE memory_id IN ({marks})', ids)
+
+    return deleted
+
+
+def _to_memory(row: sqlite3.Row, score: float = 0.0, semantic: float = 0.0) -> Memory:
     return Memory(
         id=row['id'], content=row['content'], kind=row['kind'], importance=_level(row['importance']),
         created_at=row['created_at'], last_used_at=row['last_used_at'], use_count=row['use_count'], score=score,
@@ -180,15 +222,7 @@ class MemoryStore:
             if existing is not None:
                 return existing['id'], False
 
-            cursor = db.execute(
-                'INSERT INTO memories (content, kind, importance, created_at, last_used_at) VALUES (?, ?, ?, ?, ?)',
-                (content, kind, IMPORTANCE[importance], now, now),
-            )
-
-            memory_id = cursor.lastrowid
-            assert memory_id is not None
-
-            db.execute('INSERT INTO memories_fts (rowid, content) VALUES (?, ?)', (memory_id, content))
+            memory_id = _insert(db, content, kind, IMPORTANCE[importance], now, now, 0)
 
         # After the commit: a failed embedding must never lose the memory itself
         self._embed([(memory_id, content)])
@@ -234,12 +268,36 @@ class MemoryStore:
 
     def forget(self, memory_id: int) -> bool:
         """Delete a memory and its index entries. Returns False when no memory has that id."""
-        with self._connect() as db:
-            deleted = db.execute('DELETE FROM memories WHERE id = ?', (memory_id,)).rowcount
-            db.execute('DELETE FROM memories_fts WHERE rowid = ?', (memory_id,))
-            db.execute('DELETE FROM memory_vectors WHERE memory_id = ?', (memory_id,))
+        return self.delete_many([memory_id]) > 0
 
-        return deleted > 0
+    def delete_many(self, ids: list[int]) -> int:
+        """Delete memories and their index entries in one transaction. Returns how many existed."""
+        if not ids:
+            return 0
+
+        with self._connect() as db:
+            return _delete(db, ids)
+
+    def replace(self, ids: list[int], content: str, kind: str, importance: str) -> int:
+        """Swap `ids` for one memory carrying their history: earliest creation, summed uses, latest use.
+
+        Keeping the earliest creation time means the next curation pass does not see it as new.
+        """
+        content = content.strip()
+
+        with self._connect() as db:
+            marks = ','.join('?' * len(ids))
+            history = db.execute(
+                f'SELECT MIN(created_at), MAX(last_used_at), SUM(use_count) FROM memories WHERE id IN ({marks})', ids
+            ).fetchone()
+
+            _delete(db, ids)
+            memory_id = _insert(db, content, kind, IMPORTANCE[importance], *history)
+
+        # After the commit, as in `add`: a failed embedding must never lose the memory itself
+        self._embed([(memory_id, content)])
+
+        return memory_id
 
     def _keyword_scores(self, query: str) -> dict[int, float]:
         """{id: BM25 match as a fraction of the best match, times the share of query words matched}."""
@@ -337,3 +395,43 @@ class MemoryStore:
         """Number of stored memories."""
         with self._connect() as db:
             return db.execute('SELECT COUNT(*) FROM memories').fetchone()[0]
+
+    def vectors(self) -> dict[int, array]:
+        """{id: unit vector} for every memory embedded with the current model."""
+        with self._connect() as db:
+            rows = db.execute(
+                'SELECT memory_id, vector FROM memory_vectors WHERE model = ?', (self.embedder.model,)
+            ).fetchall()
+
+        return {row['memory_id']: unpack(row['vector']) for row in rows}
+
+    def ids_created_after(self, timestamp: float) -> list[int]:
+        """Ids of memories created after `timestamp`, oldest first."""
+        with self._connect() as db:
+            rows = db.execute(
+                'SELECT id FROM memories WHERE created_at > ? ORDER BY created_at, id', (timestamp,)
+            ).fetchall()
+
+        return [row['id'] for row in rows]
+
+    def get_many(self, ids: list[int]) -> list[Memory]:
+        """The memories with these ids, oldest first; unknown ids are skipped."""
+        with self._connect() as db:
+            marks = ','.join('?' * len(ids))
+            rows = db.execute(
+                f'SELECT * FROM memories WHERE id IN ({marks}) ORDER BY created_at, id', ids
+            ).fetchall()
+
+        return [_to_memory(row) for row in rows]
+
+    def last_curated_at(self) -> float:
+        """Creation time of the newest memory the last curation pass covered; 0 before the first pass."""
+        with self._connect() as db:
+            row = db.execute('SELECT last_curated_at FROM curation').fetchone()
+
+        return row['last_curated_at'] if row else 0.0
+
+    def mark_curated(self, timestamp: float) -> None:
+        """Record that curation has covered every memory created up to `timestamp`."""
+        with self._connect() as db:
+            db.execute('INSERT OR REPLACE INTO curation (id, last_curated_at) VALUES (1, ?)', (timestamp,))
