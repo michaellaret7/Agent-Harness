@@ -1,6 +1,6 @@
 """Screen model-written code with Jev before the sandbox runs it.
 
-Jev (`typesafe/jev-1.13`, OpenRouter's Decisions API) reads the code as
+Jev (`typesafe/jev-1.14`, OpenRouter's Decisions API) reads the code as
 text and answers one yes/no question per rule below, all in a single
 request. The code is never executed here. A call is denied when any rule's
 probability reaches its threshold, or when the screen itself fails: a
@@ -35,7 +35,7 @@ from pathlib import Path
 import httpx
 
 DECISIONS_URL = 'https://openrouter.ai/api/alpha/decisions'
-MODEL = 'typesafe/jev-1.13'
+MODEL = 'typesafe/jev-1.14'
 TIMEOUT = 15.0
 
 # How much of a credential's value model code may surface. Enough to tell

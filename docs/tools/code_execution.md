@@ -97,7 +97,7 @@ This is a guardrail against runaway recursion, not a security boundary.
 
 ## Code screen
 
-Because the sandbox is not a container, `execute_code_tool(SandboxConfig(j_screen=True))` runs every call past `code_execution/screening.py` before it executes. The code is sent as text to Jev (`typesafe/jev-1.13` through OpenRouter's Decisions API, one request, four yes/no questions) and denied when any rule's probability reaches its threshold. The denial text names the rule and tells the model what is allowed instead, so it can rewrite and retry.
+Because the sandbox is not a container, `execute_code_tool(SandboxConfig(j_screen=True))` runs every call past `code_execution/screening.py` before it executes. The code is sent as text to Jev (`typesafe/jev-1.14` through OpenRouter's Decisions API, one request, four yes/no questions) and denied when any rule's probability reaches its threshold. The denial text names the rule and tells the model what is allowed instead, so it can rewrite and retry.
 
 ```
 model emits ExecuteCode(code)

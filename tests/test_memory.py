@@ -479,3 +479,60 @@ def test_near_duplicates_are_caught_on_save() -> None:
     assert created and related != original
     assert store.count() == 2
     assert vector_models(store.path) == [(original, 'concepts-v1'), (related, 'concepts-v1')]
+
+
+#     ================================
+# --> Judge
+#     ================================
+
+
+def judge_cluster() -> tuple[MemoryStore, list]:
+    """Two stored memories saying the same thing, as the curator would hand them to the judge."""
+    store = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder()).memory
+    first, _ = store.add(MSFT_LEASES, 'lesson', 'high')
+    second, _ = store.add('MSFT debt matters.', 'fact', 'low')
+
+    return store, store.get_many([first, second])
+
+
+def test_llm_judge_turns_a_json_answer_into_a_decision() -> None:
+    """The judge sends the cluster oldest first in JSON mode and returns the validated merge."""
+    from agent_harness.workspace.memory.judge import LlmJudge
+
+    _, cluster = judge_cluster()
+    answer = {'action': 'merge', 'ids': [1, 2], 'content': 'MSFT lease obligations count as debt.',
+              'kind': 'lesson', 'importance': 'high'}
+
+    with scripted_agent([], summaries=[json.dumps(answer)]) as (agent, api, _):
+        judge = LlmJudge(model='contract-model')
+        judge._client = agent.client
+        decision = judge(cluster)
+
+    [request] = api.summary_requests
+
+    assert decision.model_dump() == answer
+    assert request['response_format'] == {'type': 'json_object'}
+    assert request['messages'][1]['content'].splitlines()[0].startswith('[1] saved ')
+    assert request['messages'][1]['content'].endswith('| fact | low | MSFT debt matters.')
+
+
+def test_llm_judge_rejects_answers_the_curator_must_not_act_on() -> None:
+    """Ids outside the cluster, superseding everything, or a merge with no rewrite all raise instead of reaching the store."""
+    from agent_harness.workspace.memory.judge import LlmJudge
+
+    _, cluster = judge_cluster()
+    bad_answers = [
+        {'action': 'supersede', 'ids': [7]},
+        {'action': 'supersede', 'ids': None},
+        {'action': 'supersede', 'ids': [1, 2]},
+        {'action': 'merge', 'ids': [1, 2], 'kind': 'lesson', 'importance': 'high'},
+        'not json',
+    ]
+
+    with scripted_agent([], summaries=[a if isinstance(a, str) else json.dumps(a) for a in bad_answers]) as (agent, _, __):
+        judge = LlmJudge(model='contract-model')
+        judge._client = agent.client
+
+        for answer in bad_answers:
+            with pytest.raises(ValueError):
+                judge(cluster)
