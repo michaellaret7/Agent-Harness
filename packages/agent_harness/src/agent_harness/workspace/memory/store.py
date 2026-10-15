@@ -8,20 +8,8 @@ preference or event, tagged with an importance level. Four tables:
     memory_vectors   one embedding per (memory, model), for semantic search
     curation         one row: how far the background curator has got (see curator.py)
 
-Search ranks candidates from both indexes by
-
-    score = relevance x (1 + 0.5 x recency + 0.5 x importance)      (each 0..1)
-    relevance = 0.7 x semantic + 0.3 x keyword
-
-where keyword is the BM25 match as a fraction of the best match, times the
-share of the query's words the memory contains; semantic is cosine similarity
-rescaled so the embedder's `min_similarity` floor maps to 0 (candidates below
-it are dropped); recency is a sigmoid of an ACT-R style activation from how
-often and how lately a memory was used; and importance is the agent's level
-divided by the top level. Recency and importance multiply relevance rather than
-add to it, so they reorder relevant memories but never lift an unrelated one
-over a real match. Nothing is min-max scaled across candidates: that would turn
-a near-tie in relevance into a 1-vs-0 gap importance could never overcome. Only
+Search fetches candidates from both indexes here and scores them with the
+formula in ranking.py (all SQL stays in this file, all scoring math there). Only
 a Recall counts as a use; a search with `touch=False` (inspection, tests) leaves
 rankings alone.
 
@@ -35,8 +23,6 @@ tools; the agent's code is never told where it is.
 """
 from __future__ import annotations
 
-import math
-import re
 import sqlite3
 import sys
 import time
@@ -47,12 +33,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from agent_harness.workspace.memory.embeddings import Embedder, pack, similarity, unpack
+from agent_harness.workspace.memory.ranking import (
+    CANDIDATES, keyword_scores, match_expression, meaningful_words, recency, score, semantic_scores,
+)
 
 MEMORY_KINDS = ('fact', 'lesson', 'preference', 'event')
 IMPORTANCE = {'low': 1, 'medium': 2, 'high': 3, 'critical': 4}
-
-# Candidates each index contributes before scoring
-CANDIDATES = 50
 
 # At or above this cosine a new memory is the same fact as a stored one, so it is not stored again.
 # Measured on voyage-4 (2026-10-15): reworded duplicates 0.69-0.97, related-but-distinct facts up to 0.85;
@@ -61,15 +47,6 @@ DUPLICATE_SIMILARITY = 0.90
 
 # Texts per embedding request: embedding APIs reject oversized batches
 EMBED_BATCH = 128
-
-# Relevance mix when both indexes are available (NOOA's weights)
-SEMANTIC_WEIGHT = 0.7
-KEYWORD_WEIGHT = 0.3
-
-# Words too common to say anything about which memory is relevant
-STOPWORDS = frozenset(
-    'a an and are as at be by for from has have in is it its of on or that the this to was were will with'.split()
-)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS memories (
@@ -116,28 +93,6 @@ class Memory:
 #     ================================
 # --> Helper funcs
 #     ================================
-
-
-def _meaningful_words(text: str) -> set[str]:
-    """Lowercased words of `text` that say something about relevance (no stopwords or single letters)."""
-    return {word for word in re.findall(r'[a-z0-9]+', text.lower()) if len(word) > 1 and word not in STOPWORDS}
-
-
-def _match_expression(words: set[str]) -> str | None:
-    """Turn query words into an FTS5 OR-query; None when there are none."""
-    if not words:
-        return None
-
-    # Quoted, so FTS5 never reads a word as an operator (AND, NEAR, column names)
-    return ' OR '.join(f'"{word}"' for word in sorted(words))
-
-
-def _recency(use_count: int, last_used_at: float, now: float) -> float:
-    """ACT-R style activation squashed to 0..1: grows with use, decays with time since last use."""
-    hours_idle = max(now - last_used_at, 0.0) / 3600
-    activation = math.log1p(use_count) - 0.5 * math.log1p(hours_idle)
-
-    return 1 / (1 + math.exp(-activation))
 
 
 def _level(importance: int) -> str:
@@ -257,7 +212,7 @@ class MemoryStore:
             return unpack(pack(self.embedder.embed([content])[0]))
 
         except Exception as e:
-            print(f'[MEMORY] embedding failed, saved without a duplicate check: {e!r}', file=sys.stderr)
+            print(f'[MEMORY] embedding failed, continuing without vectors: {e!r}', file=sys.stderr)
 
             return None
 
@@ -338,58 +293,29 @@ class MemoryStore:
 
         return memory_id
 
-    def _keyword_scores(self, query: str) -> dict[int, float]:
-        """{id: BM25 match as a fraction of the best match, times the share of query words matched}."""
-
-        words = _meaningful_words(query)
-        match = _match_expression(words)
+    def _fts_hits(self, words: set[str]) -> list[sqlite3.Row]:
+        """The best full-text matches for `words`: rows of rowid, content and raw BM25 rank."""
+        match = match_expression(words)
 
         if match is None:
-            return {}
+            return []
 
         with self._connect() as db:
-            rows = db.execute(
+            return db.execute(
                 'SELECT rowid, content, bm25(memories_fts) AS rank FROM memories_fts '
                 'WHERE memories_fts MATCH ? ORDER BY rank LIMIT ?',
                 (match, CANDIDATES),
             ).fetchall()
 
-        # BM25 is lower-is-better, so negate it
-        scores = {row['rowid']: -row['rank'] for row in rows}
-        best = max(scores.values(), default=0.0)
-
-        # BM25 ÷ best is relative, so the top hit is 1.0 even on one shared word; coverage makes it absolute
-        coverage = {row['rowid']: len(words & _meaningful_words(row['content'])) / len(words) for row in rows}
-
-        return {
-            memory_id: (score / best if best > 0 else 1.0) * coverage[memory_id] for memory_id, score in scores.items()
-        }
-
-    def _semantic_scores(self, query: str) -> dict[int, float]:
-        """{id: cosine similarity} for the closest memories at or above the embedder's floor."""
-        try:
-            query_vector = unpack(pack(self.embedder.embed([query])[0]))
-
-        except Exception as e:
-            print(f'[MEMORY] query embedding failed, keyword search only: {e!r}', file=sys.stderr)
-
-            return {}
-
-        with self._connect() as db:
-            rows = db.execute(
-                'SELECT memory_id, vector FROM memory_vectors WHERE model = ?', (self.embedder.model,)
-            ).fetchall()
-
-        scores = {row['memory_id']: similarity(query_vector, unpack(row['vector'])) for row in rows}
-        floor = self.embedder.min_similarity
-        close = sorted((item for item in scores.items() if item[1] >= floor), key=lambda item: -item[1])
-
-        return dict(close[:CANDIDATES])
-
     def search(self, query: str, limit: int, touch: bool) -> list[Memory]:
         """Return the best `limit` memories for `query`. `touch` records the result as a deliberate use."""
-        keyword = self._keyword_scores(query)
-        semantic = self._semantic_scores(query)
+        floor = self.embedder.min_similarity
+        words = meaningful_words(query)
+        keyword = keyword_scores(words, self._fts_hits(words))
+
+        # A failed query embedding leaves keyword search only
+        query_vector = self._embed_one(query)
+        semantic = semantic_scores(query_vector, self.vectors(), floor) if query_vector is not None else {}
         candidates = keyword.keys() | semantic.keys()
 
         if not candidates:
@@ -401,22 +327,18 @@ class MemoryStore:
 
         now = time.time()
         top_level = max(IMPORTANCE.values())
-        floor = self.embedder.min_similarity
         scored: list[Memory] = []
 
         for row in rows:
             memory_id = row['id']
             cosine = semantic.get(memory_id, 0.0)
 
-            # Rescale so the floor maps to 0: no jump from 0 to `floor` at the cutoff, and the full 0..1 range is used
-            closeness = (cosine - floor) / (1 - floor) if cosine else 0.0
-            relevance = SEMANTIC_WEIGHT * closeness + KEYWORD_WEIGHT * keyword.get(memory_id, 0.0)
+            rank = score(
+                cosine, keyword.get(memory_id, 0.0), floor,
+                recency(row['use_count'], row['last_used_at'], now), row['importance'] / top_level,
+            )
 
-            recency = _recency(row['use_count'], row['last_used_at'], now)
-            importance = row['importance'] / top_level
-
-            # Recency and importance boost relevance; they never stand in for it
-            scored.append(_to_memory(row, relevance * (1 + 0.5 * recency + 0.5 * importance), cosine))
+            scored.append(_to_memory(row, rank, cosine))
 
         # sort the memories by their score and only return the top limit from the list
         best = sorted(scored, key=lambda memory: memory.score, reverse=True)[:limit]

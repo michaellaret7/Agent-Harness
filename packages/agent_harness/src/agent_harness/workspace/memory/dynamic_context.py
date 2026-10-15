@@ -21,7 +21,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agent_harness.workspace.memory.store import CANDIDATES, MemoryStore
+from agent_harness.workspace.memory.ranking import CANDIDATES
+from agent_harness.workspace.memory.store import MemoryStore
 from agent_harness.workspace.memory.tools import memory_line
 
 if TYPE_CHECKING:
