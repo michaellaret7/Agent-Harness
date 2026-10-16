@@ -88,7 +88,7 @@ To try it from this repository, save the script in the repository root and run:
 uv run --package agent-harness python run_agent.py
 ```
 
-The response streams to stdout and is also returned as `result`. Pass a custom `sink` to change where output goes. An optional `cancel_event: threading.Event` requests cancellation. A task can also be supplied at construction with `Agent(task=...)` and executed with `run()`.
+The response streams to stdout and is also returned as `result`. Pass a custom `sink` to change where output goes. An optional `cancel_event: threading.Event` requests cancellation.
 
 ### Configuration
 

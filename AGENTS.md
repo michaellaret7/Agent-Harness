@@ -10,7 +10,7 @@ Entry points:
 - `uv run --package agent-harness python -m agent_harness` — a headless development agent with built-in tools and ExecuteCode.
 - `uv run --package agent-harness python examples/stock_data_analysis.py` — the live stock-data and code-screening example.
 
-Both run headlessly. Applications can opt into the TUI (`tui/app.py`); see the README example. To use the agent programmatically, use `from agent_harness import Agent` and call `agent.run(task, sink=..., cancel_event=...)`. The task can also be set at init via `Agent(task=...)` and `run()` called with no arg — useful for batch pipelines. If `sink` is None, output goes to stdout via `StdoutSink`.
+Both run headlessly. Applications can opt into the TUI (`tui/app.py`); see the README example. To use the agent programmatically, use `from agent_harness import Agent` and call `agent.run(task, sink=..., cancel_event=...)`. If `sink` is None, output goes to stdout via `StdoutSink`.
 
 Supports Python 3.12–3.13 (`>=3.12,<3.14` in `pyproject.toml`); `.python-version` keeps this repo's own venv on 3.12. uv will refuse to sync on a 3.14 interpreter.
 

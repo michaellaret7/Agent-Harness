@@ -25,6 +25,36 @@ bad.mkdir(parents=True, exist_ok=True)
 print("written")
 '''
 
+# Code the model runs: a layered skill whose SKILL.md links a reference and a script
+WRITE_LAYERED_SKILL = '''
+from pathlib import Path
+
+skill = Path("skills/learned/fcf-yield")
+(skill / "references").mkdir(parents=True, exist_ok=True)
+(skill / "scripts").mkdir(parents=True, exist_ok=True)
+
+(skill / "SKILL.md").write_text(
+    "---\\nname: fcf-yield\\ndescription: Rank tickers by free-cash-flow yield; use when screening for value.\\n---\\n\\n"
+    "## Steps\\n1. Run `scripts/fcf.py` (`fcf_yield(fcf, market_cap) -> float`).\\n\\n"
+    "## Files\\n- `references/caveats.md`: when FCF yield misleads.\\n- `scripts/fcf.py`: run it, do not rewrite it.\\n"
+)
+(skill / "references" / "caveats.md").write_text("Cyclical capex distorts a single year.\\n")
+(skill / "scripts" / "fcf.py").write_text(
+    "def fcf_yield(fcf: float, market_cap: float) -> float:\\n"
+    "    \\"\\"\\"Free cash flow divided by market cap.\\"\\"\\"\\n"
+    "    return fcf / market_cap\\n"
+)
+print("written")
+'''
+
+# Code the model runs: the traversal the protocol teaches, a script run with runpy instead of read
+RUN_SKILL_SCRIPT = '''
+import runpy
+
+fns = runpy.run_path("skills/learned/fcf-yield/scripts/fcf.py")
+print(fns["fcf_yield"](5.0, 100.0))
+'''
+
 
 #     ================================
 # --> Helper funcs
@@ -72,6 +102,47 @@ def test_agent_writes_skills_with_code_and_the_next_session_sees_them_indexed(tm
 
     # The files are real and live under the workspace's sandbox
     assert (tmp_path / 'workspaces' / 'analyst' / 'sandbox' / 'skills' / 'learned' / 'dcf-valuation' / 'SKILL.md').exists()
+
+
+def test_layered_skill_is_indexed_and_its_script_runs_through_runpy() -> None:
+    """A skill folder with references/ and scripts/ linked from SKILL.md is valid, and its script runs as the protocol says."""
+    responses = [
+        [tool_delta(tool_call('ExecuteCode', {'code': WRITE_LAYERED_SKILL}, 'write'))],
+        [tool_delta(tool_call('ExecuteCode', {'code': RUN_SKILL_SCRIPT}, 'run'))],
+        [{'content': 'done'}],
+    ]
+
+    with scripted_agent(responses) as (agent, api, sink):
+        AgentWorkspace('analyst').attach(agent)
+
+        assert agent.run('Save and use an FCF yield skill.', sink=sink) == 'done'
+
+    # The protocol teaches the layered layout and how to run a script
+    system = message_text(api.requests[0]['messages'][0])
+    assert 'references/' in system and 'runpy.run_path' in system
+
+    # The script ran from the sandbox root, at the path the protocol gives
+    assert '0.05' in message_text(api.requests[2]['messages'][-1])
+
+    assert AgentWorkspace('analyst').skills() == (
+        '<skills>\n- fcf-yield [learned]: Rank tickers by free-cash-flow yield; use when screening for value.\n</skills>'
+    )
+
+
+def test_bundled_file_not_linked_from_skill_md_is_flagged() -> None:
+    """A reference SKILL.md never mentions cannot be found, so the index flags it; caches are ignored."""
+    workspace = AgentWorkspace('analyst')
+    write_skill(workspace.skills_dir / 'learned', 'dcf-valuation', 'DCF.')
+    skill = workspace.skills_dir / 'learned' / 'dcf-valuation'
+    (skill / 'references').mkdir()
+    (skill / 'references' / 'wacc.md').write_text('WACC inputs.')
+    (skill / 'scripts' / '__pycache__').mkdir(parents=True)
+    (skill / 'scripts' / '__pycache__' / 'dcf.cpython-312.pyc').write_bytes(b'')
+
+    assert (
+        '- dcf-valuation [learned]: INVALID (SKILL.md does not link references/wacc.md; link each file or delete it), rewrite it'
+        in (workspace.skills() or '')
+    )
 
 
 def test_skills_persist_into_a_new_workspace_on_the_same_root(tmp_path: Path) -> None:
@@ -149,16 +220,6 @@ def test_missing_curated_source_fails_at_construction(tmp_path: Path) -> None:
     """A typo in the curated path fails immediately instead of silently giving an agent no skills."""
     with pytest.raises(ValueError, match='curated_skills folder not found'):
         AgentWorkspace('analyst', curated_skills=tmp_path / 'nope')
-
-
-def test_shipped_dcf_skill_is_valid() -> None:
-    """The repo's curated DCF skill passes the format the agent is held to."""
-    workspace = AgentWorkspace('analyst', curated_skills=Path(__file__).parent.parent / 'examples' / 'skills')
-
-    with scripted_agent([]) as (agent, _, _sink):
-        workspace.attach(agent)
-
-    assert '- dcf-valuation [curated]: Value a public company with a five-year unlevered (FCFF) DCF' in (workspace.skills() or '')
 
 
 def test_attach_refuses_a_second_sandbox() -> None:

@@ -30,8 +30,8 @@ Workspaces live in the user's home, never inside a repository, and are addressed
 ├── workspaces/analyst/          ◄─ AgentWorkspace('analyst')
 │   └── sandbox/                 ExecuteCode's working directory
 │       └── skills/
-│           ├── curated/<name>/SKILL.md     re-copied from curated_skills on every attach
-│           └── learned/<name>/SKILL.md     the agent's own
+│           ├── curated/<name>/     re-copied from curated_skills on every attach
+│           └── learned/<name>/     the agent's own
 └── memory/analyst.sqlite        long-term memory (memory=True only), reached only through the memory tools
 ```
 
@@ -51,7 +51,7 @@ The memory store sits in its own branch, not beside `sandbox/`, so code browsing
 | Piece | Through | Effect |
 |---|---|---|
 | `ExecuteCode` | `agent.add_tool` | Sandbox in `sandbox/`, configured by the workspace's `sandbox=SandboxConfig(...)` |
-| `<skills_protocol>` | `agent.extend_system_prompt` | The SKILL.md format and rules (cached system prompt) |
+| `<skills_protocol>` | `agent.extend_system_prompt` | The layered skill layout, how to traverse a skill, and when to write one (cached system prompt) |
 | `<skills>` index | `agent.extend_system_prompt` | Each skill's name and description, a snapshot taken at attach (cached system prompt) |
 | `Remember` / `Recall` / `Forget` | `agent.add_tool` | The agent's only access to its memory store (`memory=True` only) |
 | `<memory_context_protocol>` + `<memories>` provider | `agent.extend_system_prompt` + `agent.add_dynamic_provider` | Matching memories in the dynamic context (`auto_memory_recall=True` only) |
@@ -77,6 +77,21 @@ repo skills/  ── attach syncs ──►  curated/   (agent reads, follows, n
 
 Learning stays open-ended, but the core methods cannot be corrupted: a mistake an agent writes into a skill stays in `learned/`, where a human sees it before it can become curated. When a curated skill seems wrong, the protocol tells the agent to write a learned `<name>-notes` skill instead of editing it, and on conflict the curated skill wins.
 
+A skill is a layered folder in the [Agent Skills](https://agentskills.io/specification) format, loaded progressively so each layer costs context only when it is needed:
+
+```
+<name>/
+├── SKILL.md       frontmatter + short overview (~100 lines): the steps, one line per bundled file
+├── references/    detail read only when a step points to it
+├── scripts/       Python functions, run with runpy, never read into context
+└── assets/        templates and data files the output is built from
+
+ <skills> index ──► description matches ──► read SKILL.md ──► step points to a file
+  (name + desc)                              (in full)          ├─ references/x.md → read it
+                                                                ├─ scripts/x.py   → runpy.run_path, call fn
+                                                                └─ assets/x       → build output from it
+```
+
 Every `SKILL.md` must start with:
 
 ```markdown
@@ -86,7 +101,9 @@ description: <one line: what it does and when to use it>
 ---
 ```
 
-The index enforces this softly: a learned skill that breaks it is flagged `INVALID (...), rewrite it`; a curated one is flagged for a human instead. `examples/skills/dcf-valuation/` is the first curated skill.
+The protocol teaches the agent to grow one skill in depth (move detail into `references/`, code into `scripts/`) instead of splitting a procedure into several flat skills, to link every bundled file from `SKILL.md` one level deep, and to run a script with `runpy.run_path('skills/<tier>/<name>/scripts/<file>.py')` rather than read it.
+
+The index enforces the format softly: a skill with a bad frontmatter or a bundled file `SKILL.md` never mentions (the agent could not find it) is flagged; a learned one `INVALID (...), rewrite it`, a curated one for a human instead. `__pycache__` and hidden files are ignored.
 
 ## Memory
 
