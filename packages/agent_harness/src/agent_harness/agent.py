@@ -37,7 +37,6 @@ class Agent:
         model: str | None = None,
         tools: list[dict[str, Any] | Callable] = [],
         system: str | None = None,
-        task: str | None = None,
         max_iters: int = 100,
         subagents: list[SubAgentConfig] = [],
         output_model: type[BaseModel] | None = None,
@@ -65,7 +64,6 @@ class Agent:
         self.reasoning_effort = reasoning_effort
         
         self.max_iters = max_iters
-        self.task = task
 
         # make sure the output_model is a pydantic BaseModel subclass
         self.output_model = output_model
@@ -319,7 +317,7 @@ class Agent:
 
     def run(
         self,
-        task: str | None = None,
+        task: str,
         sink: Sink | None = None,
         cancel_event: threading.Event | None = None,
     ) -> str | BaseModel:
@@ -330,13 +328,6 @@ class Agent:
             self.client, self.model = build_client(self.provider, self.model)
 
         assert self.model is not None  # resolved by build_client above
-
-        task = task if task is not None else self.task
-
-        if task is None:
-            raise ValueError(
-                'Agent.run() needs a task — pass one to run() or set Agent(task=...) at init.'
-            )
 
         # Default to StdoutSink so a bare run() still streams output, then wrap with always-on
         # sinks (Langfuse, metrics, …) so observability follows every run.

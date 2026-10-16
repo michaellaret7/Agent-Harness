@@ -2,13 +2,22 @@
 
 Skills live in two tiers under `skills/` in the sandbox workspace:
 
-    skills/curated/<name>/SKILL.md   human-reviewed; re-copied from the source on every attach
-    skills/learned/<name>/SKILL.md   the agent's own; created and edited freely, never touched by the harness
+    skills/curated/<name>/   human-reviewed; re-copied from the source on every attach
+    skills/learned/<name>/   the agent's own; created and edited freely, never touched by the harness
+
+Each skill is a layered folder (the Agent Skills format), loaded progressively:
+
+    <name>/
+    ├── SKILL.md       frontmatter (always listed) + a short overview read on use
+    ├── references/    detail read only when a step in SKILL.md points to it
+    ├── scripts/       Python run with runpy, never read into context
+    └── assets/        templates and data files used by the output
 
 The agent reads and writes skills with ExecuteCode like any other file; there
 is no skill tool. The format is set by `skills_prompt`, and `SkillsIndex`
 enforces it softly: at attach it lists each skill with its tier and
-description in the system prompt, and flags a file that breaks the format.
+description in the system prompt, and flags a skill that breaks the format,
+including a bundled file SKILL.md never links (the agent could not find it).
 """
 from __future__ import annotations
 
@@ -23,14 +32,35 @@ LEARNED = 'learned'
 
 SKILLS_PROMPT = """
 <skills_protocol>
-Skills are reusable procedures (how to do something), stored as files in your working directory.
+Skills are reusable procedures (how to do something), stored as folders in your working directory.
 The `<skills>` block lists them as of the start of this session, each tagged with its tier.
 Skills you write now are not listed until the next session. Read and write them with ExecuteCode.
 
 Tiers:
 {tiers}
 
-Every SKILL.md must use exactly this format:
+## Layout
+
+A skill is a folder, not a single file. Only SKILL.md is required; add the other parts when the
+skill needs them:
+
+```
+<name>/
+├── SKILL.md        overview: when to use it, the steps, and a link to every other file
+├── references/     detail needed only for some steps: schemas, API notes, edge cases, worked examples
+├── scripts/        Python for deterministic work you would otherwise rewrite each time
+└── assets/         templates and data files the output is built from
+```
+
+The layers load in order, so each costs context only when it is needed:
+1. The `<skills>` block shows only the name and description. The description decides whether the
+   skill is ever opened, so it must say what the skill does and when to use it.
+2. SKILL.md is read in full when the skill is used. Keep it under about 100 lines: the steps, plus
+   one line per bundled file saying when to open it.
+3. A reference is read only when a step points to it. A script is run, never read, so only its
+   output costs context.
+
+Every SKILL.md must start with exactly this frontmatter:
 
 ```markdown
 ---
@@ -38,8 +68,34 @@ name: <lowercase-slug, identical to the folder name>
 description: <one line: what it does and when to use it>
 ---
 
-<markdown instructions>
+## Steps
+1. ... Run `scripts/fetch_prices.py` (`fetch_prices(tickers) -> DataFrame`).
+2. ... For the column definitions, read `references/fields.md`.
+
+## Files
+- `references/fields.md`: field meanings and units; read when interpreting the raw columns.
+- `scripts/fetch_prices.py`: `fetch_prices(tickers) -> DataFrame`; run it, do not rewrite it.
 ```
+
+Writing the parts:
+- Put a step's code in `scripts/` when it is longer than a few lines or must run the same way every
+  time. A script defines functions with type hints and a one-line docstring, handles its own errors
+  with clear messages, and does not run anything on import.
+- Move detail out of SKILL.md into `references/` once the overview passes about 100 lines, or when only
+  some uses need it. One topic per reference file, with a descriptive name (`fields.md`, not
+  `notes.md`). Give a reference over 100 lines a contents list at the top.
+- Link every bundled file from SKILL.md by its path relative to the skill folder. A file SKILL.md
+  does not link cannot be found. Do not chain files: a reference never sends you to another file.
+
+## Using a skill
+
+1. Pick it from the `<skills>` block by its description, then read its SKILL.md in full.
+2. Follow the steps in order. Open a reference only when the step you are on points to it, and read
+   that file in full.
+3. Run a script instead of reading it or rewriting its logic:
+   `fns = runpy.run_path('skills/<tier>/<name>/scripts/<file>.py')`, then call `fns['<function>'](...)`.
+   Read a script's source only when it fails or you are updating it.
+4. Build output from the files in `assets/` when a step names one, rather than recreating them.
 
 When to write a learned skill:
 - Most tasks should end without writing one. Skills are for lasting procedures, not a log of each task.
@@ -50,10 +106,10 @@ When to write a learned skill:
 - Do not write a skill for a one-off fact, a result, or anything an existing skill already says.
 
 Rules:
-- Read a skill's file before following it.
-- Keep each skill short and focused; split a large one into several.
-- To update a learned skill, rewrite the whole file in the format above.
-- A learned skill marked INVALID in the `<skills>` block must be rewritten in the correct format.
+- One skill per procedure. When a skill grows, move detail into its `references/` and code into its
+  `scripts/`; do not split one procedure into several skills.
+- To update a learned skill, edit the file that holds the change and keep SKILL.md's links current.
+- A learned skill marked INVALID in the `<skills>` block must be fixed as the message says.
 </skills_protocol>
 """
 
@@ -97,10 +153,29 @@ def _frontmatter(text: str) -> dict[str, str] | None:
     return None
 
 
+def _unlinked_files(skill_dir: Path, text: str) -> list[str]:
+    """Bundled files whose path relative to the skill folder never appears in SKILL.md's text."""
+    unlinked: list[str] = []
+
+    for path in sorted(skill_dir.rglob('*')):
+        relative = path.relative_to(skill_dir).as_posix()
+
+        # Interpreter caches and hidden files are not part of the skill
+        if not path.is_file() or relative == 'SKILL.md' or '__pycache__' in path.parts or path.name.startswith('.'):
+            continue
+
+        if relative not in text:
+            unlinked.append(relative)
+
+    return unlinked
+
+
 def _index_line(skill_file: Path, tier: str) -> str:
     """One `<skills>` line for a skill: its tier and description, or why its format is invalid."""
     folder = skill_file.parent.name
-    fields = _frontmatter(skill_file.read_text(encoding='utf-8'))
+    text = skill_file.read_text(encoding='utf-8')
+    fields = _frontmatter(text)
+    unlinked = _unlinked_files(skill_file.parent, text)
     problem: str | None = None
 
     if fields is None:
@@ -111,6 +186,9 @@ def _index_line(skill_file: Path, tier: str) -> str:
 
     elif not fields.get('description'):
         problem = 'missing description'
+
+    elif unlinked:
+        problem = f'SKILL.md does not link {", ".join(unlinked)}; link each file or delete it'
 
     if problem is None and fields is not None:
         return f'- {folder} [{tier}]: {fields["description"]}'
