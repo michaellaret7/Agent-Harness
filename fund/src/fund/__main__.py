@@ -12,11 +12,11 @@ def main() -> None:
     load_dotenv()
 
     # Imported after load_dotenv: building the fund reads credentials at import
-    from fund.org import run_fund
+    from fund.org import org
 
     mandate = input('Portfolio mandate: ').strip()
 
-    allocation = run_fund(mandate)
+    allocation = org.run_fund(mandate)
 
     print(allocation.model_dump_json(indent=2))
 

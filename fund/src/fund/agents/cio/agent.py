@@ -10,44 +10,24 @@ Every run ends with a validated `SectorAllocation` (see `output.py`), left on `c
 """
 from __future__ import annotations
 
-import os
+from dataclasses import replace
 from pathlib import Path
 
-from agent_harness import Agent, AgentWorkspace, CompactionConfig, SandboxConfig
+from agent_harness import Agent, AgentWorkspace, CompactionConfig
 
-from fund.agents.cio.output import SectorAllocation, check_allocation
+from fund.agents.sandbox import FUND_SANDBOX
 
 ROLE = 'CIO'
 MODEL = 'openai/gpt-6-astra'
 SYSTEM_PROMPT = (Path(__file__).parent / 'prompt.md').read_text(encoding='utf-8').strip()
-
-# Workspace config: host credentials the sandbox kernel may read (everything else in `.env` stays on the host)
-WORKSPACE_NAME = 'fund-cio'
-SANDBOX_CREDENTIALS = ('FMP_API_KEY',)
-SANDBOX_PACKAGES = ('pandas', 'numpy', 'pyarrow')
 CURATED_SKILLS = Path(__file__).parent / 'skills'
 
-# Exhaustive research has no time limit: the iteration cap is only a runaway guard
-MAX_ITERS = 1000
-REASONING_EFFORT = 'high'
-
-# Compact before the prompt crosses the model's 272k-token price break (input cost doubles above it);
-# research notes live in sandbox files, so compaction loses no findings
-COMPACTION = CompactionConfig(context_window=272_000)
-
-
-# Fails fast with a KeyError at import if any sandbox credential is missing: load `.env` first
 workspace = AgentWorkspace(
-    WORKSPACE_NAME,
+    'fund-cio',
     curated_skills=CURATED_SKILLS,
-    sandbox=SandboxConfig(
-        env={name: os.environ[name] for name in SANDBOX_CREDENTIALS},
-        packages=SANDBOX_PACKAGES,
-        j_screen=True,
-        recursive_agents=True,
-    ),
+    sandbox=replace(FUND_SANDBOX, recursive_agents=True),
     memory=True,
-    auto_memory_recall=True,
+    auto_memory_recall=False,
     curate_memory=True,
 )
 
@@ -55,11 +35,9 @@ workspace = AgentWorkspace(
 cio = Agent(
     system=SYSTEM_PROMPT,
     model=MODEL,
-    max_iters=MAX_ITERS,
-    reasoning_effort=REASONING_EFFORT,
-    compaction=COMPACTION,
-    output_model=SectorAllocation,
-    verifier=check_allocation,
+    max_iters=200,
+    reasoning_effort='high',
+    compaction=CompactionConfig(context_window=272_000)
 )
 
 workspace.attach(cio)
