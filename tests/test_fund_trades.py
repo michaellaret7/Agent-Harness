@@ -17,7 +17,7 @@ from agent_harness.tooling.decorator import agent_tool, bind_tool
 from agent_harness.tooling.result import ToolResult
 from contract_support import scripted_agent, tool_call, tool_delta
 from fund.tools.orders import submit_order
-from fund.trades import Trade, record_trades
+from fund.trades import Trade, get_trades, record_trades
 
 ROLE = 'PM (Test Pod)'
 
@@ -215,3 +215,38 @@ def test_agent_without_trading_tools_is_rejected() -> None:
     with scripted_agent([], tools=[]) as (agent, api, sink):
         with pytest.raises(Exception, match='SubmitOrder|ReplaceOrder|ClosePosition'):
             record_trades(agent, [], uuid.uuid4(), ROLE)
+
+
+def test_get_trades_reads_the_record_newest_first() -> None:
+    """GetTrades lists every member's trades newest first, filters by ticker, and honours the limit."""
+    pm_id, other_pm_id = uuid.uuid4(), uuid.uuid4()
+    record: dict[uuid.UUID, list[Trade]] = {pm_id: [], other_pm_id: []}
+
+    submit = tool_call('SubmitOrder', {'symbol': 'NVDA', 'side': 'buy', 'qty': 10}, 'c1')
+    close = tool_call('ClosePosition', {'symbol': 'NVDA'}, 'c2')
+    other = tool_call('SubmitOrder', {'symbol': 'AMD', 'side': 'buy', 'qty': 5}, 'c3')
+
+    with scripted_agent([[tool_delta(submit)], [{'content': 'a'}], [tool_delta(close)], [{'content': 'b'}]],
+                        tools=broker_tools()) as (agent, api, sink):
+        record_trades(agent, record[pm_id], pm_id, 'PM (Tech)')
+        agent.run('Buy.', sink=sink)
+        agent.run('Exit.', sink=sink)
+
+    with scripted_agent([[tool_delta(other)], [{'content': 'c'}]], tools=broker_tools()) as (agent, api, sink):
+        record_trades(agent, record[other_pm_id], other_pm_id, 'PM (Other)')
+        agent.run('Buy.', sink=sink)
+
+    read = bind_tool(get_trades, _trades=record)['function']
+
+    every = read().payload.splitlines()
+
+    assert len(every) == 3
+    assert 'PM (Other) · SubmitOrder' in every[0] and '[order-AMD]' in every[0]
+    assert 'PM (Tech) · ClosePosition' in every[1] and '[close-NVDA]' in every[1]
+    assert 'PM (Tech) · SubmitOrder' in every[2] and '[order-NVDA]' in every[2]
+
+    nvda = read(symbol='nvda').payload.splitlines()
+
+    assert len(nvda) == 2 and all('NVDA' in line for line in nvda)
+    assert len(read(limit=1).payload.splitlines()) == 1
+    assert read(symbol='AVGO').payload == 'No trades in AVGO yet.'

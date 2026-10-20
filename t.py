@@ -1,67 +1,61 @@
-"""Scratch script: a host agent fans out concurrent sub-agents from inside ExecuteCode.
+"""Scratch script: one research kickoff to the tech PM through the real fund org, trading gated off.
 
-    host Agent (depth 0)
-      └─ ExecuteCode kernel (depth 1)           one call, a ThreadPoolExecutor
-           ├─ sub-agent AAPL ─┐
-           ├─ sub-agent MSFT ─┼─ run concurrently, each with its own FMP tool
-           ├─ sub-agent NVDA ─┤
-           └─ sub-agent GOOGL ┘
-      └─ host compares the four summaries
+    uv run --package fund python t.py
 
-`SandboxConfig(recursive_agents=True)` passes the host's OpenRouter key into the
-kernel and makes the ExecuteCode prompt teach the sub-agent pattern. Sub-agents built at depth 1
-cannot build agents of their own.
+    load .env ──► fund.org (builds the PM) ──► gate: deny every trading tool for this run
+              ──► org.run([(pm_id, TASK)]) ──► PM researches, writes research/<date>-tech-scan.md, Remembers theses
 """
+from __future__ import annotations
 
-import os
-import time
+import logging
+from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
-from agent_harness import Agent
-from agent_harness.base_tools.code_execution.config import SandboxConfig
-from agent_harness.base_tools.code_execution.tool import execute_code_tool
-
 load_dotenv()
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
 
-MODEL = 'openai/gpt-6-sol'
-TICKERS = ['AAPL', 'MSFT', 'NVDA', 'GOOGL']
+# Imported after load_dotenv: building the fund reads credentials at import
+from agent_harness.gates import GateContext, GateVerdict  # noqa: E402
+from fund.org import org  # noqa: E402
 
-TASK = f"""Compare the last 3 fiscal years of revenue growth, free cash flow margin and net debt for {', '.join(TICKERS)}.
+TRADING_TOOLS = ('SubmitOrder', 'ReplaceOrder', 'CancelOrder', 'ClosePosition')
 
-Do the per-ticker work with concurrent sub-agents, all in ONE ExecuteCode call:
-- Define an @agent_tool `fmp_get(path: str, params: dict) -> ToolResult` that calls
-  https://financialmodelingprep.com/stable/<path> with os.environ['FMP_API_KEY'] and returns the JSON text.
-- Build one sub-agent per ticker (provider='openrouter', model='{MODEL}', tools=[fmp_get]) whose task is
-  to fetch that ticker's statements and return a short plain-text summary of the three metrics.
-- Run them with concurrent.futures.ThreadPoolExecutor, passing sink=BaseSink() (from agent_harness.sinks.base)
-  to each run so only the summaries print. Time the whole fan-out and print the elapsed seconds.
-- Pass timeout=900 to ExecuteCode.
+now = datetime.now(UTC).astimezone(ZoneInfo('America/New_York'))
 
-Then compare the four companies in one table and end with a one-line verdict."""
+TASK = f"""Research session, {now:%a %Y-%m-%d %H:%M} ET. This is research only: do not place, replace, \
+or cancel orders or close positions, from tools or from code.
 
-sandbox = SandboxConfig(
-    env={'FMP_API_KEY': os.environ['FMP_API_KEY']},
-    recursive_agents=True,
-)
+Your analysts are not staffed yet, so do the research yourself across your four industries:
+1. Call GetAccount and GetPositions to see what the sleeve holds today.
+2. For each industry, find the names with the strongest current setups: recent earnings and guidance,
+   estimate revisions, valuation against history and peers, price action, and catalysts in the next
+   few weeks. Use WebSearch/WebExtract for news and ExecuteCode with FMP for the numbers.
+3. Pick at most 5 candidate ideas. For each, write all five parts of a qualifying idea (thesis, horizon,
+   conviction with evidence, invalidation, exit conditions with a stop), plus what would have to be
+   true for you to act.
+4. Save the full write-up to `research/{now:%Y-%m-%d}-tech-scan.md` in your sandbox, and Remember the
+   key theses so later sessions can pick them up.
 
-execute_code = execute_code_tool(sandbox)
+Do not use SendMessage: there is no one to reply to. End with a summary of the candidates and the
+path of the research file."""
 
-agent = Agent(
-    system=(
-        '<role>\n'
-        'You are a lead equity analyst who delegates per-company research to sub-agents and synthesizes '
-        'their findings. Every number must come from FMP.\n'
-        '</role>'
-    ),
-    tools=[execute_code],
-    provider='openrouter',
-    model=MODEL,
-)
 
-started = time.perf_counter()
-answer = agent.run(TASK)
+def research_only(ctx: GateContext) -> GateVerdict:
+    """Deny every trading call for this run."""
+    return GateVerdict.deny(f'Research-only session: {ctx.tool_name} is disabled for this run.')
 
-print('\n=== Final answer ===')
-print(answer)
-print(f'\nTotal run time: {time.perf_counter() - started:.0f}s')
+
+pm = org.get_agent(org.pm_id)
+pm.add_gate(research_only, tool=TRADING_TOOLS)
+
+org.run([(org.pm_id, TASK)], max_messages=5)
+
+# org.run returns nothing: read the PM's final answer from its history
+final = next(m for m in reversed(pm.messages) if m.get('role') == 'assistant' and m.get('content'))
+content = final['content']
+
+print('\n=== PM final answer ===')
+print(content if isinstance(content, str) else ''.join(part.get('text', '') for part in content))
+print(f'\nTrades recorded: {len(org.trades[org.pm_id])}')

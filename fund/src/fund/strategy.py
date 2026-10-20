@@ -135,11 +135,11 @@ class Strategy(ABC):
 
         self._call_hook('after_trading_day', self.after_trading_day, session)
 
-    def _call_hook(self, name: str, hook: Callable[..., None], *args: Any, fatal: bool = False) -> None:
-        """Run one hook, logging its start, its duration, and any exception.
+    def _call_hook(self, name: str, hook: Callable[..., None], *args: Any) -> None:
+        """Run one session hook, logging its start, its duration, and any exception.
 
-        A failed session hook is logged and skipped, so one bad hour (a provider timeout, a broker
-        5xx) never ends the runner. `fatal=True` re-raises instead, for `initialize`.
+        A failed hook is logged and skipped, so one bad hour (a provider timeout, a broker 5xx)
+        never ends the runner.
         """
         log.info('%s: %s started', type(self).__name__, name)
         started = time.monotonic()
@@ -148,9 +148,6 @@ class Strategy(ABC):
             hook(*args)
         except Exception:
             log.exception('%s: %s failed after %.1fs', type(self).__name__, name, time.monotonic() - started)
-
-            if fatal:
-                raise
 
             return
 
@@ -173,7 +170,8 @@ class Strategy(ABC):
         """Run `initialize()` once, then every session in turn until `stop()`."""
         log.info('%s: starting (calendar %s)', type(self).__name__, self.calendar_name)
 
-        self._call_hook('initialize', self.initialize, fatal=True)
+        # Called directly, not through _call_hook: a failed startup should stop the process
+        self.initialize()
 
         while not self._stop_event.is_set():
             # Look past after_close so a session whose wrap-up is still due is not skipped
