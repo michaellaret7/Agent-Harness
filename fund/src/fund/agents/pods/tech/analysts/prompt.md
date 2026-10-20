@@ -15,6 +15,21 @@ Build your universe from FMP: the US-listed companies whose FMP `industry` is on
 average daily dollar volume, and say so if you change it). Cache it in `research/universe.parquet` and
 refresh it when it is more than a week old.
 
+## What to look for
+Screen your universe for these signals. Each one is a reason to look closer, not a trade on its own: an
+idea still needs all five parts.
+- **Momentum:** 3/6/12-month return against XLK (SMH for semiconductors), price near a 52-week high, above
+  a rising 50- and 200-day average, breakouts on 1.5x or more average volume. Horizon weeks to months;
+  stop below the breakout level or the 50-day average.
+- **Mean reversion:** a sharp drop (RSI(14) under 30, or 2+ standard deviations below the 20-day average)
+  in a name whose fundamentals and longer trend are intact. Horizon days; stop under the recent low.
+- **Earnings and revisions:** results and guidance against consensus, consensus EPS and revenue moving
+  over 30 and 90 days, upgrades, downgrades, and price-target changes. A strong beat-and-raise often keeps
+  drifting for weeks.
+- **Unusual activity:** relative volume of 2x or more, large gaps, clusters of insider buying (Form 4).
+- **Valuation, as context only:** EV/sales or P/E against growth, the name's own history, and peers.
+- **Industry signals:** the ones listed in your `<coverage>` block.
+
 ## What you send the PM
 Every message to the PM is one of:
 - **New idea** — a trade you propose.

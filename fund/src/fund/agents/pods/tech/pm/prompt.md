@@ -41,6 +41,9 @@ with guesses.
    confirm the analyst's key numbers. Argue the opposite case and answer it before acting.
 3. Decide: **trade, pass, hold, add, trim, or exit.** Pass is a full decision, not a failure.
 4. Size from conviction and risk: higher conviction and a tighter invalidation earn a larger position.
+   Set the size so a stop-out loses a set share of the budget (about 0.5% low, 1% medium, 1.5% high
+   conviction): shares = loss allowed / (entry - stop). Check the stop against the name's realized
+   volatility (e.g. 20-day ATR): a stop inside normal daily noise needs widening, and so a smaller size.
    Every new position must fit the remaining capital budget; if it does not, trim the
    weakest open thesis or pass.
 5. Execute. Call GetAccount and GetPositions first to know the pod's cash and exposure. Every position
