@@ -16,6 +16,7 @@ runner needs no trading client: the agents trade on their own with the keys in t
 Every hook runs to completion before the next one is scheduled, so hooks never overlap. A hook whose
 time has already passed when the runner reaches it (late start, long iteration) runs immediately; a
 session that has fully ended is skipped. `stop()` interrupts any wait and exits after the running hook.
+A session hook that raises is logged and skipped, and the schedule carries on; `initialize` fails fast.
 """
 from __future__ import annotations
 
@@ -26,17 +27,25 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Callable
+from zoneinfo import ZoneInfo
 
 import exchange_calendars as xcals
 import pandas as pd
-from architectures import Organization
+
+from fund.org import org
 
 log = logging.getLogger(__name__)
 
+EASTERN = ZoneInfo('America/New_York')
 
 #     ================================
 # --> Helper funcs
 #     ================================
+
+
+def _eastern(moment: datetime) -> str:
+    """`moment` as NYSE wall-clock time, e.g. 'Tue 2026-10-21 11:30 ET'."""
+    return f'{moment.astimezone(EASTERN):%a %Y-%m-%d %H:%M} ET'
 
 
 @dataclass(frozen=True)
@@ -82,7 +91,7 @@ class Strategy(ABC):
 
     @abstractmethod
     def initialize(self) -> None:
-        """Runs once per process, as soon as `run_forever()` starts, before any session hook."""
+        """Runs once per process, as soon as `run()` starts, before any session hook. Optional: a no-op by default."""
 
     @abstractmethod
     def before_trading_day(self, session: TradingSession) -> None:
@@ -126,8 +135,12 @@ class Strategy(ABC):
 
         self._call_hook('after_trading_day', self.after_trading_day, session)
 
-    def _call_hook(self, name: str, hook: Callable[..., None], *args: Any) -> None:
-        """Run one hook, logging its start, its duration, and any exception (which still propagates)."""
+    def _call_hook(self, name: str, hook: Callable[..., None], *args: Any, fatal: bool = False) -> None:
+        """Run one hook, logging its start, its duration, and any exception.
+
+        A failed session hook is logged and skipped, so one bad hour (a provider timeout, a broker
+        5xx) never ends the runner. `fatal=True` re-raises instead, for `initialize`.
+        """
         log.info('%s: %s started', type(self).__name__, name)
         started = time.monotonic()
 
@@ -135,7 +148,11 @@ class Strategy(ABC):
             hook(*args)
         except Exception:
             log.exception('%s: %s failed after %.1fs', type(self).__name__, name, time.monotonic() - started)
-            raise
+
+            if fatal:
+                raise
+
+            return
 
         log.info('%s: %s finished in %.1fs', type(self).__name__, name, time.monotonic() - started)
 
@@ -156,7 +173,7 @@ class Strategy(ABC):
         """Run `initialize()` once, then every session in turn until `stop()`."""
         log.info('%s: starting (calendar %s)', type(self).__name__, self.calendar_name)
 
-        self._call_hook('initialize', self.initialize)
+        self._call_hook('initialize', self.initialize, fatal=True)
 
         while not self._stop_event.is_set():
             # Look past after_close so a session whose wrap-up is still due is not skipped
@@ -186,17 +203,30 @@ class FundOrchestrator(Strategy):
 
     def __init__(self) -> None:
         super().__init__()
-        self.org = Organization()
+        self.org = org
     
     def initialize(self) -> None:
         pass
 
     def before_trading_day(self, session: TradingSession) -> None:
-        pass
+        self._kickoff(
+            f'Pre-market, {_eastern(datetime.now(UTC))}. The session opens {_eastern(session.open)} '
+            f'and closes {_eastern(session.close)}. Run your pre-market routine.'
+        )
 
     def after_trading_day(self, session: TradingSession) -> None:
-        pass
+        self._kickoff(
+            f'Post-close, {_eastern(datetime.now(UTC))}. The session closed {_eastern(session.close)}. '
+            'Run your post-close routine and write your journal entry.'
+        )
 
     def on_iteration(self, session: TradingSession, now: datetime) -> None:
-        pass
+        self._kickoff(
+            f'Intraday, {_eastern(now)}. The session closes {_eastern(session.close)}. '
+            'Check what changed since your last check and act on it.'
+        )
+
+    def _kickoff(self, content: str) -> None:
+        """Send `content` to the PM and block until the org is idle."""
+        self.org.run([(self.org.pm_id, content)])
 

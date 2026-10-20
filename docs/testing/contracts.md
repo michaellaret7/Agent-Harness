@@ -46,6 +46,7 @@ are captured by pytest during the failure-isolation cases.
 | `test_hook_failure_isolation` | A failing observer cannot prevent later observers or the turn from completing. |
 | `test_hook_tool_filtering` | Tool filters match only their named tools; unknown tool filters are rejected. |
 | `test_hook_context_and_ordering` | Parallel calls retain their own hook identity, arguments, and outcome; each start precedes its end even when completion order reverses. |
+| `test_tool_data_reaches_hooks_not_the_model` | `ToolResult.data` reaches hooks on the `tool_end` outcome; the model sees only the payload, and error results carry no data. |
 | `test_gate_enforcement` | Denials and failing gates prevent filesystem side effects and stop the gate chain; rewrites reach later gates and the tool. |
 | `test_tool_error_handling` | Invalid JSON, unknown tools, exceptions, and invalid return types yield paired errors without preventing later calls. Explicit status governs success, independent of payload wording. |
 | `test_parallel_boundaries` | Opted-in calls overlap, serial tools separate batches, and returned results retain request order. |

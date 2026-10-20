@@ -128,7 +128,7 @@ class ToolHandler:
 
         # Run the actual tool function. This is the main line of the whole tool handler basically.
         # This returns the result of the tool call and the status of the tool call (so whether it threw and error or not)
-        result, status = self._dispatch(tc, sink, cancel_event)
+        result, status, data = self._dispatch(tc, sink, cancel_event)
 
         duration = time.perf_counter() - t0
 
@@ -139,7 +139,8 @@ class ToolHandler:
             ToolOutcome(
                 payload=result, 
                 status=status, 
-                duration=duration
+                duration=duration,
+                data=data,
             ),
         )
 
@@ -168,10 +169,10 @@ class ToolHandler:
         tc: dict,
         sink: Sink,
         cancel_event: threading.Event,
-    ) -> tuple[str, ToolStatus]:
+    ) -> tuple[str, ToolStatus, Any]:
         """Run the tool body and classify the outcome.
 
-        Returns `(payload, status)` so the caller can stamp duration around
+        Returns `(payload, status, data)` so the caller can stamp duration around
         the whole dispatch and build one `ToolOutcome` for the sink. Side
         effects a tool has on the run (e.g. Plan's plan-update emit) happen
         inside the tool, through the ToolContext passed by `_invoke`.
@@ -183,28 +184,28 @@ class ToolHandler:
         args_json = tc['function']['arguments']
 
         if cancel_event.is_set():
-            return '[interrupted]', 'interrupted'
+            return '[interrupted]', 'interrupted', None
 
         try:
             # Load the arguments from the tool call dictionary into a smaller dict called kwargs
             kwargs = json.loads(args_json) if args_json else {}
         except (ValueError, TypeError) as e:
             # Raise an error if the arguments are bad
-            return f'error: bad arguments JSON: {e}', 'error'
+            return f'error: bad arguments JSON: {e}', 'error', None
 
         # Underscore params are bound by the application (bind_tool) and hidden from the schema;
         # a model-supplied value would override the bound one, so the model may never set them
         hidden = sorted(key for key in kwargs if str(key).startswith('_'))
 
         if hidden:
-            return f'error: unknown arguments {hidden}', 'error'
+            return f'error: unknown arguments {hidden}', 'error', None
 
         # Run the call past the gates: returns the (possibly rewritten) kwargs
         # and a deny reason if any gate blocked it (None means nothing is blocking the tool call)
         kwargs, deny_reason = self._apply_gates(name, tool_call_id, kwargs)
 
         if deny_reason is not None:
-            return f'denied: {deny_reason}', 'denied'
+            return f'denied: {deny_reason}', 'denied', None
 
         # Run the actual tool funtion and return the result
         result = self._invoke(name, kwargs, ToolContext(self.agent, sink, cancel_event))
@@ -212,7 +213,7 @@ class ToolHandler:
         # Read the explicit tool status independently of its model-facing payload.
         status: ToolStatus = result.status
 
-        return result.payload, status
+        return result.payload, status, result.data
 
     def _is_parallel(self, tc: dict) -> bool:
         """A small helper function to check whether a tool call's underlying tool opted into safe parallelism."""

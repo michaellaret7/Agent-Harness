@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 
 @dataclass(frozen=True)
@@ -11,10 +11,13 @@ class ToolResult:
 
     Payload text never determines status. Dispatch adds timing and handles
     denied/interrupted calls separately through the sink's ToolOutcome.
+    `data` is an optional structured result for hooks and sinks (e.g. the
+    order a broker accepted); it travels on ToolOutcome and never reaches the model.
     """
 
     payload: str
     status: Literal['ok', 'error']
+    data: Any = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.payload, str):

@@ -145,7 +145,7 @@ class Organization:
             # message's recipient_id value
             self.agents[message.recipient_id].inbox.put(message)
 
-    def run(self, kickoff: list[tuple[uuid.UUID, str]], max_messages: int = 20) -> None:
+    def run(self, kickoff: list[tuple[uuid.UUID, str]], max_messages: int = 30) -> None:
         """Send the kickoff messages and let members work in parallel until the org is idle.
 
         Each member processes its own inbox one message at a time, so a busy

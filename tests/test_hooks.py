@@ -8,7 +8,7 @@ import pytest
 from agent_harness.hooks import HookContext
 from agent_harness.tooling.decorator import agent_tool
 from agent_harness.tooling.result import ToolResult
-from contract_support import arithmetic_tools, scripted_agent, tool_call, tool_delta
+from contract_support import arithmetic_tools, message_text, scripted_agent, tool_call, tool_delta
 
 
 #     ================================
@@ -103,3 +103,29 @@ def test_hook_context_and_ordering() -> None:
             assert events[0].outcome is None
             assert events[1].outcome is not None
             assert (events[1].outcome.payload, events[1].outcome.status) == (label.upper(), 'ok')
+
+
+def test_tool_data_reaches_hooks_not_the_model() -> None:
+    """ToolResult.data rides on the tool_end outcome; the model sees only the payload, and errors carry none."""
+    outcomes: dict[str, object] = {}
+
+    @agent_tool
+    def lookup(key: str) -> ToolResult:
+        """Look up a record."""
+        if key == 'missing':
+            return ToolResult('error: no such record', status='error')
+
+        return ToolResult(f'found {key}', status='ok', data={'key': key, 'rows': [1, 2]})
+
+    calls = tool_delta(tool_call('lookup', {'key': 'a'}, 'c1'), tool_call('lookup', {'key': 'missing'}, 'c2'))
+
+    with scripted_agent([[calls], [{'content': 'Done'}]], tools=[lookup]) as (agent, api, sink):
+        agent.add_hook('tool_end', lambda ctx: outcomes.__setitem__(ctx.tool_call_id, ctx.outcome))
+
+        assert agent.run('Look up.', sink=sink) == 'Done'
+
+    assert outcomes['c1'].data == {'key': 'a', 'rows': [1, 2]}
+    assert outcomes['c2'].data is None
+
+    tool_results = [message_text(m) for m in api.requests[1]['messages'] if m['role'] == 'tool']
+    assert tool_results == ['found a', 'error: no such record']

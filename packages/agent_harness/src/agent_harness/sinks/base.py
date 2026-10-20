@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from agent_harness.usage import Usage
 
@@ -49,12 +49,14 @@ class ToolOutcome:
     Carried by `on_tool_end`. `payload` is the LLM-facing string (unchanged
     from the previous `result` argument); `status` and `duration` move the
     timing and outcome classification out of every sink and into the one
-    place that has the information — `ToolHandler._run_tool`.
+    place that has the information — `ToolHandler._run_tool`. `data` is the
+    tool's structured `ToolResult.data`, None when it set none or never ran.
     """
 
     payload: str
     status: ToolStatus
     duration: float
+    data: Any = None
 
 
 #     ================================

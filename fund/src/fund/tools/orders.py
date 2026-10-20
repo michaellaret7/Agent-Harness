@@ -127,7 +127,7 @@ def submit_order(
     except (APIError, ValueError) as error:
         return broker_error(error)
 
-    return ToolResult(f'Order submitted:\n{order_line(order)}', status='ok')
+    return ToolResult(f'Order submitted:\n{order_line(order)}', status='ok', data=order.model_dump(mode='json'))
 
 
 submit_order.tool['description'] += f'\n\n{ORDER_RULES}'
@@ -194,7 +194,11 @@ def replace_order(
     except (APIError, ValueError) as error:
         return broker_error(error)
 
-    return ToolResult(f'Order replaced (the new order has a new id):\n{order_line(order)}', status='ok')
+    return ToolResult(
+        f'Order replaced (the new order has a new id):\n{order_line(order)}',
+        status='ok',
+        data=order.model_dump(mode='json'),
+    )
 
 
 @agent_tool(name='CancelOrder')

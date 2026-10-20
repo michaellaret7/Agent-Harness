@@ -109,7 +109,7 @@ def close_position(
     except (APIError, ValueError) as error:
         return broker_error(error)
 
-    return ToolResult(f'Close order submitted:\n{order_line(order)}', status='ok')
+    return ToolResult(f'Close order submitted:\n{order_line(order)}', status='ok', data=order.model_dump(mode='json'))
 
 
 def position_tools(client: TradingClient) -> list[dict[str, Any]]:

@@ -11,7 +11,16 @@ from agent_harness import SandboxConfig
 
 # Host credentials the sandbox kernel may read (everything else in `.env` stays on the host)
 SANDBOX_CREDENTIALS = ('FMP_API_KEY',)
-SANDBOX_PACKAGES = ('pandas', 'numpy', 'pyarrow')
+SANDBOX_PACKAGES = (
+    # Data frames and storage
+    'pandas', 'numpy', 'pyarrow', 'openpyxl',
+    # Market data and filings
+    'fmp-data', 'edgartools',
+    # Statistics, models, and charts
+    'scipy', 'statsmodels', 'scikit-learn', 'matplotlib',
+    # Portfolio performance and optimization
+    'quantstats', 'pyportfolioopt',
+)
 
 # Fails fast with a KeyError at import if any sandbox credential is missing: load `.env` first
 FUND_SANDBOX = SandboxConfig(
