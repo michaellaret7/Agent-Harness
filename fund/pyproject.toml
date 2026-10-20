@@ -5,7 +5,9 @@ description = "Agent-run hedge fund: an Organization of agents that manages a po
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "agent-harness",
+    "alpaca-py>=0.44.0",
     "architectures",
+    "exchange-calendars>=4.13.2",
 ]
 
 [build-system]
