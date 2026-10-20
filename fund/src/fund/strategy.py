@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -192,8 +193,18 @@ class Strategy(ABC):
 #     ================================
 
 
+MAX_MESSAGES = 40  # per kickoff, kickoffs included: 5 members, each may message the others and reply
+
+
 class FundOrchestrator(Strategy):
-    """NYSE session: 7:30 a.m. ET, then hourly from the 9:30 open until an hour after the close."""
+    """NYSE session: 7:30 a.m. ET, then hourly from the 9:30 open until an hour after the close.
+
+        07:30 pre-market   PM + analysts, in parallel   analysts' ideas reach the PM's inbox before the open
+        hourly intraday    PM + analysts, in parallel   each acts only on what changed
+        17:00 post-close   analysts, then the PM        the PM's journal includes the analysts' wrap-up
+
+    Each kickoff only names the phase and time; what to do in each phase lives in the members' prompts.
+    """
 
     before_open = timedelta(hours=2)   # 09:30 open → 07:30 ET
     sleeptime = timedelta(hours=1)
@@ -202,29 +213,42 @@ class FundOrchestrator(Strategy):
     def __init__(self) -> None:
         super().__init__()
         self.org = org
-    
+
     def initialize(self) -> None:
         pass
 
     def before_trading_day(self, session: TradingSession) -> None:
-        self._kickoff(
+        content = (
             f'Pre-market, {_eastern(datetime.now(UTC))}. The session opens {_eastern(session.open)} '
             f'and closes {_eastern(session.close)}. Run your pre-market routine.'
         )
 
+        self._kickoff([self.org.pm_id, *self.org.analyst_ids], content)
+
     def after_trading_day(self, session: TradingSession) -> None:
+        closed = f'The session closed {_eastern(session.close)}.'
+
         self._kickoff(
-            f'Post-close, {_eastern(datetime.now(UTC))}. The session closed {_eastern(session.close)}. '
-            'Run your post-close routine and write your journal entry.'
+            self.org.analyst_ids,
+            f'Post-close, {_eastern(datetime.now(UTC))}. {closed} Run your post-close routine.',
+        )
+
+        # Only once the analysts are idle, so the journal covers their after-hours work
+        self._kickoff(
+            [self.org.pm_id],
+            f'Post-close, {_eastern(datetime.now(UTC))}. {closed} Your analysts have finished for the day. '
+            'Run your post-close routine and write your journal entry.',
         )
 
     def on_iteration(self, session: TradingSession, now: datetime) -> None:
-        self._kickoff(
+        content = (
             f'Intraday, {_eastern(now)}. The session closes {_eastern(session.close)}. '
-            'Check what changed since your last check and act on it.'
+            'Check what changed since your last check and act only if it matters.'
         )
 
-    def _kickoff(self, content: str) -> None:
-        """Send `content` to the PM and block until the org is idle."""
-        self.org.run([(self.org.pm_id, content)])
+        self._kickoff([self.org.pm_id, *self.org.analyst_ids], content)
+
+    def _kickoff(self, recipients: list[uuid.UUID], content: str) -> None:
+        """Send `content` to each recipient and block until the org is idle."""
+        self.org.run([(recipient, content) for recipient in recipients], max_messages=MAX_MESSAGES)
 

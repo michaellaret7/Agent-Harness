@@ -20,12 +20,11 @@ from pathlib import Path
 
 from agent_harness import Agent, AgentWorkspace, CompactionConfig
 
-from fund.agents.sandbox import FUND_SANDBOX
+from fund.agents.sandbox import FUND_MODEL, FUND_SANDBOX
 from fund.tools import paper_client, trading_tools
 from fund.tools.broker import ALPACA_CREDENTIALS
 
 ROLE = 'PM (Technology Pod)'
-MODEL = 'openai/gpt-6-astra'
 
 CAPITAL_BLOCK = f"""<capital>
 Your capital budget is 300,000: the most the sleeve's positions may be worth at market value.
@@ -54,7 +53,7 @@ workspace = AgentWorkspace(
 # One PM per process: registered once, then run for every message it receives
 pm = Agent(
     system=SYSTEM_PROMPT,
-    model=MODEL,
+    model=FUND_MODEL,
     tools=trading_tools(paper_client()), # register tools for the trade execution
     max_iters=200,
     reasoning_effort='high',

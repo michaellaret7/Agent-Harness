@@ -17,9 +17,7 @@ from pathlib import Path
 
 from agent_harness import Agent, AgentWorkspace, CompactionConfig
 
-from fund.agents.sandbox import FUND_SANDBOX
-
-MODEL = 'openai/gpt-6-astra'
+from fund.agents.sandbox import FUND_MODEL, FUND_SANDBOX
 
 PROMPT = (Path(__file__).parent / 'prompt.md').read_text(encoding='utf-8').strip()
 
@@ -70,7 +68,7 @@ def _build_analyst(coverage: Coverage) -> tuple[str, Agent]:
 
     agent = Agent(
         system=f'{PROMPT}\n\n{_coverage_block(coverage)}',
-        model=MODEL,
+        model=FUND_MODEL,
         max_iters=200,
         reasoning_effort='high',
         # Archived inside the sandbox, so the analyst can open a summary's `(archive #n)` citation with ExecuteCode

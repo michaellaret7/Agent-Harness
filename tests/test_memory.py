@@ -687,6 +687,26 @@ def test_judge_calls_are_capped_and_the_rest_wait_for_the_next_pass(monkeypatch:
     assert judge.clusters == [[MSFT_LEASES, MSFT_DEBT], [NVDA_RESULTS, 'NVDA earnings in Paris.']]
 
 
+def test_memories_saved_in_one_clock_tick_are_all_curated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Memories sharing a clock reading still each get judged: a capped pass never skips the rest for good."""
+    from agent_harness.workspace.memory import curator as curator_module
+    from agent_harness.workspace.memory import store as store_module
+
+    monkeypatch.setattr(curator_module, 'MAX_JUDGE_CALLS', 1)
+    monkeypatch.setattr(store_module.time, 'time', lambda: 1_800_000_000.0)  # every save in the same tick
+    store = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder()).memory
+
+    for content in (MSFT_LEASES, MSFT_DEBT, NVDA_RESULTS, 'NVDA earnings in Paris.'):
+        store.add(content, 'fact', 'medium')
+
+    judge = ScriptedJudge({'action': 'keep'}, {'action': 'keep'})
+    curator = curator_module.MemoryCurator(store, judge)
+
+    assert curator.curate().new == 2
+    assert curator.curate().new == 2
+    assert curator.curate().new == 0
+
+
 def test_a_failed_judge_leaves_the_cluster_and_the_pass_goes_on() -> None:
     """A judge error changes nothing for that cluster; the pass still covers every new memory."""
     from agent_harness.workspace.memory.curator import MemoryCurator

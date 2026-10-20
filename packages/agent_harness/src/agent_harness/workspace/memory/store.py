@@ -48,6 +48,9 @@ DUPLICATE_SIMILARITY = 0.90
 # Texts per embedding request: embedding APIs reject oversized batches
 EMBED_BATCH = 128
 
+# Seconds a new memory's created_at moves past the newest one when the clock has not ticked since
+CREATED_AT_STEP = 1e-6
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS memories (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,  -- ids are shown to the model, so never reused
@@ -195,7 +198,12 @@ class MemoryStore:
 
                 return twin, False
 
-            memory_id = _insert(db, content, kind, IMPORTANCE[importance], now, now, 0)
+            # Creation times stay strictly increasing: the curator's bookmark compares them with `>`,
+            # so two memories saved in the same clock tick must not share one
+            newest = db.execute('SELECT MAX(created_at) FROM memories').fetchone()[0]
+            created_at = max(now, newest + CREATED_AT_STEP) if newest is not None else now
+
+            memory_id = _insert(db, content, kind, IMPORTANCE[importance], created_at, now, 0)
 
             # No vector means the API was down; backfill embeds it the next time a store opens
             if vector is not None:

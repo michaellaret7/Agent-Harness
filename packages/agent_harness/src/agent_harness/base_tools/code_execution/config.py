@@ -33,9 +33,13 @@ class SandboxConfig:
             the pattern in the tool description. Off by default: model code can
             then read a billing key. `execute_code_tool` fails fast if the key is
             missing or the sandbox is already at the agent depth limit.
+        subagent_model: With `recursive_agents`, the model sub-agents should use. The tool
+            description names it in its examples and asks for it on every sub-agent
+            (a prompt-level instruction, not enforced). None leaves the choice to the model code.
     """
 
     env: Mapping[str, str] = field(default_factory=dict)
     packages: Sequence[str] = ()
     j_screen: bool = False
     recursive_agents: bool = False
+    subagent_model: str | None = None

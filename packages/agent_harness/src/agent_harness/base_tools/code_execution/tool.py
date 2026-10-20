@@ -54,8 +54,14 @@ def _recursive_agents_env() -> dict[str, str]:
     return {var: os.environ[var] for var in (key_var, url_var) if os.environ.get(var)}
 
 
-def _subagents_note() -> str:
-    """Teach the model to build sub-agents in code. Only added with `recursive_agents=True`."""
+def _subagents_note(model: str | None) -> str:
+    """Teach the model to build sub-agents in code. Only added with `recursive_agents=True`.
+
+    With a `model`, the examples use it and the note asks for it on every sub-agent.
+    """
+    model_arg = repr(model) if model else "'<model id>'"
+    pinned = f'\nUse model={model_arg} for every sub-agent.\n' if model else ''
+
     return f'''
 Sub-agents: the `agent_harness` library is installed here, so code can also build and run another agent,
 for work worth delegating (e.g. one sub-agent per ticker or per document). Define its tools, build it, print its answer:
@@ -80,8 +86,22 @@ Parameter details go in `Annotated[T, Param(description=..., min_val=..., max_va
 (`from typing import Annotated`, `from agent_harness.tooling.decorator import Param`).
 
 ```python
-sub = Agent(system='<role>...</role>', provider='{RECURSIVE_PROVIDER}', model='<model id>', tools=[my_tool, execute_code_tool()])
-print(sub.run('task for the sub-agent'))
+sub = Agent(system='<role>...</role>', provider='{RECURSIVE_PROVIDER}', model={model_arg}, tools=[my_tool, execute_code_tool()])
+print(sub.run('task for the sub-agent', sink=BaseSink()))  # from agent_harness.sinks.base import BaseSink
+```
+{pinned}
+Pass `sink=BaseSink()` to every sub-agent run: without it the sub-agent streams its whole transcript into your output.
+To fan out, run one sub-agent per piece of work concurrently and collect only their answers:
+
+```python
+from concurrent.futures import ThreadPoolExecutor
+
+def research(ticker: str) -> tuple[str, str]:
+    sub = Agent(system=SYSTEM, provider='{RECURSIVE_PROVIDER}', model={model_arg}, tools=[my_tool, execute_code_tool()])
+    return ticker, sub.run(f'<task for {{ticker}}>. Save details to {{ticker}}.md; reply in at most 5 lines.', sink=BaseSink())
+
+with ThreadPoolExecutor(max_workers=4) as pool:
+    answers = dict(pool.map(research, ['AAPL', 'MSFT', 'NVDA']))
 ```
 
 You do not have to do this in one call. Kernel state persists, so you can build a sub-agent in steps:
@@ -184,6 +204,9 @@ def execute_code_tool(
     if config.j_screen and not os.environ.get('OPENROUTER_API_KEY'):
         raise RuntimeError('execute_code_tool: SandboxConfig(j_screen=True) needs OPENROUTER_API_KEY, which is not set')
 
+    if config.subagent_model and not config.recursive_agents:
+        raise ValueError('execute_code_tool: SandboxConfig(subagent_model=...) needs recursive_agents=True')
+
     env = dict(config.env)
     packages = list(config.packages)
 
@@ -193,7 +216,7 @@ def execute_code_tool(
 
     sandbox = SubprocessSandbox(working_dir, env=env, packages=packages)
 
-    subagents_note = _subagents_note() if config.recursive_agents else ''
+    subagents_note = _subagents_note(config.subagent_model) if config.recursive_agents else ''
 
     tool = bind_tool(execute_code, _sandbox=sandbox, _j_screen=config.j_screen)
 
