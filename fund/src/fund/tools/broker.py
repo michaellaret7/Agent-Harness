@@ -16,7 +16,7 @@ from alpaca.trading.models import Order
 
 from agent_harness.tooling.result import ToolResult
 
-# Host credentials for the paper account (`.env`); the sandbox kernel never sees them
+# Host credentials for the paper account (`.env`); a member that needs them in its sandbox passes them on itself
 ALPACA_CREDENTIALS = ('APCA_API_KEY_ID', 'APCA_API_SECRET_KEY')
 
 

@@ -4,6 +4,8 @@
 calendar (`exchange_calendars`, offline: holidays and early closes included), not from a broker, so the
 runner needs no trading client: the agents trade on their own with the keys in their sandbox env.
 
+`initialize()` runs once, the moment `run()` starts, whatever the time; then the session loop:
+
     one session (e.g. 2026-11-27, an early close)
     ─────────────────────────────────────────────────────────────────────────────►  time (ET)
       09:00               09:30 ──── sleeptime ──── … ───── 13:00       13:15
@@ -17,17 +19,19 @@ session that has fully ended is skipped. `stop()` interrupts any wait and exits 
 """
 from __future__ import annotations
 
+import logging
 import threading
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
 import exchange_calendars as xcals
 import pandas as pd
+from architectures import Organization
 
-if TYPE_CHECKING:
-    from fund.org import Fund
+log = logging.getLogger(__name__)
 
 
 #     ================================
@@ -77,6 +81,10 @@ class Strategy(ABC):
         self._stop_event = threading.Event()
 
     @abstractmethod
+    def initialize(self) -> None:
+        """Runs once per process, as soon as `run_forever()` starts, before any session hook."""
+
+    @abstractmethod
     def before_trading_day(self, session: TradingSession) -> None:
         """Runs once, `before_open` ahead of the session's open."""
 
@@ -90,46 +98,78 @@ class Strategy(ABC):
 
     def stop(self) -> None:
         """Ask the runner to exit: interrupts a wait immediately, a running hook at its end."""
+        log.info('%s: stop requested', type(self).__name__)
+
         self._stop_event.set()
 
     def _run_session(self, session: TradingSession) -> None:
-        if not self._wait_until(session.open - self.before_open):
+        if not self._wait_until(session.open - self.before_open, 'before_trading_day'):
             return
 
-        self.before_trading_day(session)
+        self._call_hook('before_trading_day', self.before_trading_day, session)
 
         next_iteration = session.open
 
         while next_iteration < session.close:
-            if not self._wait_until(next_iteration):
+            if not self._wait_until(next_iteration, 'on_iteration'):
                 return
 
             now = datetime.now(UTC)
 
-            self.on_iteration(session, now)
+            self._call_hook('on_iteration', self.on_iteration, session, now)
 
             # Scheduled from when the iteration started: a long run eats into the gap, never stacks
             next_iteration = max(now + self.sleeptime, datetime.now(UTC))
 
-        if not self._wait_until(session.close + self.after_close):
+        if not self._wait_until(session.close + self.after_close, 'after_trading_day'):
             return
 
-        self.after_trading_day(session)
+        self._call_hook('after_trading_day', self.after_trading_day, session)
 
-    def _wait_until(self, wake_at: datetime) -> bool:
+    def _call_hook(self, name: str, hook: Callable[..., None], *args: Any) -> None:
+        """Run one hook, logging its start, its duration, and any exception (which still propagates)."""
+        log.info('%s: %s started', type(self).__name__, name)
+        started = time.monotonic()
+
+        try:
+            hook(*args)
+        except Exception:
+            log.exception('%s: %s failed after %.1fs', type(self).__name__, name, time.monotonic() - started)
+            raise
+
+        log.info('%s: %s finished in %.1fs', type(self).__name__, name, time.monotonic() - started)
+
+    def _wait_until(self, wake_at: datetime, next_hook: str) -> bool:
         """Sleep until `wake_at`; False when `stop()` cut the wait short."""
         seconds = (wake_at - datetime.now(UTC)).total_seconds()
 
+        if seconds > 0:
+            log.info(
+                '%s: sleeping %.0fs until %s UTC for %s',
+                type(self).__name__, seconds, f'{wake_at:%Y-%m-%d %H:%M:%S}', next_hook,
+            )
+
         # Event.wait instead of time.sleep: stop() wakes it immediately
         return not self._stop_event.wait(max(seconds, 0))
-    
-    def run_forever(self) -> None:
-        """Run every session in turn until `stop()`."""
+
+    def run(self) -> None:
+        """Run `initialize()` once, then every session in turn until `stop()`."""
+        log.info('%s: starting (calendar %s)', type(self).__name__, self.calendar_name)
+
+        self._call_hook('initialize', self.initialize)
+
         while not self._stop_event.is_set():
             # Look past after_close so a session whose wrap-up is still due is not skipped
             session = _next_session(self.calendar_name, datetime.now(UTC) - self.after_close)
 
+            log.info(
+                '%s: next session %s, open %s UTC, close %s UTC',
+                type(self).__name__, f'{session.date:%Y-%m-%d}', f'{session.open:%H:%M}', f'{session.close:%H:%M}',
+            )
+
             self._run_session(session)
+
+        log.info('%s: stopped', type(self).__name__)
 
 
 #     ================================
@@ -137,41 +177,26 @@ class Strategy(ABC):
 #     ================================
 
 
-class FundStrategy(Strategy):
-    """The fund's trading day: a pre-market plan, one iteration at the open, an end-of-day review.
+class FundOrchestrator(Strategy):
+    """NYSE session: 7:30 a.m. ET, then hourly from the 9:30 open until an hour after the close."""
 
-    Every kickoff goes to the CIO, which delegates from there.
-    """
+    before_open = timedelta(hours=2)   # 09:30 open → 07:30 ET
+    sleeptime = timedelta(hours=1)
+    after_close = timedelta(hours=1)   # 16:00 close → 17:00 ET
 
-    # Longer than any session: exactly one on_iteration, at the open
-    sleeptime = timedelta(days=1)
-    MAX_MESSAGES = 60
-
-    def __init__(self, org: Fund) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self._org = org
+        self.org = Organization()
+    
+    def initialize(self) -> None:
+        pass
 
     def before_trading_day(self, session: TradingSession) -> None:
-        """Pre-market: review overnight news and open positions, set the pod limits for the day."""
-        self._kickoff(
-            f'Pre-market for {session.date:%Y-%m-%d} (opens {session.open:%H:%M} UTC). Review overnight '
-            'news and the open positions, set the pod limits, and have the Technology PM plan its trades.'
-        )
-
-    def on_iteration(self, session: TradingSession, now: datetime) -> None:
-        """Market open: the PM executes the day's decisions."""
-        self._kickoff(
-            f'Market open {now:%Y-%m-%d %H:%M} UTC. Have the Technology PM place the trades it planned '
-            'and act on any position update.'
-        )
+        pass
 
     def after_trading_day(self, session: TradingSession) -> None:
-        """After the close: review the day's trades and record outcomes and lessons."""
-        self._kickoff(
-            f'Market closed {session.close:%Y-%m-%d %H:%M} UTC. Review the day\'s trades and positions, '
-            'record outcomes and lessons, and set the watchlist for tomorrow.'
-        )
+        pass
 
-    def _kickoff(self, content: str) -> None:
-        # Blocks until the org is idle: every member's inbox drained
-        self._org.run([(self._org.cio_id, content)], max_messages=self.MAX_MESSAGES)
+    def on_iteration(self, session: TradingSession, now: datetime) -> None:
+        pass
+
