@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import os
 import threading
-import uuid
 from typing import Any
 
 from agent_harness.sinks import LogSink
@@ -22,11 +21,11 @@ class Organization:
     """An agent registry plus one inbox per member; members talk via SendMessage."""
 
     def __init__(self, name: str, goal: str, **config: Any):
-        self.id = uuid.uuid4()
+        self.id = 0  # reserved for the org itself; members are numbered from 1 in registration order
         self.name = name
         self.goal = goal  # appended to every member's system prompt at registration
         self.config = config # org-specific properties/variables
-        self.agents: dict[uuid.UUID, Member] = {}  # UUID -> agent instance + role
+        self.agents: dict[int, Member] = {}  # member id -> agent instance + role
 
         # One condition guards delivery bookkeeping shared across member worker threads
         self._cond = threading.Condition()
@@ -37,11 +36,11 @@ class Organization:
         self._cancel = threading.Event()  # set on Ctrl+C: running agents stop, queued messages are skipped
 
     # --- internal helpers ---
-    def _sender_label(self, sender_id: uuid.UUID) -> str:
+    def _sender_label(self, sender_id: int) -> str:
         if sender_id == self.id:
             return f'org {self.name}'
 
-        return f'{self.agents[sender_id].role} ({sender_id})'
+        return f'{self.agents[sender_id].role} (id {sender_id})'
 
     def _stop_workers(self, workers: list[threading.Thread]) -> None:
         """Queue a stop sentinel behind each inbox's remaining messages and wait for every worker to exit."""
@@ -78,15 +77,15 @@ class Organization:
                     self._cond.notify_all()
 
     # get the agent object from the organization
-    def get_agent(self, agent_id: uuid.UUID) -> Any:
+    def get_agent(self, agent_id: int) -> Any:
         return self.agents[agent_id].agent
 
     # check if the agent is in the organization
-    def has_agent(self, agent_id: uuid.UUID) -> bool:
+    def has_agent(self, agent_id: int) -> bool:
         return agent_id in self.agents
 
     # --- register an agent with the organization ---
-    def register_agent(self, role: str, agent: Any) -> uuid.UUID:
+    def register_agent(self, role: str, agent: Any) -> int:
         """Assign an ID, record the role, attach this member's org tools, and add the org prompt.
 
         The agent must not have run yet: the org block is written into its
@@ -101,7 +100,7 @@ class Organization:
         if not os.environ.get('LANGFUSE_PUBLIC_KEY'):
             raise RuntimeError('register_agent: LANGFUSE_PUBLIC_KEY is not set; org members must be traced')
 
-        agent_id = uuid.uuid4()
+        agent_id = len(self.agents) + 1  # members are never removed, so this stays unique
 
         # Prompt first: it fails fast on an agent that already ran, before anything is registered
         agent.extend_system_prompt(
@@ -145,7 +144,7 @@ class Organization:
             # message's recipient_id value
             self.agents[message.recipient_id].inbox.put(message)
 
-    def run(self, kickoff: list[tuple[uuid.UUID, str]], max_messages: int = 30) -> None:
+    def run(self, kickoff: list[tuple[int, str]], max_messages: int = 30) -> None:
         """Send the kickoff messages and let members work in parallel until the org is idle.
 
         Each member processes its own inbox one message at a time, so a busy

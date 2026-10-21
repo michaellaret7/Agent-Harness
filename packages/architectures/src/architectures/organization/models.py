@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import queue
-import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -11,8 +10,8 @@ from agent_harness.sinks import Sink
 
 @dataclass
 class Message:
-    sender_id: uuid.UUID
-    recipient_id: uuid.UUID | None  # None = broadcast
+    sender_id: int
+    recipient_id: int | None  # None = broadcast
     content: Any
     expects_reply: bool = True  # automatic replies use False; explicit sends remain possible
 

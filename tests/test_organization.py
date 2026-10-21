@@ -9,7 +9,6 @@ from __future__ import annotations
 import _thread
 import threading
 import time
-import uuid
 from collections.abc import Callable
 from typing import Any
 
@@ -57,8 +56,8 @@ class TimedAgent:
 
         return 'done'
 
-    def send(self, recipient_id: uuid.UUID, content: str) -> tuple[str, str]:
-        result = self.tools['SendMessage'](recipient_id=str(recipient_id), content=content)
+    def send(self, recipient_id: int, content: str) -> tuple[str, str]:
+        result = self.tools['SendMessage'](recipient_id=recipient_id, content=content)
 
         return result.payload, result.status
 
@@ -104,7 +103,7 @@ def test_idle_members_run_in_parallel_while_a_busy_member_works_its_queue(org: O
 
 
 def test_message_to_a_running_member_waits_until_its_run_ends(org: Organization) -> None:
-    ids: dict[str, uuid.UUID] = {}
+    ids: dict[str, int] = {}
     replies: list[tuple[str, str]] = []
 
     def ask_manager_back(agent: TimedAgent, prompt: str) -> None:
@@ -119,15 +118,15 @@ def test_message_to_a_running_member_waits_until_its_run_ends(org: Organization)
     # The manager's first run is long enough that the analyst's report arrives while it is busy
     org.run([(ids['manager'], 'plan'), (ids['manager'], 'plan more'), (ids['analyst'], 'research')])
 
-    assert replies == [(f"Queued for manager ({ids['manager']}).", 'ok')]
+    assert replies == [(f"Queued for manager (id {ids['manager']}).", 'ok')]
     assert [p.splitlines()[-1] for p in manager.prompts] == ['plan', 'plan more', 'report']
     assert manager.windows[2][0] >= manager.windows[1][1]
-    assert f"analyst ({ids['analyst']})" in manager.prompts[2]
+    assert f"analyst (id {ids['analyst']})" in manager.prompts[2]
 
 
 def test_send_message_errors_once_the_run_budget_is_spent(org: Organization) -> None:
     results: list[tuple[str, str]] = []
-    ids: dict[str, uuid.UUID] = {}
+    ids: dict[str, int] = {}
 
     def spam(agent: TimedAgent, prompt: str) -> None:
         for n in range(3):
@@ -157,12 +156,22 @@ def test_a_failing_member_surfaces_its_error_without_hanging_the_org(org: Organi
     assert len(healthy.prompts) == 1
 
 
+def test_members_get_sequential_ids_shown_in_the_roster(org: Organization) -> None:
+    first = TimedAgent()
+    ids = [org.register_agent(role, agent) for role, agent in [('pm', first), ('analyst', TimedAgent()), ('analyst', TimedAgent())]]
+
+    roster = first.tools['GetOrgInfo']().payload
+
+    assert ids == [1, 2, 3]
+    assert roster.splitlines()[-3:] == ['- id 1 · pm (you)', '- id 2 · analyst', '- id 3 · analyst']
+
+
 def test_kickoff_is_validated_before_any_member_runs(org: Organization) -> None:
     member = TimedAgent()
     member_id = org.register_agent('member', member)
 
     with pytest.raises(ValueError, match='not members'):
-        org.run([(member_id, 'work'), (uuid.uuid4(), 'work')])
+        org.run([(member_id, 'work'), (99, 'work')])
 
     with pytest.raises(ValueError, match='exceed max_messages'):
         org.run([(member_id, 'a'), (member_id, 'b')], max_messages=1)
