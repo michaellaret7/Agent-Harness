@@ -363,7 +363,9 @@ def call_llm(
 
                     if tc.function:
                         if tc.function.name:
-                            slot['function']['name'] = tc.function.name
+                            # Some providers stream the name with stray whitespace (e.g. ' WebSearch')
+                            # We want to strip any and all whitespace from the tool name
+                            slot['function']['name'] = tc.function.name.strip()
 
                         if tc.function.arguments:
                             slot['function']['arguments'] += tc.function.arguments

@@ -41,6 +41,18 @@ def test_complete_tool_cycle() -> None:
         assert sink.values('loop_end') == [('answer_ready', 2)]
 
 
+def test_tool_name_whitespace_is_stripped() -> None:
+    """A name streamed with stray whitespace (' add') dispatches and is recorded as 'add'."""
+    invoked: list[tuple[str, int, int]] = []
+    chunks = [{'tool_calls': [{'index': 0, 'id': 'sum', 'type': 'function',
+                               'function': {'name': ' add', 'arguments': '{"a":2,"b":3}'}}]}]
+
+    with scripted_agent([chunks, [{'content': '5'}]], arithmetic_tools(invoked)) as (agent, api, sink):
+        assert agent.run('Add.', sink=sink) == '5'
+        assert invoked == [('add', 2, 3)], invoked
+        assert api.requests[1]['messages'][2]['tool_calls'][0]['function']['name'] == 'add'
+
+
 def test_reasoning_exclusion() -> None:
     """Reasoning is observable live but absent from history and subsequent requests."""
     invoked: list[tuple[str, int, int]] = []

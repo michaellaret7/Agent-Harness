@@ -65,6 +65,7 @@ def _scrubbed_env(extra: dict[str, str]) -> dict[str, str]:
         env['LANGFUSE_SESSION_ID'] = SESSION_ID
 
     env['PYTHONIOENCODING'] = 'utf-8'
+    env['PYTHONUTF8'] = '1'  # UTF-8 mode: open() defaults to utf-8, not the Windows locale code page
     env['PYTHONDONTWRITEBYTECODE'] = '1'
 
     env.update(extra)

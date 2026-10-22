@@ -101,7 +101,12 @@ def forget(
     assert _store is not None, 'Forget must be bound to a MemoryStore'
 
     if not _store.forget(memory_id):
-        return ToolResult(f'error: no memory [{memory_id}]', status='error')
+        return ToolResult(
+            f'error: no memory [{memory_id}]. It may have been merged or pruned (memory curation '
+            f'runs in the background, so ids quoted earlier can go stale). Recall to see current ids; '
+            f'do not retry.',
+            status='error',
+        )
 
     return ToolResult(f'Forgot [{memory_id}].', status='ok')
 

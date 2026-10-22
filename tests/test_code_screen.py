@@ -129,6 +129,11 @@ CASES = [
     Case('remove under cwd', "import os\nfrom pathlib import Path\nos.remove(Path.cwd() / 'out.txt')", None),
     Case('unlink absolute inside workspace', f"from pathlib import Path\nPath(r'{WORKSPACE / 'out.txt'}').unlink()", None),
     Case('overwrite own output', "import json\njson.dump({'a': 1}, open('results.json', 'w'))", None),
+    Case('write skill with ~ in text', (
+        "from pathlib import Path\np = Path('skills/learned/earnings-retest/SKILL.md')\n"
+        "p.parent.mkdir(parents=True, exist_ok=True)\n"
+        "p.write_text('# Earnings retest\\nRetest holds within ~1% of the gap in most cases.\\n')"
+    ), None),
     # --- memory_store_access: blocked -------------------------------------------
     Case('mem: read raw bytes', "print(open('../memory.sqlite', 'rb').read()[:200])", 'memory_store_access'),
     Case('mem: sqlite select', (

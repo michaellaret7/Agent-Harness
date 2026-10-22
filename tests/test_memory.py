@@ -115,7 +115,7 @@ def test_forget_deletes_and_reports_unknown_ids() -> None:
         agent.run('Tidy memory.', sink=sink)
 
     assert tool_reply(api.requests[2]) == 'Forgot [1].'
-    assert tool_reply(api.requests[3]) == 'error: no memory [99]'
+    assert tool_reply(api.requests[3]).startswith('error: no memory [99]. It may have been merged or pruned')
     assert workspace.memory.count() == 0
     assert workspace.memory.search('MSFT leases', limit=5, touch=False) == []
 

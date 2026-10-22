@@ -67,6 +67,10 @@ def check_kernel() -> None:
         tool(code="open('out.txt', 'w').write('hi')")
         assert (sb.workspace / 'out.txt').read_text() == 'hi'
 
+        # A plain open() writes UTF-8 even where the locale code page is cp1252
+        assert tool(code="open('note.md', 'w').write('→ β — ok')").status == 'ok'
+        assert (sb.workspace / 'note.md').read_text(encoding='utf-8') == '→ β — ok'
+
         # Timeout kills and restarts the kernel, dropping state
         slow = tool(code='import time; time.sleep(5)', timeout=1)
         assert slow.status == 'error' and 'timed out' in slow.payload, slow
