@@ -79,6 +79,7 @@ def _ensure_bootstrapped() -> None:
         def factory(agent: 'Agent') -> Sink:
             return LangfuseSink(
                 session_id=SESSION_ID,
+                name=agent.name,
                 metadata={'provider': agent.provider, 'model': agent.model},
             history=agent.messages,
             )

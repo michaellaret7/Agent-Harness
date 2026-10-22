@@ -76,11 +76,13 @@ class LangfuseSink(BaseSink):
     def __init__(
         self,
         session_id: str | None = None,
+        name: str | None = None,
         metadata: dict[str, Any] | None = None,
         history: list[dict[str, Any]] | None = None,
     ) -> None:
         self._client = Langfuse()
         self._session_id = session_id
+        self._name = name
         self._base_metadata = metadata or {}
         self._history = history  # live reference to agent.messages; the turn span's input shows it in full
 
@@ -113,17 +115,17 @@ class LangfuseSink(BaseSink):
 
         try:
             # propagate_attributes must be entered *before* the turn span so
-            # session_id is applied to that span and any children. OTel context
-            # is thread-local — entering on the worker thread that also
-            # creates the turn span keeps the propagation working.
-            if self._session_id:
-                session_cm = propagate_attributes(session_id=self._session_id)
+            # session_id and trace_name are applied to that span and any
+            # children. OTel context is thread-local — entering on the worker
+            # thread that also creates the turn span keeps the propagation working.
+            if self._session_id or self._name:
+                session_cm = propagate_attributes(session_id=self._session_id, trace_name=self._name)
                 session_cm.__enter__()
                 self._session_cm = session_cm
 
             cm = self._client.start_as_current_observation(
                 as_type='agent',
-                name='agent-turn',
+                name=self._name or 'agent-turn',
                 input=self._turn_input(task),
                 metadata=self._base_metadata or None,
             )

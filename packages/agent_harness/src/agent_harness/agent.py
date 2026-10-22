@@ -44,6 +44,7 @@ class Agent:
         reasoning_effort: str | None = None,
         dynamic_context_providers: list[DynamicContextProvider] = [],
         compaction: CompactionConfig | None = None,
+        name: str | None = None,
     ) -> None:
 
         # Agents built in model code may not recurse: refuse inside a nested sandbox
@@ -58,7 +59,10 @@ class Agent:
         self.provider = provider
         self.model = model
         self.client = None
-        
+
+        # Identity for tracing: Langfuse shows `name` as the trace name
+        self.name = name
+
         # Forwarded to every completions call as `reasoning_effort`; None omits it so
         # non-reasoning models are not rejected. Valid values are model-specific.
         self.reasoning_effort = reasoning_effort

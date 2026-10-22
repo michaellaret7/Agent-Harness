@@ -50,7 +50,7 @@ packages/architectures/   Organization (registry + per-member inboxes + org tool
 
 **On distribution & backwards-compat:** the library packages are meant to be consumed by domains in *other* repos (via Git dependency, e.g. `agent-harness @ git+…#subdirectory=packages/agent_harness`). Because external systems pin a version, `agent_harness`'s public API warrants SemVer discipline — the "No backwards-compatibility shims / update every caller" Hard Rule below applies cleanly *within* this workspace, but a breaking change to the engine's public surface is a real major-version event for outside consumers.
 
-Domains assemble an Agent by passing constructor args: `system`, `tools` (and optionally `subagents`, `output_model`, `verifier`, `reasoning_effort`, `compaction`). The base ships generic methodology only. The domain appends a `<role>` block via `system=` and registers its tools. No subclassing — just composition through `Agent(...)`. The one exception is `SubAgent` (`sub_agent.py`), an engine-internal `Agent` variant that refuses gates, hooks, compaction, and nested subagents.
+Domains assemble an Agent by passing constructor args: `system`, `tools` (and optionally `subagents`, `output_model`, `verifier`, `reasoning_effort`, `compaction`, and `name`, which LangfuseSink uses as the trace name; `Organization.register_agent` defaults it to the role). The base ships generic methodology only. The domain appends a `<role>` block via `system=` and registers its tools. No subclassing — just composition through `Agent(...)`. The one exception is `SubAgent` (`sub_agent.py`), an engine-internal `Agent` variant that refuses gates, hooks, compaction, and nested subagents.
 
 ### Extension points
 

@@ -36,6 +36,7 @@ class FakeAgent:
     def __init__(self) -> None:
         self.provider = 'openrouter'
         self.model = 'test-model'
+        self.name: str | None = None
         self.messages: list[dict[str, Any]] = []
 
 

@@ -29,6 +29,7 @@ class TimedAgent:
 
     def __init__(self, on_run: Callable[['TimedAgent', str], None] | None = None) -> None:
         self.tools: dict[str, Callable[..., Any]] = {}
+        self.name: str | None = None
         self.windows: list[tuple[float, float]] = []
         self.prompts: list[str] = []
         self._on_run = on_run
@@ -164,6 +165,18 @@ def test_members_get_sequential_ids_shown_in_the_roster(org: Organization) -> No
 
     assert ids == [1, 2, 3]
     assert roster.splitlines()[-3:] == ['- id 1 · pm (you)', '- id 2 · analyst', '- id 3 · analyst']
+
+
+def test_members_are_named_by_role_for_tracing(org: Organization) -> None:
+    unnamed = TimedAgent()
+    named = TimedAgent()
+    named.name = 'chief'
+
+    org.register_agent('pm', unnamed)
+    org.register_agent('analyst', named)
+
+    assert unnamed.name == 'pm'
+    assert named.name == 'chief'
 
 
 def test_kickoff_is_validated_before_any_member_runs(org: Organization) -> None:

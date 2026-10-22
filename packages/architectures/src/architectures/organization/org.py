@@ -110,6 +110,10 @@ class Organization:
             '</organization>'
         )
 
+        # Label the member's Langfuse traces by role, unless the caller already named it
+        if agent.name is None:
+            agent.name = role
+
         self.agents[agent_id] = Member(
             agent=agent, 
             role=role, 
