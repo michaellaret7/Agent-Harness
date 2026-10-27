@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 from agent_harness.gates import GateContext
 from agent_harness.messages import tool_msg
 from agent_harness.tooling.context import CONTEXT_PARAM, ToolContext
+from agent_harness.tooling.failure_streak import MAX_TOOL_FAILURES, FailureStreaks
 from agent_harness.tooling.result import ToolResult
 from agent_harness.sinks.base import Sink, ToolOutcome, ToolStatus
 
@@ -41,6 +42,9 @@ if TYPE_CHECKING:
 class ToolHandler:
     def __init__(self, agent: 'Agent') -> None:
         self.agent = agent
+
+        # Blocks a tool that keeps failing; Agent.run resets it at every run start
+        self.failure_streaks = FailureStreaks()
 
     # This is the main execution algorithm for the tool handler which is called by the loop.py file
     # This takes a list of tool calls and executes them in a batch or sequentially based on a field from the tool dictionary
@@ -132,6 +136,10 @@ class ToolHandler:
 
         duration = time.perf_counter() - t0
 
+        # Count consecutive failures per tool; surface the moment a tool becomes blocked
+        if self.failure_streaks.record(name, status, result):
+            sink.on_error(f'tool.blocked {name} after {MAX_TOOL_FAILURES} consecutive failures: {result}')
+
         # Emit tool result end event to the sink
         # Return the result in the form of the ToolOutcome class
         sink.on_tool_end(
@@ -185,6 +193,12 @@ class ToolHandler:
 
         if cancel_event.is_set():
             return '[interrupted]', 'interrupted', None
+
+        # A tool that failed too many times in a row is blocked: tell the model to change course
+        block_reason = self.failure_streaks.block_reason(name)
+
+        if block_reason is not None:
+            return f'denied: {block_reason}', 'denied', None
 
         try:
             # Load the arguments from the tool call dictionary into a smaller dict called kwargs

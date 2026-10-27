@@ -199,6 +199,10 @@ class RecordingSink(BaseSink):
         """Record the loop's terminal reason and request count."""
         self.record('loop_end', (stop_reason, iterations))
 
+    def on_error(self, message: str) -> None:
+        """Record an error notification."""
+        self.record('error', message)
+
     def on_interrupted(self) -> None:
         """Record cancellation notification."""
         self.record('interrupted')

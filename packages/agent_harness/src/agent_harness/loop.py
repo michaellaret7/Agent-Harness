@@ -267,6 +267,13 @@ def execution_loop(
             active_sink.on_loop_end('answer_ready', i)
             return agent.submission.model_dump_json()
 
+        # The model kept calling a tool blocked for repeated failures: end the run with the failure report
+        failure_report = agent.tool_handler.failure_streaks.report
+
+        if failure_report is not None:
+            active_sink.on_loop_end('tool_failure_loop', i)
+            return failure_report
+
     stop_reason = 'cancelled' if active_cancel.is_set() else 'max_iterations'
     active_sink.on_loop_end(stop_reason, iterations)
 

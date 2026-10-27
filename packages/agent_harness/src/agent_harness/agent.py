@@ -125,7 +125,6 @@ class Agent:
         self.add_tool(search)
         self.add_tool(extract)
         self.add_tool(plan)
-        self.add_tool(load_tool)
 
         if tools:
             for tool in tools:
@@ -196,7 +195,8 @@ class Agent:
         truncated description (first sentence + ` [deferred]` marker) and an
         empty parameter schema. The full canonical dict is stashed in
         `self.deferred_tools` so `load_tool` can return it on demand, and the
-        name joins LoadTool's `names` enum.
+        name joins LoadTool's `names` enum. LoadTool itself is registered with
+        the first deferred tool, so agents without any never see it.
         """
         if callable(tool) and hasattr(tool, 'tool'):
             tool = tool.tool  # type: ignore[attr-defined]
@@ -219,10 +219,17 @@ class Agent:
         description = tool['description']
         parameters = tool['parameters']
 
+        # if the tool is deferred, we need to add it to the deferred tools registry
+        # and also add the LoadTool tool to the tool registry so its available to load the deferred tool
         if tool.get('deferred', False):
             description = f'{description.split(".", 1)[0]}. [deferred]'
             parameters = {'type': 'object', 'properties': {}}
             self.deferred_tools[name] = tool
+
+            # LoadTool only exists to load deferred tools: register it with the first one
+            if load_tool.tool['name'] not in self.tool_functions:
+                self.add_tool(load_tool)
+
             self._offer_for_loading(name)
 
         self.tools.append({
@@ -353,6 +360,9 @@ class Agent:
 
         # Each run must earn its own accepted submission
         self.submission = None
+
+        # Each run starts with no failure streaks or blocked tools
+        self.tool_handler.failure_streaks.reset()
 
         result = ''
 
