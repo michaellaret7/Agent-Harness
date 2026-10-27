@@ -227,9 +227,11 @@ class Agent:
             self.deferred_tools[name] = tool
 
             # LoadTool only exists to load deferred tools: register it with the first one
+            # Check if its registered already, if not add it to the tool registry
             if load_tool.tool['name'] not in self.tool_functions:
                 self.add_tool(load_tool)
 
+            # Add the name of the deferred tool to the LoadTool's names enum
             self._offer_for_loading(name)
 
         self.tools.append({
