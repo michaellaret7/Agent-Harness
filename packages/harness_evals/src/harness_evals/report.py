@@ -1,17 +1,9 @@
-"""Report — turn a batch of CaseRecords into something a person reads.
+"""Render CaseRecords as console summaries or per-case YAML files.
 
-Two outputs from the same records:
-- `print_report`: a summary table (case × grader) followed by one block per
-  judge score quoting the judge's reasoning and failures, so a number is
-  never shown without the why behind it.
-- `write_report`: one YAML file per case under a fresh
-  `runs/run-<YYYY-MM-DD_HH-MM-SS>/` folder, with every multi-line string
-  (judge reasoning, final answers) as a `|` block so each file reads like
-  the printed report. Transcripts are not included; they live in Langfuse
-  when tracing is on.
-
-Stdlib plus PyYAML. Pass/fail graders print as ✓ / ✗; fractional scores print as
-a decimal so a judge's 0.6 is not rounded into a tick.
+`print_report` shows grader scores, judge reasoning, and failures; binary scores
+use ticks/crosses, fractional scores use decimals. `write_report` creates a fresh
+runs/run-<timestamp>/ folder with multiline block strings. Transcripts are
+excluded; tracing records them in Langfuse.
 """
 from __future__ import annotations
 

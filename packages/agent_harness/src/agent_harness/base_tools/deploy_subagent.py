@@ -1,15 +1,8 @@
-"""DeploySubagent: hand a bounded task to a named subagent.
+"""Deploy a named subagent from the parent's SubAgentConfig roster.
 
-A parent registers a roster of `SubAgentConfig` configs at construction
-(`Agent(subagents=[...])`). `make_deploy_subagent_tool` binds that roster
-into the tool the parent model calls; each invocation spins up a fresh
-`SubAgent` (isolated history) and returns its final answer.
-
-This module deliberately does NOT import `Agent`/`SubAgent` at module level:
-`sub_agent` imports `Agent`, and `agent` imports this module's factory, so a
-top-level import here would close a cycle. `SubAgent` is imported inside
-`deploy_subagent` at call time — the natural place, since a subagent is only
-instantiated when a deployment actually happens.
+The factory binds the roster; each call creates fresh history and returns the
+subagent's final answer. Import SubAgent inside the call to avoid the
+Agent -> deploy_subagent -> SubAgent -> Agent import cycle.
 """
 from __future__ import annotations
 

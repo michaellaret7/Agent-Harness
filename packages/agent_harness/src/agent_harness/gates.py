@@ -1,11 +1,8 @@
-"""Gate primitives — allow, deny, or rewrite a tool call.
+"""Gate primitives for allowing, denying, or rewriting tool calls.
 
-A gate is a callable registered via `agent.add_gate(fn, tool=...)`. It
-fires in `ToolHandler._dispatch` after args are parsed but before the tool
-runs, and returns a `GateVerdict` that the loop consumes: `allow`, `deny`,
-or `rewrite` (run with substituted args). Unlike an observer hook, a gate's
-return value has authority over what the loop does — use it to stop or
-alter a call (permissions, sandboxing, limits, kill switches).
+Register with `agent.add_gate(fn, tool=...)`. Gates receive parsed arguments
+before dispatch and return a GateVerdict controlling whether and how the tool
+runs.
 """
 from __future__ import annotations
 

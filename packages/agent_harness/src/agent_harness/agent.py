@@ -142,13 +142,7 @@ class Agent:
         self.messages.append(self.context_renderer.build_system_message(self))
     
     def _offer_for_loading(self, name: str) -> None:
-        """Add a deferred tool's name to LoadTool's `names` enum.
-
-        The enum makes the schema itself rule out loading a tool that is not
-        deferred; prompt text alone left models calling LoadTool on ExecuteCode
-        before first use. The parameters dict is copied first because every
-        Agent's LoadTool entry starts from the same shared `load_tool.tool` dict.
-        """
+        """Add a deferred tool to LoadTool's enum without changing the shared schema."""
         entry = next(t['function'] for t in self.tools if t['function']['name'] == 'LoadTool')
         parameters = copy.deepcopy(entry['parameters'])
         items = parameters['properties']['names']['items']
@@ -158,13 +152,7 @@ class Agent:
         entry['parameters'] = parameters
 
     def extend_system_prompt(self, block: str) -> None:
-        """Append `block` to the system prompt and rebuild the system message.
-
-        For callers that assemble an agent in stages (e.g. an org adding its
-        goal at registration). Only allowed before the first run: rewriting
-        the system message mid-conversation would silently change the context
-        earlier turns were produced under.
-        """
+        """Append a prompt block and rebuild the system message before the first run."""
         if len(self.messages) > 1:
             raise RuntimeError('extend_system_prompt: conversation already started')
 
@@ -174,29 +162,18 @@ class Agent:
         self.messages[:] = [self.context_renderer.build_system_message(self)]
     
     def add_dynamic_provider(self, provider: DynamicContextProvider) -> None:
-        """Register a dynamic context provider after construction.
+        """Register a zero-argument provider called before each model request.
 
-        Same contract as `Agent(dynamic_context_providers=...)`: a zero-arg
-        callable re-run before every model call, whose block lands in the
-        trailing `<dynamic_context>` message. For add-ons that plug into a
-        built agent, e.g. `AgentWorkspace.attach`.
+        Its output is included in the trailing `<dynamic_context>` message.
         """
         self.context_renderer.dynamic_providers.append(provider)
 
     def add_tool(self, tool: dict[str, Any] | Callable) -> None:
-        """Register a tool.
+        """Register a tool dict or an `@agent_tool` function returning ToolResult.
 
-        Accepts either a tool dict (`{name, description, parameters, function, deferred?}`)
-        or a function decorated with `@agent_tool` (carries `.tool` attr).
-        Tool functions must return ToolResult with explicit payload and status.
-        No-op if a tool with the same name is already registered.
-
-        If `deferred` is True, the entry stored in `self.tools` carries a
-        truncated description (first sentence + ` [deferred]` marker) and an
-        empty parameter schema. The full canonical dict is stashed in
-        `self.deferred_tools` so `load_tool` can return it on demand, and the
-        name joins LoadTool's `names` enum. LoadTool itself is registered with
-        the first deferred tool, so agents without any never see it.
+        Dicts require `name`, `description`, `parameters`, and `function`.
+        Duplicate names are ignored with a warning. Deferred tools expose a
+        short description; LoadTool provides their full schema on demand.
         """
         if callable(tool) and hasattr(tool, 'tool'):
             tool = tool.tool  # type: ignore[attr-defined]
@@ -262,16 +239,11 @@ class Agent:
         *,
         tool: str | Iterable[str] | None = None,
     ) -> None:
-        """Register a hook fired on a lifecycle event.
+        """Register a synchronous lifecycle hook receiving HookContext.
 
-        The hook receives a single `HookContext` and its return value is
-        ignored — it never blocks or vetoes the run (side effects only). It
-        runs synchronously on the worker thread, so a hook that must not
-        stall the loop should spawn its own thread and return immediately.
-
-        `tool` filters `tool_start` / `tool_end` to one or more tool names —
-        pass a single name or an iterable of names. It is meaningless on
-        non-tool events (nothing will match).
+        Return values are ignored. Keep hooks brief to avoid stalling the run.
+        `tool` filters tool_start/tool_end by one or more registered names;
+        leave it unset for other events.
         """
 
         names = frozenset([tool]) if isinstance(tool, str) else frozenset(tool) if tool is not None else None
@@ -296,21 +268,12 @@ class Agent:
         *,
         tool: str | Iterable[str] | None = None,
     ) -> None:
-        """Register a gate consulted before a tool call is dispatched.
+        """Register a gate receiving GateContext and returning a GateVerdict.
 
-        The gate receives a single `GateContext` and returns a `GateVerdict`
-        whose verdict is consumed: `allow` runs the call unchanged, `deny`
-        blocks it (the reason becomes the tool result), `rewrite` runs it
-        with substituted arguments. This is the interceptor counterpart to
-        `add_hook` — a hook observes, a gate decides.
-
-        Gates run synchronously in `ToolHandler._dispatch`, in registration
-        order, before the tool function. A `rewrite` is visible to every
-        later gate; a `deny` short-circuits the rest.
-
-        `tool` filters the gate to one or more tool names — pass a single
-        name or an iterable. `None` (the default) applies the gate to every
-        tool call.
+        Gates run synchronously before dispatch, in registration order.
+        `allow` proceeds, `rewrite` changes arguments for later gates and the
+        tool, and `deny` stops dispatch with its reason as the tool result.
+        `tool` selects one or more registered names; None applies to all tools.
         """
 
         names = frozenset([tool]) if isinstance(tool, str) else frozenset(tool) if tool is not None else None

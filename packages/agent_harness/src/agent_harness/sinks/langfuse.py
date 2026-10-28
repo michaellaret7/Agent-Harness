@@ -1,31 +1,15 @@
-"""LangfuseSink — mirrors Sink events to Langfuse spans.
+"""Mirror Sink events to Langfuse, with one trace per Agent.run.
 
-One trace per call to `Agent.run`. Structure:
+    agent-turn (message history + task)
+      └─ execution_loop
+           └─ iteration_N
+                ├─ generation (captured by langfuse.openai)
+                └─ tool <name>
 
-  root span "agent-turn"   (input: full message history + the new task)
-   └─ chain "execution_loop"
-        ├─ span "iteration_1"
-        │    ├─ generation          (auto-captured by langfuse.openai)
-        │    └─ tool <tool-name>    (started on on_tool_start, ended on on_tool_end)
-        ├─ span "iteration_2"
-        │    └─ ...
-        └─ ...
-
-Every level is held open across multiple sink callbacks by manually
-driving the langfuse context-manager protocol — `__enter__` on the
-*_start event, `__exit__` on the *_end event. OTel context is
-thread-local; all callbacks run on the agent worker thread, so the
-push/pop chain stays consistent.
-
-`start_as_current_observation` makes the new observation OTel-current,
-so anything entered next (tool spans, langfuse.openai generations,
-nested spans) attaches to it as a child. Tool spans use
-`start_observation` (non-current) — they attach to the current
-observation at creation time (the iteration span) but don't themselves
-become current, so their lifetime is independent of any other push/pop.
-
-The Sink calls happen on the agent worker thread. Each turn owns its own
-`_tool_spans` dict, which is not shared across threads.
+Start/end callbacks enter/exit observation contexts on the worker thread,
+preserving thread-local OTel nesting. Tool spans use non-current observations
+so overlapping tools remain siblings under the iteration. Each turn owns its
+own `_tool_spans` dictionary.
 """
 from __future__ import annotations
 

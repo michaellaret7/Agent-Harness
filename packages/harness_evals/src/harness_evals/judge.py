@@ -1,23 +1,9 @@
-"""llm_judge — an `agent_harness.Agent` that grades another agent's transcript.
+"""Grade agent transcripts with a fresh Agent and a validated JudgeVerdict.
 
-The judge is an ordinary `Grader`: the runner calls it on `(case, run)` like
-`finished()`. Inside, it builds a fresh judge `Agent`, gives it an
-`ExecuteCode` sandbox whose workspace holds the subject's transcript and
-tool schemas as JSON, hands it the case's success criteria plus any shared criteria as one
-numbered rubric, and the task. The judge hands in a `JudgeVerdict` through the
-SubmitResult tool that `output_model` adds, so the shape is validated before the run
-can end, and a malformed verdict goes back to the judge to fix. The judge marks
-each criterion met or not met, by rubric number; the overall score is the
-fraction met. A verdict that skips or invents a rubric number is rejected,
-so a dropped criterion can never inflate the score.
-
-The transcript and tool schemas go into the sandbox, not the prompt. A long
-run or a large toolset would swamp the judge's context window; as files, the
-judge loads, filters and counts them with code and reads only what the rubric needs.
-
-The judge sees content only. Tokens, cost, duration and stop reason stay
-with the deterministic graders so the judge scores what was said, not how
-expensive it was to say it.
+The judge reads transcript and tool-schema JSON through ExecuteCode, keeping
+large inputs out of the prompt. SubmitResult requires exactly one verdict per
+rubric criterion; the score is the fraction met. Tokens, cost, duration, and
+stop reason belong to deterministic graders and are hidden from the judge.
 """
 from __future__ import annotations
 
@@ -243,17 +229,13 @@ def llm_judge(
     name: str = 'judge',
     make_judge: JudgeFactory | None = None,
 ) -> Grader:
-    """A Grader that runs a fresh judge Agent per case and returns its verdict as a Score.
+    """Create a Grader that scores the fraction of rubric criteria met.
 
-    The rubric for a case is `case.criteria`, then `shared_criteria`, then
-    `process_criteria` (on by default; pass `()` to grade outcome only).
-    The judge marks each criterion met or not met; the Score is the fraction
-    met. A crashed subject scores 0 without running the judge. Per case, the
-    subject's transcript is written to a temp folder that
-    the judge reads through its own ExecuteCode sandbox; folder and sandbox
-    are gone once the verdict is in. `make_judge` replaces the default
-    `judge_agent(model)` builder (a different provider, an injected client).
-    A judge that never answers raises, and the runner records a zero score.
+    Rubric order: case.criteria, shared_criteria, process_criteria. Pass () for
+    process_criteria to grade outcomes only. Each case gets a fresh judge and a
+    temporary transcript sandbox, cleaned up afterward. `make_judge` overrides the
+    default judge_agent(model) builder. Crashed subjects score 0 without judging;
+    judge failures raise and the runner records 0.
     """
     build = make_judge or (lambda: judge_agent(model))
 

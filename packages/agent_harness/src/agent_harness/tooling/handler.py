@@ -1,19 +1,8 @@
-"""Executes parsed tool calls against the agent's registered tool functions.
+"""Dispatch registered tools, emit Sink events, and return tool-result messages.
 
-The handler does one thing: take parsed tool_calls from the model, run the
-matching Python callables, push start/end events to the Sink, and return
-tool-result messages. Registration lives on the Agent.
-
-Cancellation: between tool calls, checks `cancel_event`. Tool calls
-in-flight are not killed (Python sync code can't be interrupted), but
-remaining calls in the batch are skipped and synthesized as interrupted.
-
-Parallel dispatch: tools opted into `safe_parallel=True` on `@agent_tool`
-are grouped into consecutive chunks and run concurrently via a
-`ThreadPoolExecutor`. Non-parallel tools (Bash, EditFile, WriteFile, …)
-act as barriers — the chunk before them completes before they start, and
-they complete before the next chunk begins. Tool-result message order
-always matches the model's emitted tool_call order.
+Registration belongs to Agent. Consecutive safe_parallel calls run concurrently;
+serial calls form barriers. Results retain the model's call order. Cancellation
+lets in-flight calls finish and marks remaining calls interrupted.
 """
 from __future__ import annotations
 
@@ -54,18 +43,11 @@ class ToolHandler:
         sink: Sink,
         cancel_event: threading.Event,
     ) -> list[dict[str, Any]]:
-        """Run a batch of tool calls and return tool-result messages in order.
+        """Execute tool calls and return result messages in the original order.
 
-        Walks the batch once, grouping consecutive `safe_parallel` calls
-        into chunks dispatched through a thread pool. Non-parallel calls
-        run serially and act as barriers between chunks. Result-message
-        order always matches the model's emitted tool_call order.
-
-        Cancellation is checked at chunk boundaries. Once `cancel_event`
-        is set, the in-flight chunk completes (Python sync code cannot be
-        interrupted) and every remaining tool_call short-circuits to
-        `[interrupted]` via `_run_tool`, preserving sink events and the
-        tool_call/tool_result pairing in message history.
+        Consecutive safe_parallel calls share a thread pool; serial calls are barriers.
+        Cancellation is checked between chunks. In-flight calls finish; remaining calls
+        emit interrupted results and sink events, preserving call/result pairs.
         """
         results: list[str] = []
         n = len(tool_calls)
@@ -242,14 +224,10 @@ class ToolHandler:
         tool_call_id: str,
         kwargs: dict,
     ) -> tuple[dict, str | None]:
-        """
-        Run this one tool call past every registered gate, in order.
+        """Apply matching gates in order and return `(resolved_kwargs, deny_reason)`.
 
-        Called once per dispatch for a single tool call (`name`). Each gate
-        decides whether it applies (via its tool filter) and, if so, returns
-        a verdict. Returns `(resolved_kwargs, deny_reason)`: a non-None
-        `deny_reason` means a gate blocked the call and dispatch must stop.
-        A rewrite is visible to every later gate; the first deny wins.
+        Rewrites reach later gates. The first denial stops processing; a non-None
+        reason tells dispatch to block the call.
         """
 
         # self.agent.gates holds one (tool_filter, gate_fn) tuple per registered

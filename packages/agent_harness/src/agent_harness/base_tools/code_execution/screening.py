@@ -1,30 +1,18 @@
-"""Screen model-written code with Jev before the sandbox runs it.
+"""Screen code with Jev before execution when SandboxConfig(j_screen=True).
 
-Jev (`typesafe/jev-1.14`, OpenRouter's Decisions API) reads the code as
-text and answers one yes/no question per rule below, all in a single
-request. The code is never executed here. A call is denied when any rule's
-probability reaches its threshold, or when the screen itself fails: a
-missing key, a network error or a malformed reply never count as a pass.
+One OpenRouter Decisions request evaluates all rules without executing code.
+Deny when any threshold is met or screening fails, including missing credentials,
+network errors, and malformed replies.
 
-The rules are deliberately narrower than "is this code dangerous", because
-the sandbox is not a container and model code legitimately holds API keys
-and reads project files:
+    rule                      blocks                         allows
+    secret_exposure           exposing key values            API use, short prefixes
+    env_file_read             reading .env / .env.*          other project files
+    modify_outside_workspace  writes/moves/deletes outside   changes inside workspace
+    memory_store_access       accessing agent memory         own SQLite files
+    sabotage                  hidden payloads/reverse shells subprocess and pip use
 
-    rule                      blocks                                     allows
-    ------------------------  -----------------------------------------  --------------------------------------
-    secret_exposure           printing / sending / storing a key value   using it in a request, a short prefix
-    env_file_read             any read of a `.env` / `.env.*` file       reading code, data and other configs
-    modify_outside_workspace  delete / write / move outside workspace    the same inside the workspace
-    memory_store_access       any touch of the agent's memory store     own SQLite files inside the workspace
-    sabotage                  hidden payloads, reverse shells, etc.      ordinary subprocess and pip use
-
-This is a probabilistic layer, not a security boundary. Thresholds and
-criteria are tuned against the labelled cases in `tests/test_code_screen.py`;
-rerun it after touching either.
-
-Wiring: `execute_code_tool(SandboxConfig(j_screen=True))`. The tool calls `screen_code`
-with its sandbox's workspace before every exec and returns the denial as an
-error result when the screen blocks.
+Probabilistic protection, not a security boundary. Rerun tests/test_code_screen.py
+when changing thresholds or criteria. Blocked calls return an error tool result.
 """
 from __future__ import annotations
 

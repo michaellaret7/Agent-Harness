@@ -1,16 +1,7 @@
-"""URL content extraction via the Parallel Extract API.
+"""Extract URL content as markdown through the Parallel SDK, including JS and PDFs.
 
-Calls /v1/extract through the official `parallel-web` SDK (which retries
-429/5xx/connection errors once with backoff). Converts public URLs (including
-JavaScript-rendered pages and PDFs) into clean markdown. The natural follow-up
-to WebSearch: when an excerpt is promising but truncated, hand the URL to
-WebExtract to read the full article.
-
-Two modes:
-- focused (full_content=False, default) — API uses `objective` to pull only
-  relevant chunks; lower cost, higher signal-to-noise.
-- full (full_content=True) — entire page as markdown; use when chasing
-  details or the objective is too broad to pre-filter.
+Focused mode (default) selects chunks using `objective`; full_content=True
+returns the whole page. The SDK retries connection errors and 429/5xx once.
 """
 from __future__ import annotations
 

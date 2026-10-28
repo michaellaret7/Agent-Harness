@@ -1,23 +1,8 @@
-"""HookSink — drives user-registered hooks off the Sink stream.
+"""Translate Sink events into HookContext and invoke registered hooks.
 
-Rides the ambient sink chain alongside StdoutSink/TUISink/LangfuseSink.
-Each Sink event it cares about is translated into a uniform `HookContext`
-(see `agent.hooks`) and fanned out to the callbacks registered on
-`agent.hooks` for that event.
-
-Two deliberate choices mirror `MultiSink`:
-- Hooks run synchronously on the worker thread, so the loop waits for them.
-  A hook that must not block the loop spawns its own thread and returns.
-- A raising hook is logged and swallowed — a hook must never tear
-  down the agent run.
-
-The raw `on_tool_end` event carries no tool name (only id + outcome), so
-the sink records `id -> (name, args)` at `on_tool_start` and recovers it at
-`on_tool_end`. By the time a `tool_end` hook runs, `ctx.tool_name` is set.
-
-High-frequency streaming events (`on_content_delta`, `on_reasoning_delta`)
-are intentionally NOT exposed as hooks: they fire per-token and are not
-what hooks are for.
+Hooks run synchronously on worker threads; exceptions are logged and swallowed.
+Tool names and arguments are saved at tool_start for use at tool_end.
+Per-token content and reasoning events are not exposed as hooks.
 """
 from __future__ import annotations
 

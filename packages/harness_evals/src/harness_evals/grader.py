@@ -1,14 +1,8 @@
-"""Grader, Score, and the shipped deterministic graders.
+"""Grader, Score, and deterministic grader factories.
 
-A grader is a named callable that maps `(case, run) -> Score`. `run` is a
-`RunResult`: the subject's final answer, its message history, and the
-`RunMetadata` the sink recorded. Deterministic graders read mostly `run.meta`
-(numbers the judge should never see); the LLM judge in `judge.py` reads
-mostly `run.messages`.
-
-Each shipped grader is a small factory returning a `Grader`, so a consumer's
-grader list reads as configuration: `[finished(), max_cost(0.05)]`. A
-consumer's own grader is `Grader('revenue', revenue_match)`.
+A Grader maps (case, RunResult) to Score. Deterministic graders primarily read
+run.meta; the LLM judge reads run.messages. Configure shipped factories with
+`[finished(), max_cost(0.05)]`, or supply `Grader('revenue', revenue_match)`.
 """
 from __future__ import annotations
 

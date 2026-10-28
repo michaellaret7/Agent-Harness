@@ -1,25 +1,15 @@
-"""MemoryStore: one agent's long-term memory, a SQLite file of short records plus search indexes.
+"""SQLite memory storage with keyword and semantic search.
 
-Each memory is a sentence or two the agent chose to keep: a fact, lesson,
-preference or event, tagged with an importance level. Four tables:
+    memories         source records
+    memories_fts     keyword index
+    memory_vectors   embeddings keyed by memory and model
+    curation         curator progress
 
-    memories         the records (source of truth)
-    memories_fts     full-text index over content, for keyword search
-    memory_vectors   one embedding per (memory, model), for semantic search
-    curation         one row: how far the background curator has got (see curator.py)
-
-Search fetches candidates from both indexes here and scores them with the
-formula in ranking.py (all SQL stays in this file, all scoring math there). Only
-a Recall counts as a use; a search with `touch=False` (inspection, tests) leaves
-rankings alone.
-
-Vectors are derived data. If embedding fails when a memory is saved, the memory
-is still stored and keyword-searchable, and the vector is backfilled the next
-time a store opens with an embedder. Switching embedder models re-embeds into
-new rows; the records are never touched.
-
-The file lives outside the sandbox and is only reached through the memory
-tools; the agent's code is never told where it is.
+SQL lives here; scoring lives in ranking.py. `touch=False` searches do not
+record use. Failed embeddings leave records keyword-searchable and are
+backfilled when reopened with an embedder. Model changes create new vectors
+without altering records. The store lives outside the sandbox; tools hide
+its path from model code.
 """
 from __future__ import annotations
 

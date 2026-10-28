@@ -1,18 +1,8 @@
-"""Conversation history container.
+"""Thread-safe conversation history and render scheduling.
 
-Single source of truth for what the UI renders. Mutated by Sink (worker
-thread); read by the renderer (UI thread). A monotonic `version` counter
-keys the OutputPanel's render cache — bumped once per visible mutation.
-Streaming cell renders are throttled (STREAM_RENDER_INTERVAL_S) to keep
-even the fast plain-text fragment build off the hot path during
-token-by-token deltas.
-
-Heavy renders (final Markdown after end_assistant, toggle re-renders on
-clicks) are submitted to `_render_pool` — a single-worker executor — so they
-never pile up and contend for the GIL. Serializing them onto one worker is
-the right trade: each individual render reads/writes one cell under its own
-render_lock, and the UI never blocks on background renders since it just
-reads cached `cell.fragments`.
+The Sink mutates cells on worker threads; the UI reads cached fragments.
+Each visible change bumps `version`. Streaming renders are throttled; heavy
+renders share one worker and acquire each cell's render_lock.
 """
 from __future__ import annotations
 
@@ -188,22 +178,11 @@ class History:
             self._bump_version()
 
     def end_assistant(self) -> None:
-        """Mark the last AssistantCell done. Drop if empty.
+        """Finish the last assistant cell, dropping it if empty.
 
-        Splits into two phases:
-          1. Immediate, on the worker thread: flip `done=True`, run the fast
-             plain-text render, bump version. The user sees the final
-             content right away, with the streaming cursor removed. This
-             frees the worker to move on to the next tool call.
-          2. Background, on the render pool: run the full Rich Markdown
-             render. Once it lands, flip `markdown_ready=True` and bump
-             version again so the UI swaps in the styled output.
-
-        The previous synchronous Markdown render here is the single biggest
-        worker-thread GIL hog at end-of-message — for multi-KB replies it
-        could hold the GIL for hundreds of ms, starving every UI event in
-        flight (scroll, click) for that window. Deferral fixes that without
-        regressing visual fidelity.
+        Render plain text immediately on the worker thread, then queue Rich Markdown
+        on the shared render pool. Each phase bumps the history version; the second
+        sets markdown_ready so the UI displays the styled result.
         """
         target: AssistantCell | None = None
 

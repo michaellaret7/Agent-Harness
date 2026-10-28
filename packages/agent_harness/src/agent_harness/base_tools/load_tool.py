@@ -1,19 +1,8 @@
-"""LoadTool: fetch the full schema for one or more deferred tools.
+"""Load full schemas for deferred tools.
 
-Deferred tools appear in the model's tool list with a one-sentence
-description and an empty parameter schema (see `Agent.add_tool`). To call
-one, the model must first invoke this tool with the tool name(s) — loading
-promotes the stub entry in the API tool list to the full schema in place,
-and returns the full description and parameter schema as text so the
-model can produce correct arguments on the next turn.
-
-The deferred-tool registry (`agent.deferred_tools`) and the API tool list
-(`agent.tools`) are read off the agent through the hidden `_ctx` parameter
-(see `tooling/context.py`). Underscore-prefixed params are hidden from the
-generated JSON Schema by the decorator's convention, so the LLM never sees them.
-
-Loading pops the tool out of the registry — "still deferred" simply means
-"still in `agent.deferred_tools`"; there is no separate loaded-set.
+Replace each stub in agent.tools with its full schema, return the schema as
+text, and remove it from agent.deferred_tools. The hidden `_ctx` parameter
+supplies the agent.
 """
 from __future__ import annotations
 

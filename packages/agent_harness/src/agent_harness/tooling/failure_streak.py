@@ -1,20 +1,11 @@
-"""Tracks consecutive tool failures so a run can block a failing tool, then stop.
+"""Track consecutive failures by tool name, blocking repeated failures.
 
-The prompt rule "never retry the identical call" is easy to get around: a
-model that changes one argument per retry (a fresh `client_order_id`) makes
-every call technically new. So streaks are keyed on tool name only.
+    error -> increment streak -> MAX_TOOL_FAILURES -> block tool
+    ok -> reset streak; denied/interrupted -> no change
+    repeated blocked calls -> MAX_TOOL_FAILURES -> set report
 
-    error ──► streak += 1 ──► streak == MAX_TOOL_FAILURES ──► tool blocked
-    ok    ──► streak = 0
-    denied / interrupted ──► no change (the tool body never ran)
-
-    call to a blocked tool ──► denied += 1 ──► denied == MAX_TOOL_FAILURES ──► `report` is set
-
-Tools in `UNTRACKED_TOOLS` are never counted or blocked: their errors are
-part of normal iteration, not a sign the tool is broken.
-
-Owned by `ToolHandler`. Thread-safe, because safe-parallel tools record from
-pool threads.
+UNTRACKED_TOOLS are exempt. Owned by ToolHandler and thread-safe for parallel
+calls. Keying by name prevents changed arguments from bypassing the limit.
 """
 from __future__ import annotations
 

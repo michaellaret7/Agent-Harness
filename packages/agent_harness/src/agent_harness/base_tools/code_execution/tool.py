@@ -183,22 +183,15 @@ def execute_code_tool(
     config: SandboxConfig = SandboxConfig(),
     working_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """Return a registrable ExecuteCode tool backed by its own sandbox.
+    """Create a registrable ExecuteCode tool with its own sandbox and exit cleanup.
 
-    The sandbox lives as long as the process and cleans up at exit, so
-    `Agent(tools=[execute_code_tool()])` is all a caller needs. `config`
-    holds the sandbox options (secrets, extra packages, code screen); see
-    `SandboxConfig`. `working_dir` is where the kernel runs: None means a
-    fresh temp dir removed at exit, a caller-supplied dir is never removed.
-    With `config.j_screen`, fails fast here if `OPENROUTER_API_KEY` is missing.
-    With `config.recursive_agents`, the host's OpenRouter credentials join `env`
-    and the description teaches building sub-agents; fails fast here if the key
-    is missing or this process is already at the agent depth limit.
+    `config` supplies SandboxConfig options. `working_dir=None` creates a temporary
+    directory removed at exit; caller-supplied directories are preserved.
+    Screening and recursive agents require OPENROUTER_API_KEY. Recursive agents
+    also expose that key to model code and fail construction at the depth limit.
 
-    The working directory, the names in `env` (never the values) and every
-    importable package (host plus `packages`) are appended to the tool description, so the model knows where
-    it is, which credentials it has and what it can import, and does not go
-    looking for any of them on disk.
+    The tool description includes the directory, secret names (never values),
+    importable packages, and any enabled subagent instructions.
     """
     
     if config.j_screen and not os.environ.get('OPENROUTER_API_KEY'):

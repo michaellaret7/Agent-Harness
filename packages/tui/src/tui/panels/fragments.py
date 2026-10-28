@@ -1,14 +1,7 @@
-"""Fragment-list scaffolding shared by the OutputPanel.
+"""Fragment helpers for OutputPanel: arrow glyphs, click handlers, and cell spacing.
 
-Holds:
-- Arrow-glyph constants for the click targets (tool, reasoning).
-- `attach_arrow_handler`, which splits a fragment list around the first
-  matching arrow and binds a mouse handler to just that glyph.
-- `cell_separator`, the per-pair spacing rule between adjacent cells.
-
-These pieces are generic to fragment lists — they don't know about the
-panel's scroll state — so they live in their own module instead of
-swelling output.py.
+attach_arrow_handler binds only the first matching arrow; cell_separator
+chooses spacing between adjacent cells. These helpers have no scroll state.
 """
 from __future__ import annotations
 

@@ -1,17 +1,9 @@
-"""Subprocess-backed sandbox with a persistent Python kernel.
+"""Persistent Python subprocess with a scrubbed environment and call timeouts.
 
-Isolation is intentionally light: a child interpreter with a scrubbed
-environment, its own working directory, and a per-call wall-clock timeout.
-It contains a runaway or buggy script, not a hostile one, because the kernel
-still runs as the host user. For real containment, run the whole agent in a
-container.
-
-Model code sees the host environment's libraries, plus any extra `packages`
-layered on top in a separate cached venv.
-
-State persists across `exec` calls because the kernel process is long-lived.
-A timeout kills the kernel and starts a fresh one, so state is lost; the
-returned `ExecResult` says so in `stderr`.
+The kernel runs as the host user: this is not a security boundary. Use a
+container for hostile code. Host libraries remain available; extra packages
+use a separate cached venv. Timeouts restart the kernel, lose state, and report
+the reset in ExecResult.stderr.
 """
 from __future__ import annotations
 
@@ -117,16 +109,11 @@ def _build_venv(venv: Path, python: str, packages: tuple[str, ...]) -> None:
 
 
 def _ensure_venv(python: str, packages: tuple[str, ...]) -> str:
-    """Return the interpreter of a cached venv layering `packages` over `python`'s own libraries.
+    """Return a cached venv interpreter with extra packages and host libraries.
 
-    The venv holds `packages` and their dependencies. A `.pth` file then adds
-    `python`'s site-packages after the venv's, so everything the host
-    environment has stays importable and the venv's copy wins on a clash.
-    Nothing is installed into the host environment.
-
-    The venv is built under a private name and renamed into place once
-    complete, so a crash never leaves a half-built venv at the cached path and
-    two sandboxes building the same set at once cannot corrupt each other.
+    A .pth file adds host libraries after the venv's, so installed packages take
+    precedence without changing the host. Build privately, then rename into place
+    to avoid partial caches and concurrent-build corruption.
     """
     cache_key = '\n'.join([*sorted(packages), python])
     venv = VENV_CACHE / hashlib.sha256(cache_key.encode()).hexdigest()[:12]
@@ -180,24 +167,16 @@ class ExecResult:
 
 
 class SubprocessSandbox:
-    """Persistent-kernel sandbox. Not a security boundary.
+    """Persistent kernel with lazy startup and cleanup at exit; not a security boundary.
 
-    The kernel starts lazily on the first `exec` and is killed at interpreter
-    exit, so a bare `SubprocessSandbox()` is enough. The context manager form
-    is available when you want cleanup at a definite point instead.
+    Use a context manager for earlier cleanup.
 
     Args:
-        workspace: Directory the kernel runs in. Defaults to a fresh temp dir
-            that is deleted on `stop()`; a caller-supplied path is left alone.
-        python: Interpreter to launch. Defaults to the host's, so packages in
-            the current venv are importable inside the sandbox.
-        env: Extra variables exposed inside the kernel, on top of the scrubbed
-            allowlist. Pass secrets explicitly here; nothing else from the host
-            environment leaks through.
-        packages: Extra pip requirements for model code, e.g. `['pandas']`,
-            on top of everything `python`'s environment already has. They
-            go into a separate cached venv; the host environment is not
-            modified.
+        workspace: Working directory. Temporary by default and deleted on stop();
+            caller-supplied directories are preserved.
+        python: Interpreter; defaults to the host's, including its libraries.
+        env: Variables and secrets added to the scrubbed environment allowlist.
+        packages: Extra requirements installed in a cached venv; host unchanged.
     """
 
     def __init__(

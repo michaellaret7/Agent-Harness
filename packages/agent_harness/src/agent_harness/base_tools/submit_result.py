@@ -1,18 +1,8 @@
-"""SubmitResult: the only way an agent with `output_model` can finish.
+"""Validate structured output before allowing an agent to finish.
 
-Validated termination. Without it, the loop treats any reply without tool
-calls as "done", so a model can stop early and claim success. With an
-`output_model`, the model must hand its answer in through this tool:
-
-  1. the arguments are validated against `output_model` (shape check);
-  2. the optional `verifier` runs on the validated object (your own check).
-
-A failed check is returned as an error tool result, so the model reads why
-and keeps working with its full context. An accepted result is stored on
-`agent.submission`; the loop sees it and ends the run.
-
-The tool reads `agent.output_model` and `agent.verifier` at call time, so
-callers that assign them after construction (e.g. the eval judge) work too.
+SubmitResult checks output_model, then the optional verifier. Failures return
+an error so the model can retry; acceptance stores agent.submission and ends
+the loop. Both settings are read at call time.
 """
 from __future__ import annotations
 

@@ -1,18 +1,9 @@
-"""Streaming agentic execution loop.
+"""Stream model responses, assemble tool calls, and repeat with tool results.
 
-Calls the model with streaming. Pushes deltas to the Sink. If the model
-asks for tools, assembles the tool_call fragments across chunks, executes
-each tool, appends the results to `messages`, and calls again. Repeats
-until the model returns plain content (or a safety ceiling is hit).
-
-Validated termination: when the agent has an `output_model`, plain content
-does not end the run. The loop nudges the model to call SubmitResult and
-ends only once a submission is accepted (see `base_tools/submit_result.py`).
-
-Cancellation: `cancel_event` (threading.Event) is checked at iteration
-boundaries AND inside the chunk loop. On cancel: the active stream is
-abandoned, partial state is fixed up so `messages` stays well-formed, and
-the loop returns whatever content was accumulated.
+Deltas go to the Sink. Free-text runs finish on a reply without tools;
+structured runs require an accepted SubmitResult. Iteration limits bound both.
+Cancellation is checked between iterations and stream chunks, preserving valid
+message history and returning accumulated content.
 """
 from __future__ import annotations
 
@@ -145,22 +136,12 @@ def execution_loop(
     sink: Sink | None = None,
     cancel_event: threading.Event | None = None,
 ) -> str:
-    """Main agent execution loop.
+    """Run up to `max_iters` model/tool iterations and return the final content.
 
-    This function runs the agent for a maximum of `max_iters` iterations.
-    In each iteration, it streams an LLM call, processes the response
-    (handling tool calls and cancellations), and continues until the LLM
-    returns content without tool calls or a cancellation is requested.
-
-    Args:
-        agent: The agent instance, containing messages, tools, and tool_handler.
-        model: The model name to use for the LLM call.
-        max_iters: Maximum number of iterations to run.
-        sink: Optional sink for UI updates (defaults to StdoutSink).
-        cancel_event: Optional event to signal cancellation (defaults to a new Event).
-
-    Returns:
-        The final content string from the agent.
+    Uses the agent's history and tool handler. Structured runs require an accepted
+    SubmitResult; free-text runs finish on a reply without tools. Cancellation
+    returns accumulated content. A missing sink defaults to StdoutSink; a missing
+    cancel_event creates a new Event.
     """
 
     active_sink: Sink = sink if sink is not None else StdoutSink()

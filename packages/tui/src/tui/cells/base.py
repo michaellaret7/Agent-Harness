@@ -78,18 +78,11 @@ _LOCK_INIT_GUARD = threading.Lock()
 
 
 class Cell(ABC):
-    """Base cell. Subclasses implement render(width) → call self._finalize(ansi).
+    """Base cell: subclasses implement render(width) and call `_finalize(ansi)`.
 
-    `_finalize` stores the ANSI text AND pre-parses it into prompt_toolkit
-    fragments. The OutputPanel reads `cell.fragments` directly on the hot path
-    instead of re-parsing ANSI on every cache miss.
-
-    `render_lock` serializes concurrent render() calls on the same cell. The
-    worker thread (streaming deltas, tool result updates) and the UI thread
-    (toggle clicks on arrows) can otherwise race inside Rich, producing torn
-    fragment lists or raising mid-render. History acquires this lock around
-    every mutate-then-render path. Lazy-initialized so dataclass children
-    don't need to declare it themselves.
+    Finalization caches ANSI and parsed fragments for OutputPanel. History holds
+    the lazily initialized render_lock around mutations and renders to prevent
+    concurrent Rich rendering of the same cell.
     """
 
     ansi: str = ''

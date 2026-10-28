@@ -1,15 +1,8 @@
-"""Decorator that auto-generates a tool dict from a function signature.
+"""Build tool schemas from function signatures, docstrings, and Param overrides.
 
-Attaches a `.tool` attribute to the decorated function containing the dict
-expected by `Agent.add_tool`. The schema is built from type hints, defaults,
-and the function docstring; per-parameter overrides are supplied via
-`typing.Annotated[T, Param(...)]`. `Agent.add_tool` accepts the decorated
-function directly — it reads `.tool` off it.
-
-Trimmed port of the ProphitAI Atlas decorator — dropped `Schema()` injection
-(no current consumer) and the `additionalProperties: False` line to match
-the existing hand-written schemas. Runtime validation returns a ToolResult
-with explicit error status, just like tool implementations.
+`@agent_tool` attaches `.tool`, accepted directly by Agent.add_tool. The wrapper
+validates arguments and returns an error ToolResult for invalid input.
+Underscore-prefixed parameters are hidden from the schema.
 
 Example:
 
@@ -26,9 +19,6 @@ Example:
         ...
 
     agent.add_tool(bash)
-
-Parameter names beginning with `_` are excluded from the generated schema —
-useful for hidden values injected at execution time (user_id, session, etc.).
 """
 from __future__ import annotations
 
@@ -413,27 +403,17 @@ def agent_tool(
     deferred: bool = False,
     safe_parallel: bool = False,
 ) -> Any:
-    """Attach a `.tool` dict to the decorated function.
+    """Attach a tool dict and argument validation to a ToolResult-returning function.
 
-    Supports both bare `@agent_tool` and parameterised `@agent_tool(name='X')`.
-    Must be the outermost decorator when stacked — relies on `__annotations__`
-    and `__doc__`, which `functools.wraps` preserves.
-
-    The wrapper validates arguments at call time and returns a ToolResult
-    with error status on bad input. Tool functions must return ToolResult.
+    Supports `@agent_tool` and `@agent_tool(...)`; use it as the outermost decorator.
+    Invalid arguments produce an error ToolResult.
 
     Args:
-        name: Override the tool name (defaults to the function name).
-        deferred: Marks the tool as deferred — written into the tool dict
-            under the `deferred` key. `Agent.add_tool` reads this flag to
-            decide whether to withhold the tool's full schema until it's
-            explicitly requested via `load_tool`.
-        safe_parallel: Marks the tool as safe to run concurrently with other
-            safe_parallel tools in the same batch. Opt-in only — defaults to
-            False. Set True for pure read-only tools (no shared-state mutation,
-            no subprocess side effects). The `ToolHandler` chunks consecutive
-            safe_parallel calls into a thread pool while preserving the
-            model's emitted order across chunk boundaries.
+        name: Tool name; defaults to the function name.
+        deferred: Withhold the full schema until requested through LoadTool.
+        safe_parallel: Allow concurrent calls with other opted-in tools. Defaults
+            to False; enable only for read-only tools without shared-state mutation
+            or subprocess side effects. Result order is preserved.
     """
 
     def _wrap(fn: Callable) -> Callable:
