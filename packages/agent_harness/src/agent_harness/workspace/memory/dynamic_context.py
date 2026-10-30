@@ -8,8 +8,10 @@ prompt cache.
     latest user message ──► store.search(touch=False) ──► keep semantic matches (top LIMIT) ──► <memories>
 
 Three rules keep it cheap and honest:
-- It searches only when the latest user message changes; every other call
-  reuses the cached block, so a long tool loop costs one embedding call.
+- It searches only when the latest user message changes or the store is
+  written to (Remember, Forget, curation); every other call reuses the cached
+  block, so a long tool loop costs one embedding call, and a forgotten memory
+  never lingers in the block.
 - `touch=False`: an injection is not a deliberate use. Counting it would keep
   boosting whatever was injected, a loop that locks the same memories on top.
 - It injects only semantic matches: memories above the embedder's measured
@@ -68,7 +70,7 @@ class DynamicMemoryContext:
     def __init__(self, store: MemoryStore, agent: Agent) -> None:
         self.store = store
         self.agent = agent
-        self._query: str | None = None
+        self._key: tuple[str | None, int] | None = None
         self._block: str | None = None
 
     def __call__(self) -> str | None:
@@ -76,9 +78,11 @@ class DynamicMemoryContext:
         # pull the latest user message from the agent object's message list 
         query = _latest_user_text(self.agent.messages)
 
-        # Rendered before every model call, so search only when the request changes
-        if query != self._query:
-            self._query = query
+        key = (query, self.store.revision)
+
+        # Rendered before every model call, so search only when the request or the store changes
+        if key != self._key:
+            self._key = key
             self._block = self._render(query)
 
         return self._block

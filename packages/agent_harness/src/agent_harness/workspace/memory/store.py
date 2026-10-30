@@ -160,6 +160,9 @@ class MemoryStore:
         self.embedder = embedder
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
+        # Bumped by every write, so a cached view of the store (DynamicMemoryContext) knows when it is stale
+        self.revision = 0
+
         with self._connect() as db:
             db.executescript(SCHEMA)
 
@@ -195,6 +198,7 @@ class MemoryStore:
                 db.execute(
                     'UPDATE memories SET importance = MAX(importance, ?) WHERE id = ?', (IMPORTANCE[importance], twin)
                 )
+                self.revision += 1
 
                 return twin, False
 
@@ -211,6 +215,8 @@ class MemoryStore:
                     'INSERT INTO memory_vectors (memory_id, model, vector) VALUES (?, ?, ?)',
                     (memory_id, self.embedder.model, vector.tobytes()),
                 )
+
+        self.revision += 1
 
         return memory_id, True
 
@@ -278,7 +284,13 @@ class MemoryStore:
             return 0
 
         with self._connect() as db:
-            return _delete(db, ids)
+            deleted = _delete(db, ids)
+
+        # A miss (e.g. Forget on an unknown id) changes nothing, so it leaves the revision alone
+        if deleted:
+            self.revision += 1
+
+        return deleted
 
     def replace(self, ids: list[int], content: str, kind: str, importance: str) -> int:
         """Swap `ids` for one memory carrying their history: earliest creation, summed uses, latest use.
@@ -298,6 +310,7 @@ class MemoryStore:
 
         # After the commit, as in `add`: a failed embedding must never lose the memory itself
         self._embed([(memory_id, content)])
+        self.revision += 1
 
         return memory_id
 

@@ -379,6 +379,24 @@ def test_auto_recall_injects_matching_memories_once_per_request() -> None:
     assert use_count(workspace, 1) == 0
 
 
+def test_auto_recall_drops_a_forgotten_memory_within_the_turn() -> None:
+    """A memory forgotten mid-turn leaves the block on the next model call, so the agent never retries Forget on it."""
+    embedder = ConceptEmbedder()
+    workspace = AgentWorkspace('analyst', memory=True, embedder=embedder, auto_memory_recall=True)
+    workspace.memory.add(MSFT_LEASES, 'lesson', 'high')
+    calls_before = embedder.calls
+
+    with scripted_agent([call('Forget', {'memory_id': 1}, 'a'), [{'content': 'done'}]]) as (agent, api, sink):
+        workspace.attach(agent)
+        agent.run('What is the cost of debt for MSFT?', sink=sink)
+
+    assert f'- [1] lesson, high: {MSFT_LEASES}' in message_text(api.requests[0]['messages'][-1])
+    assert MSFT_LEASES not in json.dumps(api.requests[1]['messages'])
+
+    # One search per state of the store: before and after the Forget
+    assert embedder.calls == calls_before + 2
+
+
 def test_auto_recall_injects_nothing_for_an_unrelated_request() -> None:
     """No memory clears the relevance bar, so no block is added at all."""
     workspace = AgentWorkspace('analyst', memory=True, embedder=ConceptEmbedder(), auto_memory_recall=True)
