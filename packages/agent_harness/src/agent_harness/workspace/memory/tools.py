@@ -1,13 +1,11 @@
-"""The agent's interface to long-term memory: three tools and a prompt protocol.
+"""Memory tools and their prompt protocol.
 
-    Remember(content, kind, importance)   store a fact, lesson, preference or event
-    Recall(query, limit)                   search; counts as a use of what it returns
-    Forget(memory_id)                      delete a memory found to be wrong
+    Remember(content, kind, importance) -> store a memory
+    Recall(query, limit)               -> search and record use
+    Forget(memory_id)                  -> delete a memory
 
-Memory reaches the model when it calls Recall, and also through the
-`<memories>` dynamic context block when the workspace has `auto_memory_recall=True`
-(see `dynamic_context.py`). Nothing here ever shows the store's path, so the
-agent's code has no reason to look for the file.
+Optional auto_memory_recall also injects a dynamic <memories> block.
+The store's path is never exposed to model code.
 """
 from __future__ import annotations
 

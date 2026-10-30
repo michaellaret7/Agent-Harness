@@ -1,23 +1,10 @@
-"""DynamicMemoryContext: puts the memories most relevant to the latest request into the dynamic context.
+"""Inject relevant memories after the cached prompt prefix.
 
-A dynamic context provider (see `context/renderer.py`): the renderer calls it
-before every model call, and its `<memories>` block lands in the trailing
-`<dynamic_context>` message, after the cached prefix, so it never breaks the
-prompt cache.
+    latest user message -> search(touch=False) -> semantic matches -> <memories>
 
-    latest user message ──► store.search(touch=False) ──► keep semantic matches (top LIMIT) ──► <memories>
-
-Three rules keep it cheap and honest:
-- It searches only when the latest user message changes or the store is
-  written to (Remember, Forget, curation); every other call reuses the cached
-  block, so a long tool loop costs one embedding call, and a forgotten memory
-  never lingers in the block.
-- `touch=False`: an injection is not a deliberate use. Counting it would keep
-  boosting whatever was injected, a loop that locks the same memories on top.
-- It injects only semantic matches: memories above the embedder's measured
-  similarity floor. Score also counts keyword hits, and one shared keyword is
-  not enough to inject unasked.
-  The floor is measured per model, so no cutoff here has to be tuned to one.
+The renderer calls this provider before each request. Results are cached until
+the latest user message changes or the store is written to. Injection does not
+record memory use, and only matches above the embedder's similarity floor qualify.
 """
 from __future__ import annotations
 

@@ -1,15 +1,8 @@
-"""Embedders turn text into vectors for semantic memory search.
+"""Embedding interfaces and an OpenAI-compatible API implementation.
 
-`Embedder` is the contract the store depends on: a `model` name (vectors from
-different models are never compared), a `min_similarity` floor and `embed(texts)`.
-The floor is per model because each model spreads cosine scores differently:
-off-topic text scores up to 0.08 on text-embedding-3-small but up to 0.23 on
-voyage-4, so one shared cutoff would either drop real matches or admit noise. `ApiEmbedder` is the
-production implementation, calling an OpenAI-compatible `/embeddings` endpoint
-through the same provider setup the agent uses (`client.build_client`).
-
-Vectors are stored unit-length as float32 bytes, so cosine similarity at search
-time is a plain dot product.
+Embedder supplies a model name, a model-specific similarity floor, and embed().
+ApiEmbedder uses client.build_client. Vectors from different models are never
+compared; unit-length float32 storage makes cosine similarity a dot product.
 """
 from __future__ import annotations
 

@@ -227,14 +227,12 @@ def render_compacted_block(summary: str | None, plan: list[dict], segment: str |
 
 
 class Compactor:
-    """Decides when to compact an agent's history, and does it.
+    """Compact history when the estimated request approaches the context limit.
 
-    Token accounting: after each model call, `_counted_tokens` is the provider's exact
-    count for `messages[:_counted_len]`; messages appended since are estimated. The
-    chars/4 estimate drifts by content (JSON numbers cost more tokens per char than
-    prose), so `_ratio` (provider tokens / estimated tokens of the last request, tool
-    schemas included) scales every estimate. When nothing exact applies (no usage
-    yet, or right after a compaction) the whole request is estimated: tools + messages.
+    Use exact provider counts for the last counted prefix and estimates for new
+    messages. Calibrate estimates with the previous request's token/character ratio,
+    including tool schemas. Before usage is available or after compaction, estimate
+    the entire request.
     """
 
     def __init__(self, config: CompactionConfig) -> None:

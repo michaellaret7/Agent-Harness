@@ -1,20 +1,8 @@
-"""Per-call LLM usage telemetry.
+"""Per-call usage reported through `on_usage` and accumulated by sinks.
 
-`Usage` is the wire shape carried by the `on_usage` Sink event. One
-instance per LLM call; the TUI accumulates them into per-turn and
-per-session totals for the status bar.
-
-Providers disagree on which fields they populate. Reliable across both
-configured providers (vLLM, OpenRouter) are only `prompt_tokens` and
-`completion_tokens`. `reasoning_tokens` shows up on thinking models.
-`cached_tokens` shows up when the upstream model supports prompt caching
-and OpenRouter forwards it. `cache_write_tokens` is read from both the
-standard OpenAI shape (`prompt_tokens_details.cache_write_tokens`) and
-the Anthropic-style top-level `cache_creation_input_tokens` — whichever
-the upstream model surfaces through OpenRouter. `cost` is populated by
-OpenRouter; vLLM returns 0. `from_response` defaults every field to 0 so
-a missing field is indistinguishable from a real zero, which is the
-right call for accumulation.
+Prompt and completion token counts are shared across providers; reasoning and
+cache counts depend on the model. Cache writes accept both OpenAI and Anthropic
+field names. OpenRouter reports cost; vLLM does not. Missing fields default to 0.
 """
 from __future__ import annotations
 

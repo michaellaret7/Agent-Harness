@@ -19,23 +19,15 @@ class SandboxConfig:
     """Options for one ExecuteCode sandbox.
 
     Args:
-        env: The only host secrets model code may read via `os.environ`,
-            e.g. `{'FMP_API_KEY': key}`. Their names (never the values) are
-            listed in the tool description.
-        packages: Extra pip requirements on top of the host environment's
-            libraries, e.g. `['pandas']`. Installed into a separate cached venv.
-        j_screen: Run every call past the Jev code screen
-            (`code_execution/screening.py`) before it executes; a blocked call
-            returns an error result and never reaches the kernel. Needs
-            `OPENROUTER_API_KEY`; `execute_code_tool` fails fast if it is missing.
-        recursive_agents: Let model code build and run sub-agents with `agent_harness`.
-            Copies the host's OpenRouter credentials into the kernel and teaches
-            the pattern in the tool description. Off by default: model code can
-            then read a billing key. `execute_code_tool` fails fast if the key is
-            missing or the sandbox is already at the agent depth limit.
-        subagent_model: With `recursive_agents`, the model sub-agents should use. The tool
-            description names it in its examples and asks for it on every sub-agent
-            (a prompt-level instruction, not enforced). None leaves the choice to the model code.
+        env: Host secrets exposed to model code; only names appear in the tool schema.
+        packages: Extra requirements installed in a cached venv alongside host libraries.
+        j_screen: Screen each call before execution. Requires OPENROUTER_API_KEY;
+            missing credentials fail tool construction, blocked calls return errors.
+        recursive_agents: Allow nested agents and expose host OpenRouter credentials
+            to model code. Off by default; construction fails without credentials or
+            at the agent depth limit.
+        subagent_model: Suggested model for recursive agents; enforced by prompt only.
+            None lets model code choose.
     """
 
     env: Mapping[str, str] = field(default_factory=dict)

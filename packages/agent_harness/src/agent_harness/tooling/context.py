@@ -1,12 +1,8 @@
-"""ToolContext: the run a tool call belongs to, handed to tools that ask for it.
+"""ToolContext carries the agent, sink, and cancellation signal for a tool call.
 
-A tool opts in by declaring a hidden `_ctx` parameter; `ToolHandler` fills it
-on every call. Underscore params are absent from the schema and the handler
-rejects model-supplied ones, so the model can neither see nor forge it.
-
-`bind_tool` and `_ctx` split the work: `bind_tool` injects what the
-application chose when building the tool (a sandbox, a store, a registry);
-`_ctx` carries the run itself (the agent, its sink, its cancel signal).
+Tools opt in with a hidden `_ctx` parameter, filled by ToolHandler and rejected
+if supplied by the model. `bind_tool` supplies construction-time dependencies;
+`_ctx` supplies the current run.
 """
 from __future__ import annotations
 

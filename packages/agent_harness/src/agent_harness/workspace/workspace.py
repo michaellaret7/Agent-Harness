@@ -1,26 +1,13 @@
-"""AgentWorkspace: one agent's persistent home, configured once and attached to an agent.
+"""Persistent agent files, skills, and optional memory outside the repository.
 
-A workspace owns everything the agent keeps on disk. It lives in the user's
-home, outside any repository, so agent data never lands in source control:
+    ~/.agent_harness/                 (override with AGENT_HARNESS_HOME)
+    ├── workspaces/<name>/sandbox/
+    │   └── skills/{curated,learned}/
+    └── memory/<name>.sqlite          (outside the sandbox)
 
-    ~/.agent_harness/                        (base overridable via AGENT_HARNESS_HOME)
-    ├── workspaces/<name>/
-    │   └── sandbox/        ExecuteCode's working directory (files persist across runs)
-    │       └── skills/
-    │           ├── curated/    human-reviewed skills, re-copied from `curated_skills` on every attach
-    │           └── learned/    the agent's own skills, read and written by its code
-    └── memory/<name>.sqlite    long-term memory (only with memory=True), reached only through the memory tools
-
-The memory store sits in a separate branch, not next to the sandbox, so code
-browsing the folders around its working directory never comes across it.
-
-`attach(agent)` syncs the curated skills, then plugs the workspace into a built
-agent through the agent's public API: the ExecuteCode and memory tools, the
-skills and memory protocols in the system prompt, and the `<skills>` index
-appended to the system prompt; with `auto_memory_recall=True`, also the `<memories>`
-dynamic context provider; with `curate_memory=True`, a `loop_end` hook that runs a
-`MemoryCurator` pass in the background after every run. The engine never imports this
-module; the dependency runs one way, workspace -> engine.
+`attach(agent)` syncs curated skills and registers tools, prompt protocols,
+and optional memory recall/curation through the public Agent API.
+Dependencies flow from workspace to engine.
 """
 from __future__ import annotations
 
@@ -73,26 +60,19 @@ def memory_dir() -> Path:
 
 
 class AgentWorkspace:
-    """A persistent sandbox and skill library for one agent, with optional long-term memory.
+    """Persistent sandbox and skills for one agent, with optional memory.
 
     Args:
-        name: Workspace name, a lowercase slug (e.g. 'analyst'). The same name
-            reopens the same folder and memory; created if missing and never deleted.
-        curated_skills: Folder of human-reviewed skills (`<name>/SKILL.md`), usually
-            version-controlled. Copied fresh into `skills/curated/` on every attach,
-            so edits the agent makes there never persist. None means learned skills only.
-        sandbox: ExecuteCode options (secrets, extra packages, code screen); see
-            `SandboxConfig`. The workspace supplies the working directory.
-        memory: Give the agent long-term memory (Remember / Recall / Forget tools and
-            the memory protocol). Off by default; when off, no memory file is created.
-        embedder: Override the embedder memory uses for semantic search. Defaults to
-            `ApiEmbedder()` (voyage-4 via OpenRouter); pass another `Embedder` to change
-            models or, in tests, to stay offline. Requires `memory=True`.
-        auto_memory_recall: Also show the memories most relevant to the latest request in a
-            `<memories>` dynamic context block (`DynamicMemoryContext`). Requires `memory=True`.
-        curate_memory: After every run, curate memory on a background thread (`MemoryCurator`):
-            an LLM judge merges or retires related memories, then stale ones are pruned and
-            the store is capped. Requires `memory=True`.
+        name: Lowercase slug; reopens existing data or creates it if missing.
+        curated_skills: Source folder of `<name>/SKILL.md` skills, recopied on
+            each attach. None uses learned skills only.
+        sandbox: SandboxConfig options; the workspace supplies the working directory.
+        memory: Enable Remember/Recall/Forget. False creates no memory file.
+        embedder: Memory embedder; defaults to ApiEmbedder. Requires memory=True.
+        auto_memory_recall: Inject relevant memories into dynamic context.
+            Requires memory=True.
+        curate_memory: Reconcile, prune, and cap memories in the background after
+            each run. Requires memory=True.
     """
 
     def __init__(

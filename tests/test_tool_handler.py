@@ -193,16 +193,37 @@ def test_load_tool_enum_lists_only_deferred_tools() -> None:
         """Look up a word. Returns its definition."""
         return ToolResult(word, status='ok')
 
+    @agent_tool(name='Define', deferred=True)
+    def define(word: str) -> ToolResult:
+        """Define a word. Returns its meaning."""
+        return ToolResult(word, status='ok')
+
     with_lookup = Agent(model='contract-model', tools=[lookup])
-    without_lookup = Agent(model='contract-model')
+    with_define = Agent(model='contract-model', tools=[define])
 
     def load_enum(agent: Agent) -> list[str]:
         entry = next(t['function'] for t in agent.tools if t['function']['name'] == 'LoadTool')
 
         return entry['parameters']['properties']['names']['items']['enum']
 
-    entry = next(t['function'] for t in without_lookup.tools if t['function']['name'] == 'LoadTool')
-
     assert load_enum(with_lookup) == ['Lookup']
-    assert 'enum' not in entry['parameters']['properties']['names']['items'], "one agent's deferred tools must not leak into another's LoadTool schema"
+    assert load_enum(with_define) == ['Define'], "one agent's deferred tools must not leak into another's LoadTool schema"
     assert 'enum' not in load_tool.tool['parameters']['properties']['names']['items'], 'the shared decorator dict stays untouched'
+
+
+def test_load_tool_registered_only_with_deferred_tools() -> None:
+    """An agent with no deferred tools never sees LoadTool; the first deferred tool brings it in."""
+    @agent_tool(name='Lookup', deferred=True)
+    def lookup(word: str) -> ToolResult:
+        """Look up a word. Returns its definition."""
+        return ToolResult(word, status='ok')
+
+    agent = Agent(model='contract-model')
+
+    assert 'LoadTool' not in agent.tool_functions
+    assert 'LoadTool' not in [t['function']['name'] for t in agent.tools]
+
+    agent.add_tool(lookup)
+
+    assert 'LoadTool' in agent.tool_functions
+    assert [t['function']['name'] for t in agent.tools].count('LoadTool') == 1

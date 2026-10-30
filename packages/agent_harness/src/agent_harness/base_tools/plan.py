@@ -1,17 +1,8 @@
-"""Plan: create, update, or replace the agent's working plan.
+"""Replace the agent's working plan and publish successful updates to the sink.
 
-The agent owns `self.plan: list[dict]` (one canonical list, mutated in
-place). This tool is the only interface the model has to that list —
-each call is a *full replacement*: the model passes the complete desired
-plan, the tool clears and refills the list, then returns the rendered
-state as the tool-result string.
-
-Validation is hard-fail: invalid `status` values or more than one
-`in_progress` item return an error ToolResult and leave the plan unchanged.
-
-The tool reaches `agent.plan` and the run's sink through its hidden `_ctx`
-parameter (see `tooling/context.py`), filled in by the ToolHandler on every
-call. A successful update is pushed to the sink as `on_plan_update`.
+Validate statuses and allow at most one in_progress item. Invalid input leaves
+the plan unchanged. Valid input mutates the existing list and returns rendered
+text. The hidden `_ctx` supplies the agent and sink.
 """
 from __future__ import annotations
 

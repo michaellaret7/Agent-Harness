@@ -1,14 +1,7 @@
-"""SubAgent: an Agent deployed as a tool of a parent agent.
+"""SubAgent runs a named task from the parent's SubAgentConfig roster.
 
-A parent registers a roster of `SubAgentConfig` configs at construction
-(`Agent(subagents=[...])`); the `DeploySubagent` tool (see
-`base_tools/deploy_subagent.py`) lets the parent model hand a task to one of
-them by name. Each deployment instantiates a fresh `SubAgent`, so message
-history is isolated per call.
-
-SubAgents are deliberately constrained: no gates, no hooks, no compaction, no
-subagents of their own. Interception and observation belong to the parent that owns the
-run, not to a tool-invoked sub-run.
+DeploySubagent creates a fresh instance with isolated history for each call.
+Subagents have no gates, hooks, compaction, or subagents of their own.
 """
 from __future__ import annotations
 

@@ -1,23 +1,12 @@
-"""Skills: reusable procedures the agent reads and writes as files in its sandbox.
+"""Index reusable skills stored in the sandbox.
 
-Skills live in two tiers under `skills/` in the sandbox workspace:
+    skills/curated/<name>/   recopied from the source on every attach
+    skills/learned/<name>/   agent-managed; preserved by the harness
 
-    skills/curated/<name>/   human-reviewed; re-copied from the source on every attach
-    skills/learned/<name>/   the agent's own; created and edited freely, never touched by the harness
-
-Each skill is a layered folder (the Agent Skills format), loaded progressively:
-
-    <name>/
-    ├── SKILL.md       frontmatter (always listed) + a short overview read on use
-    ├── references/    detail read only when a step in SKILL.md points to it
-    ├── scripts/       Python run with runpy, never read into context
-    └── assets/        templates and data files used by the output
-
-The agent reads and writes skills with ExecuteCode like any other file; there
-is no skill tool. The format is set by `skills_prompt`, and `SkillsIndex`
-enforces it softly: at attach it lists each skill with its tier and
-description in the system prompt, and flags a skill that breaks the format,
-including a bundled file SKILL.md never links (the agent could not find it).
+Each skill has SKILL.md plus optional references/, scripts/, and assets/.
+The agent reads and writes them through ExecuteCode. `skills_prompt` defines
+the format; SkillsIndex adds names, tiers, descriptions, and format warnings
+(including unlinked files) to the system prompt.
 """
 from __future__ import annotations
 

@@ -1,12 +1,8 @@
-"""run_evals — build a fresh subject agent per case, run it, grade it, optionally several cases at once.
+"""Run and grade cases with fresh subject agents, optionally in parallel.
 
-The subject agent is unaware it is being evaluated: it receives only
-`case.task`. Everything else (`criteria`, graders) stays on this
-side of the boundary. The runner reads `agent.messages` and the sink after
-`run()` returns and bundles them into a `RunResult` for the graders.
-
-A fresh agent per case is mandatory — `agent.messages` accumulates across
-`run()` calls, so reusing one would leak earlier cases into later prompts.
+Subjects receive only case.task; criteria stay with graders. History and sink
+metadata become RunResult after completion. Fresh agents prevent conversation
+history from leaking between cases.
 """
 from __future__ import annotations
 

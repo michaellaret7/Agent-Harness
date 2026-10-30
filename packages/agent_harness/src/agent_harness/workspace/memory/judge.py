@@ -1,17 +1,11 @@
-"""MemoryJudge: the curator's one LLM call, deciding what a cluster of related memories really is.
+"""Classify related memories for the curator.
 
-Cosine similarity cannot tell these apart. On voyage-4, a reworded duplicate,
-an outdated fact and a distinct-but-related fact all score between 0.69 and
-0.85, yet each needs a different action:
+    keep       preserve distinct facts
+    merge      combine reworded facts
+    supersede  delete outdated facts
 
-    keep       different facts                       nothing changes
-    merge      one fact said several ways            the ids become one rewritten memory
-    supersede  a newer memory makes older ones wrong  the outdated ids are deleted
-
-A `Judge` is any callable from memories to a `Decision`, so the curator can be
-tested with a scripted one. `LlmJudge` is the production judge: one JSON
-response per cluster, validated before the curator acts on it. An invalid
-answer raises, and the curator leaves that cluster as it is.
+A Judge maps memories to a Decision. LlmJudge validates one JSON response per
+cluster; invalid responses raise and leave the cluster unchanged.
 """
 from __future__ import annotations
 

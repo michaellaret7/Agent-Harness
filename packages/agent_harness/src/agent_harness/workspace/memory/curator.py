@@ -1,25 +1,12 @@
-"""MemoryCurator: keeps one agent's memory store current, in the background after every run.
+"""Curate memory in the background after each run, skipping overlapping passes.
 
-Near-duplicates never reach the store (`MemoryStore.add` drops them on save).
-The curator handles what a similarity cutoff cannot, and only for memories
-saved since its last pass, so a pass costs what is new, not the store's size:
+    loop_end -> reconcile new memories -> advance bookmark -> prune -> cap
 
-    agent.run ends ──► loop_end hook ──► start_background() ──► thread ──► curate()
-
-    curate()
-      ├─ skip if a pass is running
-      ├─ new = memories since the bookmark
-      ├─ reconcile: each new memory + its related neighbours ──► judge: keep | merge | supersede
-      ├─ move the bookmark past what was covered
-      ├─ prune: delete memories that are old, rarely used and at most medium importance
-      └─ cap: still over MAX_MEMORIES ──► delete the lowest-value ones
-
-Reconcile looks only at what is new; prune and cap look at the whole store
-every pass, since memories go stale just by ageing. Critical memories are
-never pruned or evicted.
-
-Every store change commits on its own, so a pass cut short leaves a
-consistent store and the next pass picks up where it stopped.
+Reconciliation asks a judge to keep, merge, or supersede new memories and their
+neighbors. Pruning removes old, rarely used memories of at most medium
+importance; capping evicts low-value memories. Both inspect the whole store,
+but never prune or evict critical memories. Each change commits independently,
+allowing interrupted passes to resume from the bookmark.
 """
 from __future__ import annotations
 

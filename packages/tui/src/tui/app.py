@@ -183,17 +183,10 @@ class TUIApp:
     # ----------------------------------------
 
     async def _animate_loop(self) -> None:
-        """Tick the sprite while a turn is in flight.
+        """Repaint sprites during active turns, choosing a new one after each cycle.
 
-        Two responsibilities, both gated on `_is_running()`:
-          1. Rotate `active_sprite` to a fresh random one once the current
-             sprite has played one full cycle. This is what gives a long turn
-             its slideshow of different little characters.
-          2. Invalidate the app so the status bar repaints the next frame.
-
-        Cheap when idle (one wakeup per tick, no work). The status bar derives
-        the displayed frame from elapsed wall-clock time, so the tick cadence
-        sets *smoothness*, not animation speed.
+        Frames use elapsed time; tick frequency controls repaint smoothness.
+        Idle ticks do no work.
         """
         while True:
             if self._is_running() and self.active_sprite is not None:
@@ -232,18 +225,10 @@ class TUIApp:
             self.history.rerender_all()
 
     async def _watch_size(self) -> None:
-        """Re-render cells once the terminal width has been stable for a beat.
+        """Wait for terminal width to settle, then rerender cells in a worker thread.
 
-        rerender_all walks every cell through Rich, which is expensive. During
-        an active resize drag the OS fires many width changes in quick
-        succession; running rerender_all on each one starves the event loop.
-        Waiting for the size to settle defers that work to the post-drag idle
-        moment, where it's invisible to the user.
-
-        The actual re-render is offloaded to a worker thread via
-        `asyncio.to_thread` — on a long history a single rerender can take
-        100+ ms, and running it on the event-loop thread blocks all input
-        (clicks, scroll, keystrokes) for that entire window.
+        Debouncing avoids repeated Rich renders during resize; background work keeps
+        UI input responsive.
         """
         last_seen = self.history.width
         changed_at: float | None = None

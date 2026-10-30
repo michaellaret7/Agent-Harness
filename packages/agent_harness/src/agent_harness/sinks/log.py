@@ -1,23 +1,8 @@
-"""LogSink — emits agent events to Python's logging module.
+"""Emit agent events through an `agent.<name>` logger; the host owns handlers.
 
-Use this when running the agent headlessly in a pipeline or multi-agent
-workflow. Each LogSink owns a named logger (`agent.<name>`); the host
-process owns handlers, format, and destination — the sink only emits
-records. Filtering by logger name lets parallel-agent logs be
-untangled without parsing message content.
-
-Events emitted:
-- INFO    turn.start  / turn.end
-- INFO    loop.start  / loop.end
-- INFO    tool.start  / tool.end
-- ERROR   tool.end when the tool call failed (status 'error')
-- WARNING tool.end when the call was denied or interrupted
-- WARNING interrupted
-- CRITICAL error (provider failure or unhandled exception — the run is dead)
-
-Content deltas, reasoning, iteration boundaries, plan updates and usage
-events are intentionally silent — usage is accumulated internally and
-folded into the turn.end summary line.
+Turn, loop, and tool boundaries log at INFO. Failed tools log at ERROR;
+denied/interrupted tools and cancellations at WARNING; fatal errors at CRITICAL.
+Streaming and iteration events are silent. Usage is collected for turn.end.
 """
 from __future__ import annotations
 
@@ -50,16 +35,9 @@ def _format_duration(seconds: float) -> str:
 
 
 def configure_logging(level: int | str = 'INFO') -> None:
-    """One-call logging setup for agent runs.
+    """Configure the `agent` logger to write to stderr without changing root logging.
 
-    Configures the `agent` logger (parent of every `agent.<name>` logger
-    LogSink creates) — does not touch the root logger, so third-party
-    libraries keep their existing levels. Idempotent: a second call
-    replaces handlers instead of stacking them.
-
-    `level` accepts a name (`'DEBUG'`, `'INFO'`, `'WARNING'`, …) or an
-    int — callers can pick a level without `import logging`. Output goes
-    to stderr — the standard place for application logs.
+    Accepts a level name or integer. Repeated calls replace existing handlers.
     """
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(logging.Formatter(fmt=_DEFAULT_FORMAT, datefmt=_DEFAULT_DATEFMT))

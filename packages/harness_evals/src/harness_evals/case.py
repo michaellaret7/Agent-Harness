@@ -1,11 +1,7 @@
-"""EvalCase — one task the subject agent is asked to perform, and what success looks like.
+"""EvalCase pairs a subject task with criteria used only by the judge.
 
-`criteria` are the success criteria for this task: concrete statements
-the judge can check against the transcript ("names three risks, each with
-a cited source"). A reference answer is just one more criterion ("the
-answer states 391"). The subject agent never sees `criteria` — only `task`
-reaches it. The judge scores every case criterion plus any shared
-criteria passed to `llm_judge`.
+Criteria are concrete, checkable statements; reference answers can be criteria.
+Only the task reaches the subject. llm_judge combines case and shared criteria.
 """
 from __future__ import annotations
 

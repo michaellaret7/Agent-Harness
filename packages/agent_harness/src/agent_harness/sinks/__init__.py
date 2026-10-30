@@ -1,33 +1,12 @@
-"""Sink implementations for the agent.
+"""Sink exports and automatic composition of ambient sinks.
 
-`Sink`, `BaseSink`, `StdoutSink`, `MultiSink`, `LogSink`, `ToolOutcome`
-are re-exported here for convenience. `LangfuseSink` is intentionally NOT
-re-exported: importing it pulls in the `langfuse` package, which we only
-want loaded when tracing is on. Import it lazily via
-`from agent_harness.sinks.langfuse import LangfuseSink`.
+`register_always_on(factory)` adds an Agent-aware sink factory to every run.
+Langfuse registers lazily when LANGFUSE_PUBLIC_KEY is set; bootstrap is
+idempotent and thread-safe. Applications load the environment themselves.
+Import LangfuseSink from `sinks.langfuse` only when needed.
 
-`register_always_on(factory)` registers an ambient sink (Langfuse,
-metrics, audit) that is composed into every Agent.run alongside the
-caller's presentation sink (StdoutSink, TUISink, LogSink, …). The
-factory receives the running `Agent` so it can read attributes like
-`provider` / `model` when constructing its sink.
-
-LangfuseSink is auto-registered the first time `compose_sinks` or
-`register_always_on` is called, when LANGFUSE_PUBLIC_KEY is present in
-the environment — set the env var and tracing follows every agent. Unset
-it and the framework is silent. The application entry point owns
-`load_dotenv()`; this module only reads the already-populated environment.
-
-The bootstrap is lazy, idempotent, and thread-safe. Type-only imports
-(`from agent_harness.sinks import Sink`) do not trigger it; only consumers that
-actually compose ambient sinks pay the cost.
-
-All sinks created by the ambient factory share a single process-level
-`SESSION_ID`, so every Agent.run within one Python process appears
-under the same Langfuse session. A process started with
-`LANGFUSE_SESSION_ID` set (e.g. a code-execution sandbox kernel) joins
-that session instead, so agents built in model code trace alongside
-their parent.
+Runs share a process SESSION_ID, or inherit LANGFUSE_SESSION_ID from the
+environment so sandbox agents can join their parent's tracing session.
 """
 from __future__ import annotations
 

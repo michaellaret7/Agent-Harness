@@ -1,20 +1,13 @@
-"""How Recall ranks memories: the scoring formula, as pure functions.
+"""Pure scoring functions for Recall; store.py handles SQL and candidate retrieval.
 
-The store fetches rows and vectors (all SQL stays in store.py); these functions
-only score them. Search ranks candidates from both indexes by
-
-    score = relevance x (1 + 0.5 x recency + 0.5 x importance)      (each 0..1)
+    score = relevance x (1 + 0.5 x recency + 0.5 x importance)
     relevance = 0.7 x semantic + 0.3 x keyword
 
-where keyword is the BM25 match as a fraction of the best match, times the
-share of the query's words the memory contains; semantic is cosine similarity
-rescaled so the embedder's `min_similarity` floor maps to 0 (candidates below
-it are dropped); recency is a sigmoid of an ACT-R style activation from how
-often and how lately a memory was used; and importance is the agent's level
-divided by the top level. Recency and importance multiply relevance rather than
-add to it, so they reorder relevant memories but never lift an unrelated one
-over a real match. Nothing is min-max scaled across candidates: that would turn
-a near-tie in relevance into a 1-vs-0 gap importance could never overcome.
+Components are 0..1: semantic rescales cosine above the embedder's floor;
+keyword combines relative BM25 with query-word coverage; recency uses a sigmoid
+of usage frequency and age; importance divides by the top level. Recency and
+importance multiply relevance. Avoid candidate-wise min-max scaling, which
+exaggerates small relevance differences.
 """
 from __future__ import annotations
 

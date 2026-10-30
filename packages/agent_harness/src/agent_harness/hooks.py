@@ -1,22 +1,9 @@
-"""Hook primitives — the normalized payload passed to every observe hook.
+"""HookContext provides a common payload for lifecycle hooks.
 
-A hook is a user-supplied callable registered on an Agent via
-`agent.add_hook(event, fn)`. It fires on a lifecycle event (turn / loop /
-iteration boundaries, tool start/end), receives a single `HookContext`,
-and returns nothing — the agent loop ignores its return value and never
-blocks on its verdict. Side effects only: log, publish an event, spawn a
-thread/agent, or enrich `ctx.agent.messages`.
-
-`HookContext` exists so every hook shares one signature regardless of
-which event fired. The raw Sink events have wildly different shapes
-(`on_tool_start(id, name, args_json)` vs `on_loop_start(model, ...)`); the
-`HookSink` translates each into this uniform object. Fields not relevant
-to an event stay None — `outcome` is only set on `tool_end`, `args`/
-`tool_name` only on tool events. Everything else a hook needs is reachable
-through the live `agent` reference.
-
-This is a leaf module: it imports nothing from the loop or sinks at
-runtime, so it can never participate in an import cycle.
+Register callbacks with `agent.add_hook(event, fn)`. Hooks run synchronously;
+return values are ignored. HookSink translates Sink events, leaving unrelated
+fields as None. The live `agent` reference exposes additional run state.
+This module has no runtime dependencies on the loop or sinks.
 """
 from __future__ import annotations
 

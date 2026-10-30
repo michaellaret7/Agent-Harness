@@ -1,18 +1,8 @@
-"""OutputPanel — scrollable ANSI view of the conversation History.
+"""Scrollable conversation view with background rendering for cell toggles.
 
-Scrolling is driven by a `_scroll_target` line index. We mutate
-`window.vertical_scroll` directly, because `Window._scroll_when_linewrapping`
-ignores `get_vertical_scroll` when `wrap_lines=True`. The virtual cursor is
-pinned to the same line so the Window's auto-scroll-to-cursor logic stays
-consistent with our requested position.
-
-Click handlers (tool dropdown, reasoning toggle) all submit
-their History mutation to the single-worker render pool owned by History
-(`history.submit_render`). Routing every background Rich render through the
-same worker keeps the GIL available to the prompt_toolkit event loop —
-spawning a fresh daemon thread per click, as the previous design did, let
-clicks pile up and made the TUI feel frozen when the user spam-clicked or
-expanded a giant tool result.
+Set window.vertical_scroll and pin the cursor to `_scroll_target` because
+wrapped windows ignore get_vertical_scroll. Toggle renders share History's
+single-worker pool to keep Rich work off the UI thread.
 """
 from __future__ import annotations
 
@@ -72,17 +62,10 @@ class _OutputControl(FormattedTextControl):
 
 
 class OutputPanel:
-    """Scrollable ANSI view of conversation history.
+    """Scrollable conversation view with two modes.
 
-    Two modes:
-      - follow_tail=True: view stays anchored at the bottom; new content
-        pushes upward.
-      - follow_tail=False: view is fixed at `_scroll_target` (logical line
-        index of the topmost visible line).
-
-    The cursor is pinned to `_scroll_target` so that the Window's built-in
-    auto-scroll-to-cursor algorithm cooperates rather than fights with our
-    requested scroll position.
+    follow_tail anchors at the bottom; otherwise `_scroll_target` fixes the top
+    line. Pinning the cursor there keeps Window's auto-scroll aligned.
     """
 
     PAGE_STEP = 10
@@ -128,15 +111,10 @@ class OutputPanel:
     # ----------------------------------------
 
     def _ensure_fresh(self) -> None:
-        """Rebuild the cache iff history.version advanced. No-op otherwise.
+        """Rebuild cached fragments only when history.version changes.
 
-        Each cell publishes its own pre-parsed fragments (built once on the
-        worker thread inside cell.render); we just concatenate them here. That
-        keeps the UI thread off the ANSI parser even when a single streaming
-        cell bumps the version 25 times per second.
-
-        ToolCell fragments are tagged with a per-cell mouse handler so the user
-        can click any tool block to toggle just its expand state.
+        Concatenate each cell's pre-parsed fragments and attach per-cell tool-toggle
+        handlers, avoiding ANSI parsing on the UI thread.
         """
         v = self.history.version
 
@@ -224,25 +202,10 @@ class OutputPanel:
         return handler
 
     def _dispatch_toggle(self, toggle_fn: Callable[[], None]) -> None:
-        """Submit a History toggle+render to the shared render pool.
+        """Freeze the viewport, then queue a toggle/render on History's shared worker.
 
-        Reason: Rich rendering and ANSI-fragment parsing scale with content
-        size. A click on a tool with a multi-MB result would otherwise run
-        cell.render() synchronously inside the prompt_toolkit event loop and
-        block clicks, scroll, and keystrokes for the full render duration.
-
-        Routing through `history.submit_render` ensures all heavy renders
-        — final Markdown, resize re-renders, toggle re-renders — share a
-        single worker. Two consequences:
-          - The GIL never has multiple Rich renders racing against the UI
-            event loop simultaneously.
-          - Spam-clicking queues renders behind each other instead of
-            spawning unbounded daemon threads.
-
-        Freezing the viewport is done synchronously on the UI thread (needs
-        the pre-toggle total_lines), then the render is dispatched off the
-        loop. _reclamp and invalidate are scheduled back on the loop once the
-        render lands so they touch UI-thread state only.
+        Freezing, reclamping, and invalidation run on the UI thread. Heavy rendering
+        stays in the shared pool so repeated clicks cannot spawn competing workers.
         """
         self._freeze_viewport()
 
@@ -261,14 +224,10 @@ class OutputPanel:
         self.history.submit_render(_worker)
 
     def _freeze_viewport(self) -> None:
-        """Pin the viewport at its current top before a history mutation.
+        """Pin the current top line in `_scroll_target` before mutating history.
 
-        In follow_tail mode the topmost visible line is implicit (total -
-        window_height). We snap that to an explicit `_scroll_target` so the
-        next render doesn't auto-anchor to the new bottom. The pin is tagged
-        as click-induced (`_click_pinned`) so `_ensure_fresh` can release it
-        once new cells arrive — otherwise the viewport stays frozen while
-        the worker keeps emitting tool output below the visible area.
+        Mark the pin as click-induced so `_ensure_fresh` releases it when new cells
+        arrive.
         """
         info = self.window.render_info
 

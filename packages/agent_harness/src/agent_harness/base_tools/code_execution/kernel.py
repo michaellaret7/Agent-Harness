@@ -1,21 +1,13 @@
-"""Persistent Python kernel that runs inside the sandbox subprocess.
+"""Persistent, stdlib-only Python kernel launched as a standalone sandbox script.
 
-Launched by `SubprocessSandbox` as a standalone script (never imported).
-Reads one JSON request per line from stdin, runs the code in a single
-long-lived namespace so variables survive across calls, and writes one JSON
-reply per line back. The protocol runs on private copies of the original
-stdin / stdout. File descriptors 0, 1 and 2 are repointed before user code
-runs, so its prints, and the output of any child process it spawns, land in
-the reply instead of corrupting the protocol.
+Read and reply with one JSON object per line; execute calls in a shared namespace.
 
-Request:  {"code": "<python source>"}
-Reply:    {"stdout": "...", "stderr": "...", "ok": true|false}
+    Request: {"code": "<python source>"}
+    Reply:   {"stdout": "...", "stderr": "...", "ok": true|false}
 
-If the last statement is a bare expression its repr is echoed, matching
-notebook / REPL behaviour so `df.head()` on its own line shows output.
-
-This file is a leaf: stdlib only, no `agent_harness` imports, because it
-runs in a scrubbed environment where the package may not be importable.
+Private copies of stdin/stdout carry the protocol. Redirected descriptors 0–2
+keep user and child-process output in replies. A final bare expression echoes
+its repr. No agent_harness imports: the scrubbed environment may not have it.
 """
 from __future__ import annotations
 

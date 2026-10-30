@@ -1,14 +1,9 @@
-"""Context renderer: the boundary between stored agent data and the model request.
+"""Render Agent-owned context for model requests without changing stored history.
 
-`Agent` owns the data (`domain_prompt`, `prompt_extensions`, `messages`); the
-renderer owns its model-facing presentation; the loop owns execution. Two entry
-points, because they run at different times:
-
-- `build_system_message(agent)` — once at init: base prompt + `<domain>` +
-  extensions + environment + deferred-tool protocol, with the system cache anchor.
-- `render(agent)` — before every model call: an independent copy of history
-  with the rolling cache marker applied, then a `<dynamic_context>` block from
-  the dynamic context providers. Never written back to `agent.messages`.
+`build_system_message` combines the base prompt, domain, extensions, environment,
+and deferred-tool protocol with a cache anchor at initialization. `render`
+copies history, applies the rolling cache marker, and appends dynamic context
+before each model call.
 """
 from __future__ import annotations
 

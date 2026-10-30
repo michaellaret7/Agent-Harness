@@ -1,18 +1,7 @@
-"""Key-binding factory for TUIApp.
+"""Create key bindings against TUIApp state.
 
-Lifted out of `app.py` so the orchestrator stays focused on layout and
-lifecycle. Every binding here is bound against `app` state — input/output
-panels, the cancel event, the running-task flag — so the factory takes the
-TUIApp as its sole argument.
-
-Tab is intentionally unbound at the app level so it stays as in-buffer
-text insertion in the input. A previous binding cycled focus via
-`focus_next()`, which (combined with the output panel being focusable)
-routinely moved focus to the output and made the TUI look frozen — keys
-typed there go nowhere visible.
-
-Alt+arrows are also unbound — `escape, eager=True` below consumes the
-lead byte and they would never fire anyway.
+Leave Tab unbound so it inserts text without changing focus. Alt+arrows are
+also unbound because the eager Escape binding consumes their leading byte.
 """
 from __future__ import annotations
 

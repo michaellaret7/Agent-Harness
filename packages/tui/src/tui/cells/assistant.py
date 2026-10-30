@@ -1,19 +1,10 @@
-"""AssistantCell — streaming model output with collapsible reasoning.
+"""Streaming assistant output with collapsible reasoning.
 
-The cell has three render modes:
-  1. `render_fast` — builds prompt_toolkit fragments directly from the raw
-     reasoning/content strings. No Rich, no ANSI parse. Used during streaming
-     and as the placeholder while the deferred Markdown render is in flight.
-  2. full Rich path (`done=True` and `markdown_ready=True`) — Markdown for
-     the content, dim italic for expanded reasoning. Heavy; runs once per
-     cell on a background worker after streaming ends.
-  3. interrupted variant — same as (1) but with a `[interrupted]` marker
-     instead of the streaming cursor.
+    streaming / awaiting Markdown -> direct plain-text fragments
+    done and markdown_ready       -> Rich Markdown from a background render
+    interrupted                   -> plain text with an interruption marker
 
-Reason for the split: Rich is pure-Python and holds the GIL. Re-running it on
-every streaming delta (12 Hz with growing content) starves the prompt_toolkit
-event loop so badly that mouse-scroll and click events sit in the queue for
-hundreds of ms. The fast path is O(text-length) and trivially cheap.
+Keep Rich off the streaming path to avoid starving the UI event loop.
 """
 from __future__ import annotations
 

@@ -1,11 +1,7 @@
-"""EvalSink — a pure recorder for the loop events `agent.messages` cannot show.
+"""Record usage, stop reason, tool outcomes, duration, and errors from Sink events.
 
-The message history already holds what the model decided, saw, and
-answered. What it lacks is how the run went: token usage, stop reason,
-tool status and duration, errors. Those exist only as Sink events, so this
-sink accumulates them and exposes the result as a frozen `RunMetadata`.
-
-It records; it never grades. Graders read `RunMetadata` through `RunResult`.
+EvalSink exposes frozen RunMetadata through RunResult for graders; it does not
+grade or duplicate the conversation in agent.messages.
 """
 from __future__ import annotations
 

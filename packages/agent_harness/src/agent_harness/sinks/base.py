@@ -1,27 +1,11 @@
-"""Sink Protocol — the agent's output contract.
+"""Sink Protocol and default implementations for agent output events.
 
-The agent loop calls these methods from a worker thread. Implementations
-live wherever they make sense:
-- `StdoutSink` (in `agent_harness/sinks/stdout.py`) is the headless fallback for
-  tests/scripts that import `Agent` without a TUI.
-- `MultiSink` (here) fans events out to several downstream sinks.
-- `TUISink` lives in `tui/sink.py` and mutates the prompt_toolkit History.
-- `LangfuseSink` lives in `agent_harness/sinks/langfuse.py` and mirrors events to
-  Langfuse spans.
+Agent.run emits turn boundaries; the loop emits loop and iteration boundaries:
 
-`on_turn_start` / `on_turn_end` bracket one call to `Agent.run`. They are
-emitted by Agent.run itself, not the execution loop, so adding new
-observability sinks does not require touching agent_harness/loop.py.
+    turn > loop > iteration > {tool, generation}
 
-`on_loop_start` / `on_loop_end` and `on_iteration_start` / `on_iteration_end`
-bracket the execution loop and each iteration through it. They give
-trace-emitting sinks the boundaries they need to build a nested
-hierarchy (`turn > loop > iteration > {tool, generation}`). UI sinks
-typically no-op these.
-
-`BaseSink` supplies no-op defaults for every event so concrete sinks only
-override what they care about. The `Sink` Protocol stays the structural
-typing contract used in signatures; `BaseSink` is the inheritance hook.
+Callbacks run on worker threads. BaseSink supplies no-op defaults; MultiSink
+fans events out to sinks such as StdoutSink, TUISink, and LangfuseSink.
 """
 from __future__ import annotations
 
@@ -66,13 +50,11 @@ class ToolOutcome:
 
 @dataclass(frozen=True)
 class CompactionEvent:
-    """One context compaction, carried by `on_compaction`.
+    """Context compaction details carried by `on_compaction`.
 
-    Token counts are the compactor's estimates of the prompt before and after.
-    `segment` is the archive path of the removed span (None without an archive).
-    `summarized` is False when the summary call failed and the history kept
-    only an archive pointer — a degraded but recoverable state, so it rides
-    here instead of `on_error` (which marks the run itself as dead).
+    Token counts are estimates; `segment` is the archive path, if any.
+    `summarized=False` means summarization failed and history retained only an
+    archive pointer. This recoverable state does not emit `on_error`.
     """
 
     tokens_before: int
