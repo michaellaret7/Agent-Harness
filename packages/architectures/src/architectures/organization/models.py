@@ -11,7 +11,7 @@ from agent_harness.sinks import Sink
 @dataclass
 class Message:
     sender_id: int
-    recipient_id: int | None  # None = broadcast
+    recipient_id: int
     content: Any
     expects_reply: bool = True  # automatic replies use False; explicit sends remain possible
 

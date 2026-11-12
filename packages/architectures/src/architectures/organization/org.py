@@ -9,7 +9,7 @@ from agent_harness.sinks import LogSink
 from agent_harness.tooling.decorator import bind_tool
 
 from architectures.organization.models import Member, Message, MessageLimitReached
-from architectures.organization.tools import get_org_info, send_message
+from architectures.organization.tools import get_org_info, send_message, send_message_blast
 
 
 #     ================================
@@ -123,15 +123,16 @@ class Organization:
         # Org tools are bound to this member, so the model never passes its own id
         agent.add_tool(bind_tool(get_org_info, _org=self, _self_id=agent_id))
         agent.add_tool(bind_tool(send_message, _org=self, _self_id=agent_id))
+        agent.add_tool(bind_tool(send_message_blast, _org=self, _self_id=agent_id))
 
         return agent_id
 
     # --- messaging ---
-    def post(self, message: Message) -> None:
-        """Queue a message in the recipient's inbox; raises MessageLimitReached once the run's budget is spent."""
-        
-        if message.recipient_id is None:
-            raise NotImplementedError('Broadcast delivery is not supported yet')
+    def post(self, messages: list[Message]) -> None:
+        """Queue every message in its recipient's inbox, or none; raises MessageLimitReached if the batch exceeds the run's remaining budget."""
+
+        # Resolve every inbox before enqueueing any, so a bad recipient leaves the batch unsent
+        inboxes = [self.agents[message.recipient_id].inbox for message in messages]
 
         # Count and enqueue under the lock, so `run` never sees 0 while a message is in flight
         # and no message lands behind a stop sentinel after a cancel
@@ -139,14 +140,17 @@ class Organization:
             if self._cancel.is_set():
                 raise MessageLimitReached('Org run was cancelled')
 
-            if self._sent >= self._max_messages:
-                raise MessageLimitReached(f'Org message limit ({self._max_messages}) reached')
+            if self._sent + len(messages) > self._max_messages:
+                remaining = self._max_messages - self._sent
+                raise MessageLimitReached(f'Org message limit ({self._max_messages}) reached: {remaining} left, {len(messages)} needed')
 
-            self._sent += 1
-            self._outstanding += 1
-            # put the message in the agent recipients inbox using the 
-            # message's recipient_id value
-            self.agents[message.recipient_id].inbox.put(message)
+            self._sent += len(messages)
+            self._outstanding += len(messages)
+
+            for inbox, message in zip(inboxes, messages):
+                # put the message in the agent recipients inbox using the
+                # message's recipient_id value
+                inbox.put(message)
 
     def run(self, kickoff: list[tuple[int, str]], max_messages: int = 30) -> None:
         """Send the kickoff messages and let members work in parallel until the org is idle.
@@ -171,8 +175,7 @@ class Organization:
         self._cancel.clear()
 
         # send the kickoff messages to the recipients using the org's post method
-        for recipient_id, content in kickoff:
-            self.post(Message(sender_id=self.id, recipient_id=recipient_id, content=content))
+        self.post([Message(sender_id=self.id, recipient_id=recipient_id, content=content) for recipient_id, content in kickoff])
 
         # start the worker threads for each member
         workers = [

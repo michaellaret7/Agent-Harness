@@ -46,8 +46,44 @@ def send_message(
         return ToolResult(f'No member with id {recipient_id}. Call GetOrgInfo.', 'error')
 
     try:
-        _org.post(Message(sender_id=_self_id, recipient_id=recipient_id, content=content))
+        _org.post([Message(sender_id=_self_id, recipient_id=recipient_id, content=content)])
     except MessageLimitReached as exc:
         return ToolResult(f'{exc}. Finish your current task without sending more messages.', 'error')
 
     return ToolResult(f'Queued for {_org.agents[recipient_id].role} (id {recipient_id}).', 'ok')
+
+
+@agent_tool(name='SendMessageBlast')
+def send_message_blast(
+    recipient_ids: Annotated[list[int], Param(description='The `id` of every recipient, from GetOrgInfo.')],
+    content: Annotated[str, Param(description='The message to deliver to every recipient.')],
+    _org: Any,
+    _self_id: int,
+) -> ToolResult:
+    """Send the same message to several agents in your organization at once.
+
+    All recipients get it or none do. Each recipient counts as one message
+    against the org's budget. Replies arrive later as separate messages to you.
+    """
+    unique_ids = list(dict.fromkeys(recipient_ids))  # dedupe, keep order
+    unknown = [recipient_id for recipient_id in unique_ids if not _org.has_agent(recipient_id)]
+
+    if not unique_ids:
+        return ToolResult('recipient_ids is empty.', 'error')
+
+    if unknown:
+        return ToolResult(f'No members with ids {unknown}. Call GetOrgInfo. Nothing was sent.', 'error')
+
+    if _self_id in unique_ids:
+        return ToolResult('You cannot message yourself; remove your own id. Nothing was sent.', 'error')
+
+    messages = [Message(sender_id=_self_id, recipient_id=recipient_id, content=content) for recipient_id in unique_ids]
+
+    try:
+        _org.post(messages)
+    except MessageLimitReached as exc:
+        return ToolResult(f'{exc}. Nothing was sent. Finish your current task without sending more messages.', 'error')
+
+    recipients = ', '.join(f'{_org.agents[recipient_id].role} (id {recipient_id})' for recipient_id in unique_ids)
+
+    return ToolResult(f'Queued for {recipients}.', 'ok')

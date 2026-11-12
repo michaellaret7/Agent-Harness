@@ -143,6 +143,58 @@ def test_send_message_errors_once_the_run_budget_is_spent(org: Organization) -> 
     assert len(org.get_agent(ids['sink']).prompts) == 2
 
 
+def test_blast_reaches_every_tagged_member_and_they_work_in_parallel(org: Organization) -> None:
+    ids: dict[str, int] = {}
+    results: list[tuple[str, str]] = []
+
+    def blast(agent: TimedAgent, prompt: str) -> None:
+        if 'from org' in prompt:
+            result = agent.tools['SendMessageBlast'](recipient_ids=[ids['tech'], ids['energy'], ids['tech']], content='pick top 5')
+            results.append((result.payload, result.status))
+
+    pm = TimedAgent(on_run=blast)
+    tech, energy, health = TimedAgent(), TimedAgent(), TimedAgent()
+    ids['pm'] = org.register_agent('pm', pm)
+    ids['tech'] = org.register_agent('tech', tech)
+    ids['energy'] = org.register_agent('energy', energy)
+    ids['health'] = org.register_agent('health', health)
+
+    org.run([(ids['pm'], 'kickoff')])
+
+    # Duplicates collapse; only tagged members receive it
+    assert results == [(f"Queued for tech (id {ids['tech']}), energy (id {ids['energy']}).", 'ok')]
+    assert [p.splitlines()[-1] for p in tech.prompts] == ['pick top 5']
+    assert [p.splitlines()[-1] for p in energy.prompts] == ['pick top 5']
+    assert health.prompts == []
+    assert f"pm (id {ids['pm']})" in tech.prompts[0]
+    assert overlaps(tech.windows[0], energy.windows[0])
+
+
+def test_blast_sends_nothing_when_any_recipient_is_invalid_or_over_budget(org: Organization) -> None:
+    ids: dict[str, int] = {}
+    results: list[tuple[str, str]] = []
+
+    def blast(agent: TimedAgent, prompt: str) -> None:
+        for recipient_ids in ([ids['a'], 99], [ids['a'], ids['talker']], [], [ids['a'], ids['b']]):
+            result = agent.tools['SendMessageBlast'](recipient_ids=recipient_ids, content='go')
+            results.append((result.payload, result.status))
+
+    ids['talker'] = org.register_agent('talker', TimedAgent(on_run=blast))
+    ids['a'] = org.register_agent('a', TimedAgent())
+    ids['b'] = org.register_agent('b', TimedAgent())
+
+    # Kickoff uses 1 of 2, so a 2-recipient blast does not fit
+    org.run([(ids['talker'], 'go')], max_messages=2)
+
+    assert [status for _, status in results] == ['error'] * 4
+    assert 'No members with ids [99]' in results[0][0]
+    assert 'cannot message yourself' in results[1][0]
+    assert 'empty' in results[2][0]
+    assert '1 left, 2 needed' in results[3][0]
+    assert org.get_agent(ids['a']).prompts == []
+    assert org.get_agent(ids['b']).prompts == []
+
+
 def test_a_failing_member_surfaces_its_error_without_hanging_the_org(org: Organization) -> None:
     def explode(agent: TimedAgent, prompt: str) -> None:
         raise RuntimeError('model provider down')
