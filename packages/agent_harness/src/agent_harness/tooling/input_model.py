@@ -163,8 +163,8 @@ def build_model_tool(
         arguments = {key: value for key, value in kwargs.items() if not key.startswith('_')}
 
         try:
+            # this line is where the data model validates the arguments
             validated = input_model.model_validate(arguments)
-
         except ValidationError as e:
             return ToolResult(f'error: invalid arguments: {_format_errors(e)}', status='error')
 

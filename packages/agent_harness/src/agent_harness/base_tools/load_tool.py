@@ -7,18 +7,22 @@ supplies the agent.
 from __future__ import annotations
 
 import json
-from typing import Annotated
+from pydantic import Field
 
 from agent_harness.tooling.context import ToolContext
-from agent_harness.tooling.decorator import Param, agent_tool
+from agent_harness.tooling.decorator import agent_tool
+from agent_harness.tooling.input_model import ToolInput
 from agent_harness.tooling.result import ToolResult
 
 
+class LoadToolInput(ToolInput):
+    """Arguments of the LoadTool tool."""
+
+    names: list[str] = Field(description='Tool names to load full schemas for.')
+
+
 @agent_tool(name='LoadTool')
-def load_tool(
-    names: Annotated[list[str], Param(description='Tool names to load full schemas for.')],
-    _ctx: ToolContext | None = None,
-) -> ToolResult:
+def load_tool(args: LoadToolInput, _ctx: ToolContext | None = None) -> ToolResult:
     """
     Load the full schema(s) for one or more deferred tools. Use this whenever
     you need to call a tool whose description ends with ` [deferred]` — the
@@ -34,13 +38,13 @@ def load_tool(
     registry = _ctx.agent.deferred_tools
     api_tools = _ctx.agent.tools
 
-    if not names:
+    if not args.names:
         return ToolResult('error: provide at least one tool name', status='error')
 
     blocks: list[str] = []
     failed = False
 
-    for name in names:
+    for name in args.names:
         match = registry.pop(name, None)
 
         if match is None:

@@ -1,6 +1,7 @@
 """Deterministic dispatch contracts. Run: uv run --all-packages pytest tests/test_tool_handler.py"""
 from __future__ import annotations
 
+import json
 import threading
 from pathlib import Path
 from typing import Literal
@@ -222,6 +223,28 @@ def test_input_model_is_the_only_model_facing_parameter() -> None:
         def order(args: OrderInput, note: str) -> ToolResult:
             """Place an order."""
             return ToolResult('placed', status='ok')
+
+
+def test_plan_validation() -> None:
+    """Plan decodes double-encoded items, and an invalid plan leaves the current one unchanged."""
+    agent = Agent(model='contract-model')
+    item = {'text': 'step one', 'status': 'in_progress'}
+    calls = [
+        tool_call('Plan', {'items': json.dumps([item])}, 'whole-list-as-string'),
+        tool_call('Plan', {'items': [json.dumps(item)]}, 'each-item-as-string'),
+        tool_call('Plan', {'items': [{**item, 'note': 'extra keys are ignored'}]}, 'extra-key'),
+        tool_call('Plan', {'items': [item, item]}, 'two-in-progress'),
+        tool_call('Plan', {'items': [{'text': 'step', 'status': 'done'}]}, 'bad-status'),
+        tool_call('Plan', {'items': 'not json'}, 'bad-json'),
+    ]
+    messages = agent.tool_handler.execute(calls, RecordingSink(), threading.Event())
+    contents = [m['content'] for m in messages]
+
+    assert contents[0] == contents[1] == contents[2] == 'Plan (1 items):\n  [-] step one'
+    assert 'at most one item may be in_progress (got 2)' in contents[3]
+    assert 'items.0.status:' in contents[4]
+    assert all(content.startswith('error: invalid arguments: items') for content in contents[3:])
+    assert agent.plan == [item], 'invalid input leaves the plan unchanged'
 
 
 def test_parallel_boundaries() -> None:

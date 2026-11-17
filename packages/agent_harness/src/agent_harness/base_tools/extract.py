@@ -7,13 +7,13 @@ from __future__ import annotations
 
 import os
 import uuid
-from typing import Annotated
-
 from parallel import APIConnectionError, APIStatusError, APITimeoutError, Parallel
 from parallel.types import AdvancedExtractSettingsParam, ExtractError, ExtractResult
+from pydantic import Field
 
 from agent_harness.tooling.context import ToolContext
-from agent_harness.tooling.decorator import Param, agent_tool
+from agent_harness.tooling.decorator import agent_tool
+from agent_harness.tooling.input_model import ToolInput
 from agent_harness.tooling.result import ToolResult
 
 DEFAULT_TIMEOUT = 120  # Reason: full-page extracts of slow sites can take 60s+. Applies per attempt.
@@ -23,14 +23,17 @@ MAX_OUTPUT_CHARS = 24000  # Reason: extracts are deeper than search excerpts; al
 FULL_CONTENT_CHAR_CAP = 20000
 
 
+class WebExtractInput(ToolInput):
+    """Arguments of the WebExtract tool."""
+
+    urls: list[str] = Field(description='1-20 public URLs to extract. JS-heavy pages and PDFs are supported.')
+    objective: str | None = Field(default=None, description='Natural-language description of what you are looking for on these pages. When set, the API returns excerpts focused on this objective (ignored if full_content=True).')
+    full_content: bool = Field(default=False, description='If True, returns the entire page as markdown instead of focused excerpts. Use when the objective is too broad to pre-filter, or when you need details beyond what excerpts surface. Default False.')
+    max_chars_per_result: int = Field(default=4000, description='Max characters per excerpt block. Values below 1000 are floored to 1000 by the API. Default 4000.')
+
+
 @agent_tool(name='WebExtract', safe_parallel=True)
-def extract(
-    urls: Annotated[list[str], Param(description='1-20 public URLs to extract. JS-heavy pages and PDFs are supported.')],
-    objective: Annotated[str | None, Param(description='Natural-language description of what you are looking for on these pages. When set, the API returns excerpts focused on this objective (ignored if full_content=True).')] = None,
-    full_content: Annotated[bool, Param(description='If True, returns the entire page as markdown instead of focused excerpts. Use when the objective is too broad to pre-filter, or when you need details beyond what excerpts surface. Default False.')] = False,
-    max_chars_per_result: Annotated[int, Param(description='Max characters per excerpt block. Values below 1000 are floored to 1000 by the API. Default 4000.')] = 4000,
-    _ctx: ToolContext | None = None,
-) -> ToolResult:
+def extract(args: WebExtractInput, _ctx: ToolContext | None = None) -> ToolResult:
     """
     Fetch and extract URL content via the Parallel Extract API. Returns clean
     markdown — either focused excerpts aligned to `objective` (default) or the
@@ -42,24 +45,24 @@ def extract(
     if not api_key:
         return ToolResult('error: PARALLEL_API_KEY not set', status='error')
 
-    if not urls:
+    if not args.urls:
         return ToolResult('error: urls is empty', status='error')
 
-    if len(urls) > MAX_URLS:
-        return ToolResult(f'error: max {MAX_URLS} urls per request, got {len(urls)}', status='error')
+    if len(args.urls) > MAX_URLS:
+        return ToolResult(f'error: max {MAX_URLS} urls per request, got {len(args.urls)}', status='error')
 
     advanced: AdvancedExtractSettingsParam = {
-        'excerpt_settings': {'max_chars_per_result': max_chars_per_result},
+        'excerpt_settings': {'max_chars_per_result': args.max_chars_per_result},
     }
 
-    if full_content:
+    if args.full_content:
         advanced['full_content'] = {'max_chars_per_result': FULL_CONTENT_CHAR_CAP}
 
     try:
         with Parallel(api_key=api_key, timeout=DEFAULT_TIMEOUT, max_retries=MAX_RETRIES) as client:
             response = client.extract(
-                urls=urls,
-                objective=objective,
+                urls=args.urls,
+                objective=args.objective,
                 session_id=uuid.uuid4().hex,
                 advanced_settings=advanced,
                 # Parallel tailors results to the consuming model; read at call time, so it is resolved (vLLM too)
@@ -85,7 +88,7 @@ def extract(
         return ToolResult(f'[no results]{suffix}', status='ok')
 
     return ToolResult(
-        _format_output(results, errors, full_content),
+        _format_output(results, errors, args.full_content),
         status='error' if errors else 'ok',
     )
 

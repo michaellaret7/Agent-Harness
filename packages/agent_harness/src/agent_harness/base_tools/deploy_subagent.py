@@ -7,12 +7,22 @@ Agent -> deploy_subagent -> SubAgent -> Agent import cycle.
 from __future__ import annotations
 
 import copy
-from typing import Annotated, Any
+from typing import Any
 
-from agent_harness.tooling.decorator import Param, agent_tool, bind_tool
+from pydantic import Field
+
+from agent_harness.tooling.decorator import agent_tool, bind_tool
 from agent_harness.sinks import LogSink
 from agent_harness.subagent_config import SubAgentConfig
+from agent_harness.tooling.input_model import ToolInput
 from agent_harness.tooling.result import ToolResult
+
+
+class DeploySubagentInput(ToolInput):
+    """Arguments of the DeploySubagent tool."""
+
+    name: str = Field(description='Which subagent to deploy.')
+    prompt: str = Field(description='The task to hand the subagent.')
 
 
 #     ================================
@@ -25,8 +35,7 @@ from agent_harness.tooling.result import ToolResult
 # don't contend — subagent rosters must stay non-mutating for this to hold.
 @agent_tool(name='DeploySubagent', safe_parallel=True)
 def deploy_subagent(
-    name: Annotated[str, Param(description='Which subagent to deploy.')],
-    prompt: Annotated[str, Param(description='The task to hand the subagent.')],
+    args: DeploySubagentInput,
     _registry: dict[str, SubAgentConfig] | None = None,
 ) -> ToolResult:
     """Hand a self-contained task to a named subagent and return its result.
@@ -41,14 +50,14 @@ def deploy_subagent(
     if _registry is None:
         return ToolResult('error: DeploySubagent not bound to a registry', status='error')
 
-    spec = _registry.get(name)
+    spec = _registry.get(args.name)
 
     if spec is None:
-        return ToolResult(f"error: no subagent named '{name}'. Available: {sorted(_registry)}", status='error')
+        return ToolResult(f"error: no subagent named '{args.name}'. Available: {sorted(_registry)}", status='error')
 
     # Subagents always log through a LogSink keyed by name (`agent.<name>`),
     # so a deployment's events land in the logging stream rather than stdout.
-    result = SubAgent.from_spec(spec).run(prompt, sink=LogSink(name))
+    result = SubAgent.from_spec(spec).run(args.prompt, sink=LogSink(args.name))
 
     return ToolResult(str(result), status='ok')
 

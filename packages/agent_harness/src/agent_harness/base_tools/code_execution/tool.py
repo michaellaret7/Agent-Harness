@@ -4,13 +4,16 @@ from __future__ import annotations
 import importlib.metadata
 import os
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Any
+
+from pydantic import Field
 
 from agent_harness.base_tools.code_execution.config import SandboxConfig
 from agent_harness.base_tools.code_execution.sandbox import MAX_AGENT_DEPTH, SANDBOX_DEPTH, SubprocessSandbox
 from agent_harness.base_tools.code_execution.screening import screen_code
 from agent_harness.client import HOSTED_PROVIDER_ENV
-from agent_harness.tooling.decorator import Param, agent_tool, bind_tool
+from agent_harness.tooling.decorator import agent_tool, bind_tool
+from agent_harness.tooling.input_model import ToolInput
 from agent_harness.tooling.result import ToolResult
 
 # The provider whose credentials `recursive_agents` passes into the kernel
@@ -67,23 +70,29 @@ Sub-agents: the `agent_harness` library is installed here, so code can also buil
 for work worth delegating (e.g. one sub-agent per ticker or per document). Define its tools, build it, print its answer:
 
 ```python
+from pydantic import Field
 from agent_harness import Agent
 from agent_harness.tooling.decorator import agent_tool
+from agent_harness.tooling.input_model import ToolInput
 from agent_harness.tooling.result import ToolResult
 from agent_harness.base_tools.code_execution.tool import execute_code_tool
 
+class MyToolInput(ToolInput):
+    x: int = Field(description='The number to double.')
+
 @agent_tool
-def my_tool(x: int) -> ToolResult:
+def my_tool(args: MyToolInput) -> ToolResult:
     """One-line description the sub-agent sees."""
-    return ToolResult(str(x * 2), status='ok')  # status is required: 'ok' or 'error'
+    return ToolResult(str(args.x * 2), status='ok')  # status is required: 'ok' or 'error'
 ```
 
 `@agent_tool` takes optional keyword flags: `@agent_tool(name='FetchQuote', safe_parallel=True)`.
 - `name`: the tool name the sub-agent sees (default: the function name).
 - `safe_parallel`: True lets several calls in one turn run concurrently. Only for read-only tools that share no state.
 - `deferred`: True hides the full schema until the sub-agent loads it with LoadTool. Only worth it for agents with many tools.
-Parameter details go in `Annotated[T, Param(description=..., min_val=..., max_val=..., enum=[...])]`
-(`from typing import Annotated`, `from agent_harness.tooling.decorator import Param`).
+A tool's arguments are the fields of one `ToolInput` class (a Pydantic model), defined at the top level.
+Describe and limit them with `Field(description=..., ge=..., le=...)`; use `Literal['a', 'b']` for a fixed set of values.
+Arguments are validated before the tool runs. To test a tool, call it with keyword arguments: `my_tool(x=3)`.
 
 ```python
 sub = Agent(system='<role>...</role>', provider='{RECURSIVE_PROVIDER}', model={model_arg}, tools=[my_tool, execute_code_tool()])
@@ -135,11 +144,17 @@ def _packages_note(packages: list[str]) -> str:
 #     ================================
 
 
+class ExecuteCodeInput(ToolInput):
+    """Arguments of the ExecuteCode tool."""
+
+    code: str = Field(description='Python source to run.')
+    timeout: int = Field(default=60, ge=1, le=1800, description='Seconds before the run is killed. Default 60; raise it for long runs such as a sub-agent.')
+    reset: bool = Field(default=False, description='Restart the kernel first, dropping all variables.')
+
+
 @agent_tool(name='ExecuteCode')
 def execute_code(
-    code: Annotated[str, Param(description='Python source to run.')],
-    timeout: Annotated[int, Param(description='Seconds before the run is killed. Default 60; raise it for long runs such as a sub-agent.', min_val=1, max_val=1800)] = 60,
-    reset: Annotated[bool, Param(description='Restart the kernel first, dropping all variables.')] = False,
+    args: ExecuteCodeInput,
     _sandbox: SubprocessSandbox = None,  # type: ignore[assignment] injected via bind_tool
     _j_screen: bool = False,  # injected via bind_tool; the model cannot switch it off
 ) -> ToolResult:
@@ -155,15 +170,15 @@ def execute_code(
     # Screen first: a blocked call never reaches the kernel, and the denial
     # tells the model which rule fired and what is allowed instead.
     if _j_screen:
-        screen = screen_code(code, _sandbox.workspace)
+        screen = screen_code(args.code, _sandbox.workspace)
 
         if screen.blocked:
             return ToolResult(screen.reason, status='error')
 
-    if reset:
+    if args.reset:
         _sandbox.reset()
 
-    result = _sandbox.exec(code, timeout=timeout)
+    result = _sandbox.exec(args.code, timeout=args.timeout)
 
     parts: list[str] = []
 
