@@ -3,12 +3,17 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
+from typing import Literal
+
+import pytest
+from pydantic import Field
 
 from agent_harness import Agent
 from agent_harness.gates import GateContext, GateVerdict
 from agent_harness.sinks.base import ToolOutcome
 from agent_harness.base_tools.load_tool import load_tool
 from agent_harness.tooling.decorator import agent_tool
+from agent_harness.tooling.input_model import ToolInput
 from agent_harness.tooling.result import ToolResult
 from contract_support import RecordingSink, tool_call
 
@@ -78,6 +83,21 @@ def check_rewritten_write(path: Path) -> None:
     assert messages[0]['content'] == 'approved'
 
 
+class LegInput(ToolInput):
+    """One leg of an order: a nested object argument."""
+
+    symbol: str
+    side: Literal['buy', 'sell']
+
+
+class OrderInput(ToolInput):
+    """Arguments of the order tool in the input-model contract."""
+
+    symbol: str
+    qty: int = Field(ge=1, le=100, description='Shares.')
+    legs: list[LegInput] | None = None
+
+
 class OrderedSink(RecordingSink):
     """Release a waiting tool only after another tool's outcome is recorded."""
 
@@ -142,6 +162,66 @@ def test_tool_error_handling() -> None:
     assert invoked == ['raise', 'invalid', 'valid']
     assert messages[-1]['content'] == 'error: this is successful payload text'
     assert [event[0] for event in sink.values('tool_start')] == [c['id'] for c in calls]
+
+
+def test_input_model_validation() -> None:
+    """A ToolInput drives a flat schema and validation; the tool only ever sees a valid model."""
+    received: list[tuple[OrderInput, str]] = []
+
+    @agent_tool
+    def order(args: OrderInput, _account: str = 'ACC-1') -> ToolResult:
+        """Place an order."""
+        received.append((args, _account))
+
+        return ToolResult('placed', status='ok')
+
+    assert order.tool['description'] == 'Place an order.'
+    assert order.tool['parameters'] == {
+        'type': 'object',
+        'properties': {
+            'symbol': {'type': 'string'},
+            'qty': {'type': 'integer', 'minimum': 1, 'maximum': 100, 'description': 'Shares.'},
+            'legs': {'type': 'array', 'default': None, 'items': {
+                'type': 'object',
+                'properties': {'symbol': {'type': 'string'}, 'side': {'type': 'string', 'enum': ['buy', 'sell']}},
+                'required': ['symbol', 'side'],
+            }},
+        },
+        'required': ['symbol', 'qty'],
+    }
+
+    bad_calls = [
+        tool_call('order', {'symbol': 'NVDA'}, 'missing'),
+        tool_call('order', {'symbol': 'NVDA', 'qty': 'ten'}, 'wrong-type'),
+        tool_call('order', {'symbol': 'NVDA', 'qty': 101}, 'out-of-range'),
+        tool_call('order', {'symbol': 'NVDA', 'qty': 1, 'legs': [{'symbol': 'NVDA', 'side': 'hold'}]}, 'nested'),
+        tool_call('order', {'symbol': 'NVDA', 'qty': 1, 'price': 5}, 'unknown'),
+    ]
+    messages = Agent(tools=[order]).tool_handler.execute(bad_calls, RecordingSink(), threading.Event())
+    contents = [m['content'] for m in messages]
+
+    assert received == [], 'an invalid call must never reach the tool body'
+    assert all(content.startswith('error: invalid arguments:') for content in contents)
+    assert 'qty: Field required' in contents[0]
+    assert 'qty:' in contents[1] and 'qty:' in contents[2]
+    assert 'legs.0.side:' in contents[3], 'nested errors name the exact field'
+    assert 'price:' in contents[4]
+
+    # A fresh agent: five straight failures block the tool on the first one
+    good_call = tool_call('order', {'symbol': 'NVDA', 'qty': '10'}, 'coerced')
+    messages = Agent(tools=[order]).tool_handler.execute([good_call], RecordingSink(), threading.Event())
+
+    assert messages[0]['content'] == 'placed'
+    assert received == [(OrderInput(symbol='NVDA', qty=10), 'ACC-1')]
+
+
+def test_input_model_is_the_only_model_facing_parameter() -> None:
+    """Mixing a ToolInput with another model-facing parameter fails at decoration."""
+    with pytest.raises(TypeError, match='only model-facing parameter'):
+        @agent_tool
+        def order(args: OrderInput, note: str) -> ToolResult:
+            """Place an order."""
+            return ToolResult('placed', status='ok')
 
 
 def test_parallel_boundaries() -> None:

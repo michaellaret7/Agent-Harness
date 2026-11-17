@@ -4,6 +4,9 @@
 validates arguments and returns an error ToolResult for invalid input.
 Underscore-prefixed parameters are hidden from the schema.
 
+A function that takes a `ToolInput` (see `input_model.py`) instead gets its schema
+and validation from that Pydantic model.
+
 Example:
 
     from typing import Annotated
@@ -30,6 +33,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Any, Callable, Literal, Union, get_args, get_origin, get_type_hints, is_typeddict
 
+from agent_harness.tooling.input_model import build_model_tool, find_input_param
 from agent_harness.tooling.result import ToolResult
 
 #     ================================
@@ -417,6 +421,12 @@ def agent_tool(
     """
 
     def _wrap(fn: Callable) -> Callable:
+        # A function that takes a ToolInput gets its schema and validation from that model
+        input_param = find_input_param(fn)
+
+        if input_param is not None:
+            return build_model_tool(fn, *input_param, name, deferred, safe_parallel)
+
         tool_dict = _build_tool_dict(fn, name, deferred, safe_parallel)
         validators = _collect_validators(fn)
         cached_sig = inspect.signature(fn)
