@@ -6,9 +6,21 @@ import threading
 import pytest
 
 from agent_harness.hooks import HookContext
-from agent_harness.tooling.decorator import agent_tool
+from agent_harness.tooling.definition import ToolInput, agent_tool
 from agent_harness.tooling.result import ToolResult
 from contract_support import arithmetic_tools, message_text, scripted_agent, tool_call, tool_delta
+
+
+class WorkerInput(ToolInput):
+    """The label that tells the two parallel worker calls apart."""
+
+    label: str
+
+
+class LookupInput(ToolInput):
+    """The key of the record the lookup tool reads."""
+
+    key: str
 
 
 #     ================================
@@ -70,14 +82,14 @@ def test_hook_context_and_ordering() -> None:
     observed: list[HookContext] = []
 
     @agent_tool(safe_parallel=True)
-    def worker(label: str) -> ToolResult:
+    def worker(args: WorkerInput) -> ToolResult:
         """Coordinate two calls so the fast call's end hook must arrive first."""
         started.wait()
 
-        if label == 'slow':
+        if args.label == 'slow':
             assert fast_observed.wait(5), 'fast call did not reach its end hook'
 
-        return ToolResult(label.upper(), status='ok')
+        return ToolResult(args.label.upper(), status='ok')
 
     def record(ctx: HookContext) -> None:
         with lock:
@@ -110,12 +122,12 @@ def test_tool_data_reaches_hooks_not_the_model() -> None:
     outcomes: dict[str, object] = {}
 
     @agent_tool
-    def lookup(key: str) -> ToolResult:
+    def lookup(args: LookupInput) -> ToolResult:
         """Look up a record."""
-        if key == 'missing':
+        if args.key == 'missing':
             return ToolResult('error: no such record', status='error')
 
-        return ToolResult(f'found {key}', status='ok', data={'key': key, 'rows': [1, 2]})
+        return ToolResult(f'found {args.key}', status='ok', data={'key': args.key, 'rows': [1, 2]})
 
     calls = tool_delta(tool_call('lookup', {'key': 'a'}, 'c1'), tool_call('lookup', {'key': 'missing'}, 'c2'))
 

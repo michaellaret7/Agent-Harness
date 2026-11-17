@@ -6,9 +6,15 @@ import json
 from typing import Any
 
 from agent_harness import Agent
-from agent_harness.tooling.decorator import agent_tool
+from agent_harness.tooling.definition import ToolInput, agent_tool
 from agent_harness.tooling.result import ToolResult
 from contract_support import arithmetic_tools, scripted_agent, tool_call, tool_delta
+
+
+class LookupInput(ToolInput):
+    """The key the deferred lookup tool reads."""
+
+    key: str
 
 
 #     ================================
@@ -31,9 +37,9 @@ def cache_marked(message: dict[str, Any]) -> bool:
 def test_system_message_keeps_anchor_and_deferred_protocol() -> None:
     """The system message is cached, carries the environment, and lists every deferred tool."""
     @agent_tool(deferred=True)
-    def lookup(key: str) -> ToolResult:
+    def lookup(args: LookupInput) -> ToolResult:
         """Look up a key. Returns the stored value."""
-        return ToolResult(key, status='ok')
+        return ToolResult(args.key, status='ok')
 
     plain = Agent(model='contract-model', system='<role>Tester</role>')
     deferred = Agent(model='contract-model', tools=[lookup])

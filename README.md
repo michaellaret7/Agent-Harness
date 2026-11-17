@@ -102,17 +102,24 @@ The response streams to stdout and is also returned as `result`. Pass a custom `
 Define application-specific tools in the consuming project and pass them to the engine:
 
 ```python
+from pydantic import Field
+
 from agent_harness import Agent
-from agent_harness.tooling.decorator import agent_tool
+from agent_harness.tooling.definition import ToolInput, agent_tool
 from agent_harness.tooling.result import ToolResult
 
+class EchoInput(ToolInput):
+    text: str = Field(description="The text to echo.")
+
 @agent_tool(name="Echo")
-def echo(text: str) -> ToolResult:
+def echo(args: EchoInput) -> ToolResult:
     """Echo text back unchanged."""
-    return ToolResult(text, status='ok')
+    return ToolResult(args.text, status='ok')
 
 agent = Agent(tools=[echo], system="You are a concise assistant.")
 ```
+
+A tool's arguments are the fields of one `ToolInput` subclass (a Pydantic model). The class produces the schema the model sees and validates every call before the function runs; an invalid call returns `error: invalid arguments: <field>: <problem>`. Version 3.0 removes declaring arguments on the function signature and the `Param` helper.
 
 Tool dictionaries with `name`, `description`, `parameters`, and `function` are also supported. Registering a duplicate name keeps the existing tool and emits a warning. Tools passed to the constructor are added to the built-in tools.
 
@@ -188,7 +195,7 @@ agent_harness/
     │       ├── messages.py
     │       ├── usage.py
     │       ├── tooling/            # infrastructure shared by tools
-    │       │   ├── decorator.py    # tool schema generation and binding
+    │       │   ├── definition.py   # ToolInput, @agent_tool and bind_tool
     │       │   ├── handler.py      # tool dispatch
     │       │   └── result.py       # tool result contract
     │       ├── base_tools/
@@ -229,7 +236,7 @@ from agent_harness.subagent_config import SubAgentConfig
 
 These replace the former `base_tools.execute_code` and `base_tools.deploy_subagent.SubAgentConfig` import paths. Consumers must update their imports; the removed code-execution modules have no compatibility shims. Treat these path changes as a breaking change when publishing the next engine release.
 
-Tool infrastructure now lives in `agent_harness.tooling`: import `agent_tool`, `Param`, and `bind_tool` from `tooling.decorator`, `ToolHandler` from `tooling.handler`, and `ToolResult` from `tooling.result`. These replace the former top-level `decorator`, `tool_handler`, and `tool_result` modules and are also breaking import-path changes. `base_tools/` holds the actual tools offered to the model.
+Tool infrastructure now lives in `agent_harness.tooling`: import `ToolInput`, `agent_tool` and `bind_tool` from `tooling.definition`, `ToolHandler` from `tooling.handler`, and `ToolResult` from `tooling.result`. These replace the former top-level `decorator`, `tool_handler`, and `tool_result` modules and are also breaking import-path changes. `base_tools/` holds the actual tools offered to the model.
 
 ## Development and builds
 

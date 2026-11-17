@@ -12,8 +12,7 @@ from agent_harness.base_tools.code_execution.config import SandboxConfig
 from agent_harness.base_tools.code_execution.sandbox import MAX_AGENT_DEPTH, SANDBOX_DEPTH, SubprocessSandbox
 from agent_harness.base_tools.code_execution.screening import screen_code
 from agent_harness.client import HOSTED_PROVIDER_ENV
-from agent_harness.tooling.decorator import agent_tool, bind_tool
-from agent_harness.tooling.input_model import ToolInput
+from agent_harness.tooling.definition import ToolInput, agent_tool, bind_tool
 from agent_harness.tooling.result import ToolResult
 
 # The provider whose credentials `recursive_agents` passes into the kernel
@@ -72,8 +71,7 @@ for work worth delegating (e.g. one sub-agent per ticker or per document). Defin
 ```python
 from pydantic import Field
 from agent_harness import Agent
-from agent_harness.tooling.decorator import agent_tool
-from agent_harness.tooling.input_model import ToolInput
+from agent_harness.tooling.definition import ToolInput, agent_tool
 from agent_harness.tooling.result import ToolResult
 from agent_harness.base_tools.code_execution.tool import execute_code_tool
 

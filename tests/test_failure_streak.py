@@ -7,13 +7,19 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from agent_harness.tooling.decorator import agent_tool
+from agent_harness.tooling.definition import ToolInput, agent_tool
 from agent_harness.tooling.failure_streak import FailureStreaks
 from agent_harness.tooling.result import ToolResult
 from contract_support import arithmetic_tools, message_text, scripted_agent, tool_call, tool_delta
 
 
 ORDER_ERROR = 'error: invalid request: Both qty and notional can not be set.'
+
+
+class OrderInput(ToolInput):
+    """The id of the order the broker-like tool submits."""
+
+    client_order_id: str
 
 
 #     ================================
@@ -30,9 +36,9 @@ def order_tool(outcomes: list[bool], ran: list[str], name: str = 'SubmitOrder',
                safe_parallel: bool = False) -> Callable:
     """A broker-like tool that pops its next outcome (True = filled), defaulting to failure."""
     @agent_tool(name=name, safe_parallel=safe_parallel)
-    def submit_order(client_order_id: str) -> ToolResult:
+    def submit_order(args: OrderInput) -> ToolResult:
         """Submit an order."""
-        ran.append(client_order_id)
+        ran.append(args.client_order_id)
 
         if outcomes and outcomes.pop(0):
             return ToolResult('filled', status='ok')

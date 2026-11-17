@@ -11,10 +11,9 @@ from typing import Any
 
 from pydantic import Field
 
-from agent_harness.tooling.decorator import agent_tool, bind_tool
+from agent_harness.tooling.definition import ToolInput, agent_tool, bind_tool
 from agent_harness.sinks import LogSink
 from agent_harness.subagent_config import SubAgentConfig
-from agent_harness.tooling.input_model import ToolInput
 from agent_harness.tooling.result import ToolResult
 
 

@@ -14,10 +14,17 @@ from openai import OpenAI
 from agent_harness import Agent
 from agent_harness.context.compaction import CompactionConfig
 from agent_harness.sinks.base import BaseSink, CompactionEvent, ToolOutcome
-from agent_harness.tooling.decorator import agent_tool
+from agent_harness.tooling.definition import ToolInput, agent_tool
 from agent_harness.tooling.result import ToolResult
 
 StreamItem = dict[str, Any] | Callable[[], None]
+
+
+class ArithmeticInput(ToolInput):
+    """Two integer operands for the arithmetic tools."""
+
+    a: int
+    b: int
 
 
 #     ================================
@@ -49,18 +56,18 @@ def message_text(message: dict[str, Any]) -> str:
 def arithmetic_tools(calls: list[tuple[str, int, int]]) -> list[Callable]:
     """Provide real arithmetic tools and record their observable invocations."""
     @agent_tool
-    def add(a: int, b: int) -> ToolResult:
+    def add(args: ArithmeticInput) -> ToolResult:
         """Add two integers."""
-        calls.append(('add', a, b))
+        calls.append(('add', args.a, args.b))
 
-        return ToolResult(str(a + b), status='ok')
+        return ToolResult(str(args.a + args.b), status='ok')
 
     @agent_tool
-    def multiply(a: int, b: int) -> ToolResult:
+    def multiply(args: ArithmeticInput) -> ToolResult:
         """Multiply two integers."""
-        calls.append(('multiply', a, b))
+        calls.append(('multiply', args.a, args.b))
 
-        return ToolResult(str(a * b), status='ok')
+        return ToolResult(str(args.a * args.b), status='ok')
 
     return [add, multiply]
 

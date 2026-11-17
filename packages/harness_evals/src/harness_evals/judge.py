@@ -17,7 +17,7 @@ from agent_harness import Agent
 from agent_harness.base_tools.code_execution.sandbox import SubprocessSandbox
 from agent_harness.base_tools.code_execution.tool import execute_code
 from agent_harness.sinks import LogSink, MultiSink, Sink
-from agent_harness.tooling.decorator import bind_tool
+from agent_harness.tooling.definition import bind_tool
 from pydantic import BaseModel, Field
 
 from harness_evals.case import EvalCase

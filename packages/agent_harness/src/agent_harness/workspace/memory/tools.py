@@ -9,9 +9,11 @@ The store's path is never exposed to model code.
 """
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
-from agent_harness.tooling.decorator import Param, agent_tool, bind_tool
+from pydantic import Field
+
+from agent_harness.tooling.definition import ToolInput, agent_tool, bind_tool
 from agent_harness.tooling.result import ToolResult
 from agent_harness.workspace.memory.store import Memory, MemoryStore
 
@@ -37,6 +39,27 @@ Writing:
 </memory_protocol>"""
 
 
+class RememberInput(ToolInput):
+    """Arguments of the Remember tool."""
+
+    content: str = Field(description='One or two self-contained sentences naming their subject.')
+    kind: MemoryKind = Field(description='fact, lesson, preference or event.')
+    importance: Importance = Field(description='How much a future task would lose without it.')
+
+
+class RecallInput(ToolInput):
+    """Arguments of the Recall tool."""
+
+    query: str = Field(description='Words describing what you want to know.')
+    limit: int = Field(default=5, ge=1, le=20, description='Maximum memories to return.')
+
+
+class ForgetInput(ToolInput):
+    """Arguments of the Forget tool."""
+
+    memory_id: int = Field(description='The id shown in brackets, e.g. 12 for [12].')
+
+
 #     ================================
 # --> Helper funcs
 #     ================================
@@ -53,19 +76,14 @@ def memory_line(memory: Memory) -> str:
 
 
 @agent_tool(name='Remember')
-def remember(
-    content: Annotated[str, Param(description='One or two self-contained sentences naming their subject.')],
-    kind: Annotated[MemoryKind, Param(description='fact, lesson, preference or event.')],
-    importance: Annotated[Importance, Param(description='How much a future task would lose without it.')],
-    _store: MemoryStore | None = None,
-) -> ToolResult:
+def remember(args: RememberInput, _store: MemoryStore | None = None) -> ToolResult:
     """Save a memory for future tasks. Use sparingly: most tasks should save nothing or one or two memories."""
     assert _store is not None, 'Remember must be bound to a MemoryStore'
 
-    if not content.strip():
+    if not args.content.strip():
         return ToolResult('error: content is empty', status='error')
 
-    memory_id, created = _store.add(content, kind, importance)
+    memory_id, created = _store.add(args.content, args.kind, args.importance)
 
     if not created:
         return ToolResult(f'Already remembered as [{memory_id}]; nothing saved.', status='ok')
@@ -74,15 +92,11 @@ def remember(
 
 
 @agent_tool(name='Recall', safe_parallel=True)
-def recall(
-    query: Annotated[str, Param(description='Words describing what you want to know.')],
-    limit: Annotated[int, Param(description='Maximum memories to return.', min_val=1, max_val=20)] = 5,
-    _store: MemoryStore | None = None,
-) -> ToolResult:
+def recall(args: RecallInput, _store: MemoryStore | None = None) -> ToolResult:
     """Search long-term memory. Returns matching memories with their ids, best first."""
     assert _store is not None, 'Recall must be bound to a MemoryStore'
 
-    memories = _store.search(query, limit, touch=True)
+    memories = _store.search(args.query, args.limit, touch=True)
 
     if not memories:
         return ToolResult('No matching memories.', status='ok')
@@ -91,12 +105,11 @@ def recall(
 
 
 @agent_tool(name='Forget')
-def forget(
-    memory_id: Annotated[int, Param(description='The id shown in brackets, e.g. 12 for [12].')],
-    _store: MemoryStore | None = None,
-) -> ToolResult:
+def forget(args: ForgetInput, _store: MemoryStore | None = None) -> ToolResult:
     """Delete a memory you found to be wrong or no longer useful."""
     assert _store is not None, 'Forget must be bound to a MemoryStore'
+
+    memory_id = args.memory_id
 
     if not _store.forget(memory_id):
         return ToolResult(

@@ -12,8 +12,7 @@ from parallel.types import AdvancedExtractSettingsParam, ExtractError, ExtractRe
 from pydantic import Field
 
 from agent_harness.tooling.context import ToolContext
-from agent_harness.tooling.decorator import agent_tool
-from agent_harness.tooling.input_model import ToolInput
+from agent_harness.tooling.definition import ToolInput, agent_tool
 from agent_harness.tooling.result import ToolResult
 
 DEFAULT_TIMEOUT = 120  # Reason: full-page extracts of slow sites can take 60s+. Applies per attempt.

@@ -13,8 +13,7 @@ from agent_harness import Agent
 from agent_harness.gates import GateContext, GateVerdict
 from agent_harness.sinks.base import ToolOutcome
 from agent_harness.base_tools.load_tool import load_tool
-from agent_harness.tooling.decorator import agent_tool
-from agent_harness.tooling.input_model import ToolInput
+from agent_harness.tooling.definition import ToolInput, agent_tool
 from agent_harness.tooling.result import ToolResult
 from contract_support import RecordingSink, tool_call
 
@@ -35,9 +34,9 @@ def check_blocked_write(path: Path, raises: bool) -> None:
     sink = RecordingSink()
 
     @agent_tool
-    def write_file(text: str) -> ToolResult:
+    def write_file(args: WriteFileInput) -> ToolResult:
         """Write the supplied text inside this test's temporary directory."""
-        path.write_text(text, encoding='utf-8')
+        path.write_text(args.text, encoding='utf-8')
 
         return ToolResult('written', status='ok')
 
@@ -63,11 +62,11 @@ def check_rewritten_write(path: Path) -> None:
     seen: list[dict] = []
 
     @agent_tool
-    def write_file(text: str) -> ToolResult:
+    def write_file(args: WriteFileInput) -> ToolResult:
         """Write the resolved argument to a real file."""
-        path.write_text(text, encoding='utf-8')
+        path.write_text(args.text, encoding='utf-8')
 
-        return ToolResult(text, status='ok')
+        return ToolResult(args.text, status='ok')
 
     def observe(ctx: GateContext) -> GateVerdict:
         seen.append(dict(ctx.args))
@@ -82,6 +81,30 @@ def check_rewritten_write(path: Path) -> None:
     assert seen == [{'text': 'approved'}]
     assert path.read_text(encoding='utf-8') == 'approved'
     assert messages[0]['content'] == 'approved'
+
+
+class WriteFileInput(ToolInput):
+    """The text the file-writing tool writes."""
+
+    text: str
+
+
+class ActionInput(ToolInput):
+    """Which outcome the error-handling tool produces."""
+
+    mode: str
+
+
+class LabelInput(ToolInput):
+    """The label that tells parallel calls apart."""
+
+    label: str
+
+
+class WordInput(ToolInput):
+    """The word a deferred dictionary tool reads."""
+
+    word: str
 
 
 class LegInput(ToolInput):
@@ -134,14 +157,14 @@ def test_tool_error_handling() -> None:
     sink = RecordingSink()
 
     @agent_tool
-    def action(mode: str) -> ToolResult | str:
+    def action(args: ActionInput) -> ToolResult | str:
         """Produce a real success, exception, or invalid result for contract checking."""
-        invoked.append(mode)
+        invoked.append(args.mode)
 
-        if mode == 'raise':
+        if args.mode == 'raise':
             raise RuntimeError('intentional tool failure')
 
-        if mode == 'invalid':
+        if args.mode == 'invalid':
             return 'not a ToolResult'
 
         return ToolResult('error: this is successful payload text', status='ok')
@@ -217,12 +240,34 @@ def test_input_model_validation() -> None:
 
 
 def test_input_model_is_the_only_model_facing_parameter() -> None:
-    """Mixing a ToolInput with another model-facing parameter fails at decoration."""
+    """Model-facing parameters outside a single ToolInput fail at decoration."""
     with pytest.raises(TypeError, match='only model-facing parameter'):
         @agent_tool
         def order(args: OrderInput, note: str) -> ToolResult:
             """Place an order."""
             return ToolResult('placed', status='ok')
+
+    with pytest.raises(TypeError, match='only model-facing parameter'):
+        @agent_tool
+        def plain(symbol: str) -> ToolResult:
+            """Declare an argument on the signature instead of a ToolInput."""
+            return ToolResult(symbol, status='ok')
+
+
+def test_tool_without_arguments() -> None:
+    """A tool with no input parameter exposes an empty schema and rejects any argument."""
+    @agent_tool
+    def ping(_reply: str = 'pong') -> ToolResult:
+        """Check that the service is up."""
+        return ToolResult(_reply, status='ok')
+
+    assert ping.tool['parameters'] == {'type': 'object', 'properties': {}}
+
+    calls = [tool_call('ping', {}, 'empty'), tool_call('ping', {'host': 'x'}, 'unexpected')]
+    messages = Agent(tools=[ping]).tool_handler.execute(calls, RecordingSink(), threading.Event())
+
+    assert messages[0]['content'] == 'pong'
+    assert messages[1]['content'].startswith('error: invalid arguments: host:')
 
 
 def test_plan_validation() -> None:
@@ -255,14 +300,14 @@ def test_parallel_boundaries() -> None:
     sink = OrderedSink(fast_ended)
 
     @agent_tool(safe_parallel=True)
-    def parallel(label: str) -> ToolResult:
+    def parallel(args: LabelInput) -> ToolResult:
         """Force overlap and reverse completion order without timed sleeps."""
         started.wait()
 
-        if label == 'slow':
+        if args.label == 'slow':
             assert fast_ended.wait(5), 'fast tool must finish before slow tool'
 
-        return ToolResult(label, status='ok')
+        return ToolResult(args.label, status='ok')
 
     @agent_tool
     def serial() -> ToolResult:
@@ -292,14 +337,14 @@ def test_parallel_boundaries() -> None:
 def test_load_tool_enum_lists_only_deferred_tools() -> None:
     """LoadTool's `names` enum is exactly the deferred tools, per agent, so a loaded tool is not a valid argument."""
     @agent_tool(name='Lookup', deferred=True)
-    def lookup(word: str) -> ToolResult:
+    def lookup(args: WordInput) -> ToolResult:
         """Look up a word. Returns its definition."""
-        return ToolResult(word, status='ok')
+        return ToolResult(args.word, status='ok')
 
     @agent_tool(name='Define', deferred=True)
-    def define(word: str) -> ToolResult:
+    def define(args: WordInput) -> ToolResult:
         """Define a word. Returns its meaning."""
-        return ToolResult(word, status='ok')
+        return ToolResult(args.word, status='ok')
 
     with_lookup = Agent(model='contract-model', tools=[lookup])
     with_define = Agent(model='contract-model', tools=[define])
@@ -317,9 +362,9 @@ def test_load_tool_enum_lists_only_deferred_tools() -> None:
 def test_load_tool_registered_only_with_deferred_tools() -> None:
     """An agent with no deferred tools never sees LoadTool; the first deferred tool brings it in."""
     @agent_tool(name='Lookup', deferred=True)
-    def lookup(word: str) -> ToolResult:
+    def lookup(args: WordInput) -> ToolResult:
         """Look up a word. Returns its definition."""
-        return ToolResult(word, status='ok')
+        return ToolResult(args.word, status='ok')
 
     agent = Agent(model='contract-model')
 

@@ -6,7 +6,7 @@ import threading
 from typing import Any
 
 from agent_harness.sinks import LogSink
-from agent_harness.tooling.decorator import bind_tool
+from agent_harness.tooling.definition import bind_tool
 
 from architectures.organization.models import Member, Message, MessageLimitReached
 from architectures.organization.tools import get_org_info, send_message, send_message_blast

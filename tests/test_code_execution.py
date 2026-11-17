@@ -17,7 +17,7 @@ from agent_harness.base_tools.code_execution.tool import execute_code, execute_c
 from agent_harness.base_tools.code_execution import sandbox as sandbox_module
 from agent_harness.base_tools.code_execution import tool as tool_module
 from agent_harness.base_tools.code_execution.sandbox import SubprocessSandbox
-from agent_harness.tooling.decorator import bind_tool
+from agent_harness.tooling.definition import bind_tool
 
 REAL_VENV_CACHE = sandbox_module.VENV_CACHE
 

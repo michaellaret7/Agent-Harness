@@ -18,8 +18,7 @@ from parallel.types.shared_params import SourcePolicy
 from pydantic import Field
 
 from agent_harness.tooling.context import ToolContext
-from agent_harness.tooling.decorator import agent_tool
-from agent_harness.tooling.input_model import ToolInput
+from agent_harness.tooling.definition import ToolInput, agent_tool
 from agent_harness.tooling.result import ToolResult
 
 DEFAULT_TIMEOUT = 90  # Reason: 'advanced' mode can take 15-60s end-to-end. Applies per attempt.

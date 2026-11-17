@@ -70,13 +70,13 @@ The loop bails at `max_iters` (default 100) to prevent runaway tool-call cycles.
 
 ### Agent ↔ ToolHandler split
 
-Tool infrastructure lives in `agent_harness/tooling/`: `decorator.py` generates schemas and binds dependencies, `handler.py` dispatches calls, and `result.py` defines `ToolResult`. Actual model-facing tools live separately in `base_tools/`.
+Tool infrastructure lives in `agent_harness/tooling/`: `definition.py` holds `ToolInput`, `@agent_tool` and `bind_tool` and builds each tool's schema and validation from its `ToolInput`, `handler.py` dispatches calls, and `result.py` defines `ToolResult`. Actual model-facing tools live separately in `base_tools/`.
 
 `Agent` owns the tool **registry** (`self.tools` schema list + `self.tool_functions` callable map) and message history. `ToolHandler` owns **execution only** — it reads from `agent.tool_functions` and returns `role: "tool"` messages. The handler does not register tools. Keep this split when extending: registration on `Agent`, dispatch on `ToolHandler`.
 
 ### Tool schema
 
-A tool module exports a `tool` dict with exactly four keys: `name`, `description`, `parameters` (JSON Schema), `function` (callable). Register via `agent.add_tool(module.tool)`. Functions decorated with `@agent_tool` (see `agent_harness/tooling/decorator.py`) carry the dict on their `.tool` attribute; pass the function itself: `agent.add_tool(my_fn)`. `add_tool` is idempotent by name — re-registering is a silent no-op, not an error.
+A tool module exports a `tool` dict with exactly four keys: `name`, `description`, `parameters` (JSON Schema), `function` (callable). Register via `agent.add_tool(module.tool)`. Functions decorated with `@agent_tool` (see `agent_harness/tooling/definition.py`) carry the dict on their `.tool` attribute; pass the function itself: `agent.add_tool(my_fn)`. A tool's arguments are one `ToolInput` subclass (a Pydantic model, defined in the same file) taken as the function's only model-facing parameter; it generates the schema and validates every call. `add_tool` is idempotent by name — re-registering is a silent no-op, not an error.
 
 ### Code execution platform handling
 

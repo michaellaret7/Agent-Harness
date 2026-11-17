@@ -1,7 +1,15 @@
-"""Tools whose arguments are declared as a Pydantic model.
+"""Define a tool: its arguments (`ToolInput`), the `@agent_tool` decorator, and `bind_tool`.
 
-A tool function takes one `ToolInput` subclass. That class generates the schema
-the LLM sees and validates every call, so the two cannot drift:
+A tool function takes one `ToolInput` subclass. That Pydantic model generates the
+schema the LLM sees and validates every call, so the two cannot drift; invalid
+input returns an error ToolResult before the function runs. `@agent_tool` attaches
+`.tool`, accepted directly by Agent.add_tool.
+
+Example:
+
+    from pydantic import Field
+    from agent_harness.tooling.definition import ToolInput, agent_tool
+    from agent_harness.tooling.result import ToolResult
 
     class GetQuoteInput(ToolInput):
         ticker: str = Field(description='Stock ticker, e.g. "AAPL".')
@@ -11,13 +19,16 @@ the LLM sees and validates every call, so the two cannot drift:
         '''Get the latest price of one stock.'''
         ...
 
+    agent.add_tool(bind_tool(get_quote, _client=client))
+
 Underscore-prefixed parameters stay on the function: hidden from the schema,
-filled by `bind_tool` or the handler.
+filled by `bind_tool` or the handler. A tool that takes nothing from the LLM
+declares no input parameter at all.
 """
 from __future__ import annotations
 
-import functools
 import inspect
+from functools import partial, wraps
 from typing import Any, Callable, get_type_hints
 
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -109,19 +120,13 @@ def _format_errors(error: ValidationError) -> str:
     return '; '.join(problems)
 
 
-#     ================================
-# --> Tool construction
-#     ================================
-
-
-def find_input_param(fn: Callable) -> tuple[str, type[ToolInput]] | None:
-    """Return (parameter name, model) when `fn` takes a `ToolInput`, else None.
+def _find_input_param(fn: Callable) -> tuple[str | None, type[ToolInput]]:
+    """Return (parameter name, model) for the arguments the LLM may pass to `fn`.
 
     The model must be the only parameter the LLM can set; anything else the
-    function needs is an underscore-prefixed dependency.
+    function needs is an underscore-prefixed dependency. A tool that takes
+    nothing from the LLM has no such parameter and gets (None, ToolInput).
     """
-    hints = get_type_hints(fn)
-
     visible = [
         name
         for name, param in inspect.signature(fn).parameters.items()
@@ -129,26 +134,22 @@ def find_input_param(fn: Callable) -> tuple[str, type[ToolInput]] | None:
         and param.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
     ]
 
-    models = [
-        name
-        for name in visible
-        if isinstance(hints.get(name), type) and issubclass(hints[name], ToolInput)
-    ]
+    if not visible:
+        return None, ToolInput
 
-    if not models:
-        return None
+    model = get_type_hints(fn).get(visible[0])
 
-    if len(visible) > 1:
+    if len(visible) > 1 or not (isinstance(model, type) and issubclass(model, ToolInput)):
         raise TypeError(
-            f'@agent_tool {fn.__name__!r}: a ToolInput must be the only model-facing parameter, got {visible}'
+            f'@agent_tool {fn.__name__!r}: the only model-facing parameter must be a ToolInput, got {visible}'
         )
 
-    return models[0], hints[models[0]]
+    return visible[0], model
 
 
-def build_model_tool(
+def _build_tool(
     fn: Callable,
-    param_name: str,
+    param_name: str | None,
     input_model: type[ToolInput],
     name: str | None,
     deferred: bool,
@@ -156,7 +157,7 @@ def build_model_tool(
 ) -> Callable:
     """Wrap `fn` so each call is validated into `input_model`, and attach its `.tool` dict."""
 
-    @functools.wraps(fn)
+    @wraps(fn)
     def _wrapper(**kwargs: Any) -> ToolResult:
         # Hidden `_` params are dependencies, not model arguments; they pass through untouched
         hidden = {key: value for key, value in kwargs.items() if key.startswith('_')}
@@ -168,9 +169,12 @@ def build_model_tool(
         except ValidationError as e:
             return ToolResult(f'error: invalid arguments: {_format_errors(e)}', status='error')
 
-        return fn(**{param_name: validated}, **hidden)
+        # A tool that takes nothing from the LLM has no input parameter to fill
+        model_args = {param_name: validated} if param_name else {}
 
-    _wrapper.tool = {  # type: ignore[attr-defined]
+        return fn(**model_args, **hidden)
+
+    _wrapper.tool = {  # type: ignore[attr-defined] This is where the .tool dict gets attached to the function
         'name': name or fn.__name__,
         'description': (inspect.getdoc(fn) or '').strip(),
         'parameters': _parameters_schema(input_model),
@@ -180,3 +184,58 @@ def build_model_tool(
     }
 
     return _wrapper
+
+
+#     ================================
+# --> Decorator
+#     ================================
+
+
+def agent_tool(
+    func: Callable | None = None,
+    *,
+    name: str | None = None,
+    deferred: bool = False,
+    safe_parallel: bool = False,
+) -> Any:
+    """Attach a tool dict and argument validation to a ToolResult-returning function.
+
+    Supports `@agent_tool` and `@agent_tool(...)`; use it as the outermost decorator.
+    Invalid arguments produce an error ToolResult.
+
+    Args:
+        name: Tool name; defaults to the function name.
+        deferred: Withhold the full schema until requested through LoadTool.
+        safe_parallel: Allow concurrent calls with other opted-in tools. Defaults
+            to False; enable only for read-only tools without shared-state mutation
+            or subprocess side effects. Result order is preserved.
+    """
+
+    def _wrap(fn: Callable) -> Callable:
+        param_name, input_model = _find_input_param(fn)
+
+        return _build_tool(fn, param_name, input_model, name, deferred, safe_parallel)
+
+    if func is not None:
+        return _wrap(func)
+
+    return _wrap
+
+
+#     ================================
+# --> Tool binding
+#     ================================
+
+
+def bind_tool(fn: Callable, **injected: Any) -> dict[str, Any]:
+    """Return fn's `.tool` dict with `injected` kwargs pre-bound via partial.
+
+    Injects Agent-owned runtime state (registries, the mutable plan list) into
+    a tool whose @agent_tool function declares matching underscore-prefixed
+    params. Those params are hidden from the JSON schema, so the LLM never sees
+    them. Only `function` is swapped; name/description/parameters are untouched.
+    """
+    tool_dict = dict(fn.tool)  # type: ignore[attr-defined]
+    tool_dict['function'] = partial(tool_dict['function'], **injected)
+
+    return tool_dict

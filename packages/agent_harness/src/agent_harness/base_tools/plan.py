@@ -12,8 +12,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from agent_harness.tooling.context import ToolContext
-from agent_harness.tooling.decorator import agent_tool
-from agent_harness.tooling.input_model import ToolInput
+from agent_harness.tooling.definition import ToolInput, agent_tool
 from agent_harness.tooling.result import ToolResult
 
 GLYPHS = {

@@ -21,7 +21,7 @@ from agent_harness.messages import assistant_msg, system_msg, tool_msg, user_msg
 from agent_harness.sinks.base import CompactionEvent
 from agent_harness.sinks.stdout import StdoutSink
 from agent_harness.sub_agent import SubAgent
-from agent_harness.tooling.decorator import agent_tool
+from agent_harness.tooling.definition import ToolInput, agent_tool
 from agent_harness.tooling.result import ToolResult
 from agent_harness.usage import Usage
 from contract_support import RecordingSink, message_text, scripted_agent, tool_call, tool_delta
@@ -74,6 +74,12 @@ def completion_client(replies: list[tuple[int, str]], requests: list[dict[str, A
                   http_client=http_client, max_retries=0)
 
 
+class QuoteInput(ToolInput):
+    """The ticker the quote tool fetches."""
+
+    ticker: str
+
+
 @dataclass
 class Target:
     """The agent state compaction reads and rewrites (`CompactionTarget`)."""
@@ -113,9 +119,9 @@ def long_history(exchanges: int = 8, result_chars: int = 800) -> tuple[list[dict
 def quote_tool() -> Callable:
     """A tool returning a large quote payload, so a few calls fill a small context window."""
     @agent_tool
-    def fetch_quote(ticker: str) -> ToolResult:
+    def fetch_quote(args: QuoteInput) -> ToolResult:
         """Fetch the full quote record for one ticker."""
-        return ToolResult(f'{ticker}: ' + 'q' * 2_000, status='ok')
+        return ToolResult(f'{args.ticker}: ' + 'q' * 2_000, status='ok')
 
     return fetch_quote
 
